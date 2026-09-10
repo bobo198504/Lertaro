@@ -26,13 +26,7 @@ public class UpdateInstaller
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("Lertaro", "1.0.0"));
     }
 
-    private const string PUBLIC_KEY_PEM =
-        "-----BEGIN PUBLIC KEY-----\n" +
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE117370jTbSPgIwHLntC+Bi3SD6gJ\n" +
-        "QfxAySjSpUWa6zy4n0YHVv/ZWXM9zQlF2LTqpQC0iHNdJNH+MKU9UvDMTQ==\n" +
-        "-----END PUBLIC KEY-----";
-
-    private bool VerifySignature(string filePath, string signaturePath)
+    private static bool VerifySignature(string filePath, string signaturePath, string publicKeyPem)
     {
         try
         {
@@ -40,7 +34,7 @@ public class UpdateInstaller
             var signatureBytes = File.ReadAllBytes(signaturePath);
 
             using var ecdsa = ECDsa.Create();
-            ecdsa.ImportFromPem(PUBLIC_KEY_PEM);
+            ecdsa.ImportFromPem(publicKeyPem);
 
             return ecdsa.VerifyData(fileBytes, signatureBytes, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
         }
@@ -90,25 +84,38 @@ public class UpdateInstaller
                 }
             }
 
-            // Download signature file
-            var sigUrl = zipUrl + ".sig";
-            using (var sigResponse = await _httpClient.GetAsync(sigUrl))
-            {
-                sigResponse.EnsureSuccessStatusCode();
-                using var sigFileStream = new FileStream(tempSigFile, FileMode.Create, FileAccess.Write, FileShare.None);
-                await sigResponse.Content.CopyToAsync(sigFileStream);
-            }
+            var source = UpdateSourceSettings.Current;
 
-            // Verify signature before extracting
-            if (!VerifySignature(tempZipFile, tempSigFile))
+            if (source.SkipSignatureVerification)
             {
-                Core.Logger.Log("[UpdateService] Signature verification failed! The downloaded update package is not signed by a trusted key.", Core.LogLevel.Error);
-                CustomMessageBox.Show(
-                    TranslationManager.Instance["Update_SigVerificationFailedMessage"],
-                    TranslationManager.Instance["Update_SigVerificationFailedTitle"],
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-                return false;
+                // Explicit local opt-out (see UpdateSourceSettings). Logged loudly every time, because a
+                // build that installs unsigned downloads is a real thing to know about when debugging a
+                // machine. The signature asset is not even fetched, since an unsigned release has none and
+                // the 404 below would otherwise fail the whole update.
+                Core.Logger.Log("[UpdateService] Signature verification is DISABLED by local update-source.json; the download will not be authenticated.", Core.LogLevel.Warn);
+            }
+            else
+            {
+                // Download signature file
+                var sigUrl = zipUrl + ".sig";
+                using (var sigResponse = await _httpClient.GetAsync(sigUrl))
+                {
+                    sigResponse.EnsureSuccessStatusCode();
+                    using var sigFileStream = new FileStream(tempSigFile, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await sigResponse.Content.CopyToAsync(sigFileStream);
+                }
+
+                // Verify signature before extracting
+                if (!VerifySignature(tempZipFile, tempSigFile, source.PublicKeyPem))
+                {
+                    Core.Logger.Log("[UpdateService] Signature verification failed! The downloaded update package is not signed by a trusted key.", Core.LogLevel.Error);
+                    CustomMessageBox.Show(
+                        TranslationManager.Instance["Update_SigVerificationFailedMessage"],
+                        TranslationManager.Instance["Update_SigVerificationFailedTitle"],
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return false;
+                }
             }
 
             // Extract Zip
