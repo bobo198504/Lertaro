@@ -15,7 +15,6 @@ public class UpdateChecker
     public static UpdateChecker Instance => _instance.Value;
 
     private readonly HttpClient _httpClient;
-    private const string GITHUB_API_URL = "https://api.github.com/repos/Lertaro/Lertaro/releases/latest";
 
     private UpdateChecker()
     {
@@ -31,7 +30,9 @@ public class UpdateChecker
     {
         try
         {
-            var response = await _httpClient.GetStringAsync(GITHUB_API_URL);
+            // Resolved per call rather than captured in a const, so a fork pointing at its own repository
+            // needs no code change -- see UpdateSourceSettings.
+            var response = await _httpClient.GetStringAsync(UpdateSourceSettings.Current.ApiUrl);
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             return JsonSerializer.Deserialize<GitHubReleaseInfo>(response, options);
         }
