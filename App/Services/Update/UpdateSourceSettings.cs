@@ -22,7 +22,7 @@ internal sealed record UpdateSourceSettings(string ApiUrl, string PublicKeyPem, 
     internal const string UpstreamPublicKeyPem =
         "-----BEGIN PUBLIC KEY-----\n" +
         "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE117370jTbSPgIwHLntC+Bi3SD6gJ\n" +
-        "QfxAySjSpUWa6zy4n0YHVv/ZWXM9zQlF2LTqpQC0iHNdJNH+MKU9UvDMDTQ==\n" +
+        "QfxAySjSpUWa6zy4n0YHVv/ZWXM9zQlF2LTqpQC0iHNdJNH+MKU9UvDMTQ==\n" +
         "-----END PUBLIC KEY-----";
 
     internal static readonly string ConfigPath =

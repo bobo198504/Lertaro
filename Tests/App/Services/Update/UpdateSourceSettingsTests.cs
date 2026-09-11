@@ -111,4 +111,19 @@ public sealed class UpdateSourceSettingsTests
         Assert.AreEqual(UpdateSourceSettings.UpstreamPublicKeyPem, resolved.PublicKeyPem);
         Assert.IsFalse(resolved.SkipSignatureVerification);
     }
+
+    [TestMethod]
+    public void UpstreamPublicKey_IsAParsableP256Key()
+    {
+        // The default key is a hand-copied PEM, and nothing else in the suite would notice if a
+        // character were dropped or added -- every other assertion compares it against itself. A
+        // single stray character makes the base64 body undecodable, ImportFromPem throws, and every
+        // genuine upstream release then fails verification with "no supported key formats" even
+        // though the download itself succeeded. So parse it for real, the same way the installer does.
+        using var ecdsa = System.Security.Cryptography.ECDsa.Create();
+
+        ecdsa.ImportFromPem(UpdateSourceSettings.UpstreamPublicKeyPem);
+
+        Assert.AreEqual(256, ecdsa.KeySize);
+    }
 }
