@@ -12,13 +12,13 @@ public class SearchEngine : IDisposable
     private CancellationTokenSource? _cts;
     private readonly object _startLock = new();
     private bool _isRebuilding = false;
+    private readonly ManualResetEventSlim _initializationReady = new(initialState: true);
     private MachineSettings _machineSettings = MachineSettings.Load();
     private readonly SearchEngineDriveMaintenance _drives;
 
-    // Search cancellation
-    private CancellationTokenSource? _searchCts;
-    private CancellationTokenSource? _searchDirCts;
-    private readonly object _searchLock = new();
+    // Search cancellation: one slot per directory filter (see SearchCancellationRegistry), replacing the
+    // previous pair of process-wide "latest wins" slots.
+    private readonly SearchCancellationRegistry _searchCancellations = new();
     private static readonly string IndexCacheDir = LocalDriveCacheLocator.DefaultCacheDir;
 
     private long _lastDriveDetectTime = 0;
@@ -145,22 +145,9 @@ public class SearchEngine : IDisposable
         if (string.IsNullOrWhiteSpace(query))
             return true;
 
-        CancellationTokenSource searchCts;
-        lock (_searchLock)
-        {
-            if (string.IsNullOrEmpty(directoryFilter))
-            {
-                _searchCts?.Cancel();
-                _searchCts = new CancellationTokenSource();
-                searchCts = _searchCts;
-            }
-            else
-            {
-                _searchDirCts?.Cancel();
-                _searchDirCts = new CancellationTokenSource();
-                searchCts = _searchDirCts;
-            }
-        }
+        // Supersedes only an earlier search of the same filter -- a multi-folder scope issues one request
+        // per folder concurrently, and a single shared slot made those cancel each other.
+        var searchCts = _searchCancellations.Begin(directoryFilter);
 
         // Deliberately no "is the index ready" check. There used to be one, on the single GLOBAL status
         // field, and it skipped the search outright for anything other than "ready" -- so rebuilding one
@@ -182,22 +169,33 @@ public class SearchEngine : IDisposable
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(searchCts.Token, requestToken);
         var searchToken = linkedCts.Token;
 
-        _indexer.SearchStreaming(query, fileLimit, result =>
+        try
         {
-            searchToken.ThrowIfCancellationRequested();
-            onResult(result);
-        }, searchToken, directoryFilter, fileNameFilter);
+            _indexer.SearchStreaming(query, fileLimit, result =>
+            {
+                searchToken.ThrowIfCancellationRequested();
+                onResult(result);
+            }, searchToken, directoryFilter, fileNameFilter);
 
-        return true;
+            return true;
+        }
+        finally
+        {
+            _searchCancellations.End(directoryFilter, searchCts);
+        }
     }
 
     // Directory listing straight off the index -- no query, no disk IO (see DirectoryEnumerator).
-    // Deliberately outside the _searchCts/_searchDirCts cancellation pairs above: those exist so a new
-    // keystroke supersedes the previous one's search, and an enumeration is not a keystroke -- two
+    // Deliberately outside the per-filter search cancellation above: that exists so a new keystroke
+    // supersedes the previous search of the same filter, and an enumeration is not a keystroke -- two
     // plugins listing two different directories must not cancel each other. False = no loaded drive
     // index holds that path, so the caller has to walk the filesystem itself.
     public bool EnumerateDirectory(string path, bool recursive, string filterPattern, int limit, Action<SearchResult> onResult, CancellationToken token = default)
     {
+        // A loaded cache is intentionally exposed for search during USN catch-up, but directory
+        // enumeration must not return that stale view. Wait until startup replay and any fallback
+        // rebuild have finished; cancellation still lets a client abandon the request immediately.
+        _initializationReady.Wait(token);
         _idleTrim.SearchStarted(Environment.TickCount64);
         try
         {
@@ -215,6 +213,7 @@ public class SearchEngine : IDisposable
         {
             if (_isRebuilding) return;
             _isRebuilding = true;
+            _initializationReady.Reset();
         }
         lock (_indexer.LockObj)
         {
@@ -242,7 +241,10 @@ public class SearchEngine : IDisposable
                     _isRebuilding = isRebuilding;
                 }
                 if (!isRebuilding)
+                {
+                    _initializationReady.Set();
                     TryReleaseRuntimeAfterActivity();
+                }
             });
         });
     }
@@ -250,15 +252,12 @@ public class SearchEngine : IDisposable
     public void Dispose()
     {
         _idleTimer?.Dispose();
+        _initializationReady.Set();
         // Cancel without Dispose (see the restart path above): in-flight loops still reference
         // these tokens while unwinding.
         _cts?.Cancel();
         _indexer.DisposeAllDriveMonitors();
-        lock (_searchLock)
-        {
-            _searchCts?.Cancel();
-            _searchDirCts?.Cancel();
-        }
+        _searchCancellations.CancelAll();
         _indexer.Dispose();
         GC.SuppressFinalize(this);
     }

@@ -94,6 +94,52 @@ public sealed class UsnIndexerExtensionsTests
         });
     }
 
+    [TestMethod]
+    public void ApplyUsnRecords_CloseOnlyRecord_DoesNotNotifyChangedDirectory()
+    {
+        using var fixture = LiveIndexFixture.Build("C", new[]
+        {
+            LiveIndexFixture.Root(),
+            new FileRecord(2, 1, "Projects", FileRecordFlags.Directory),
+            new FileRecord(3, 2, "readme.txt", FileRecordFlags.None),
+        });
+        var indexer = new UsnIndexer();
+        indexer._recordIndexes["C"] = fixture.Index;
+        var notifications = 0;
+        indexer.DirectoriesChanged += (_, _) => notifications++;
+
+        indexer.ApplyUsnRecord("C", new ParsedUsnRecord
+        {
+            FileReferenceNumber = 3,
+            ParentFileReferenceNumber = 2,
+            FileName = "readme.txt",
+            Reason = Win32Api.USN_REASON_CLOSE,
+        });
+
+        Assert.AreEqual(0, notifications);
+    }
+
+    [TestMethod]
+    public void DirectoryChangeNotifications_AreMergedUntilCatchUpEnds()
+    {
+        var indexer = new UsnIndexer();
+        var notifications = new List<(string Drive, IReadOnlyCollection<string>? Directories)>();
+        indexer.DirectoriesChanged += (drive, directories) => notifications.Add((drive, directories));
+
+        using (indexer.SuspendDirectoryChangeNotifications())
+        {
+            indexer.RaiseDirectoriesChanged("C", new[] { @"C:\one" });
+            indexer.RaiseDirectoriesChanged("C", new[] { @"C:\two" });
+            indexer.RaiseDirectoriesChanged("D", null);
+            Assert.IsEmpty(notifications);
+        }
+
+        Assert.HasCount(2, notifications);
+        CollectionAssert.AreEquivalent(new[] { @"C:\one", @"C:\two" }, notifications[0].Directories!.ToArray());
+        Assert.AreEqual("D", notifications[1].Drive);
+        Assert.IsNull(notifications[1].Directories);
+    }
+
     // Regression coverage for the local-drive counterpart of the network-drive rescan race: a
     // non-journaled drive's FolderDriveMonitor now stays alive for the whole rebuild (see
     // ApplyFolderChange's own comment on why), so a change landing mid-rebuild must be recorded as

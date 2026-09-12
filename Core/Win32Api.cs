@@ -47,6 +47,7 @@ public static class Win32Api
     public const uint USN_REASON_COMPRESSION_CHANGE = 0x00020000;
     public const uint USN_REASON_ENCRYPTION_CHANGE = 0x00040000;
     public const uint USN_REASON_REPARSE_POINT_CHANGE = 0x00100000;
+    public const uint USN_REASON_CLOSE = 0x80000000;
 
     // ==========================================
     // Win32 Structures
@@ -228,6 +229,14 @@ public static class Win32Api
         uint dwShareMode,
         IntPtr lpSecurityAttributes,
         uint dwFlagsAndAttributes
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle hFile,
+        StringBuilder lpszFilePath,
+        uint cchFilePath,
+        uint dwFlags
     );
 
     [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

@@ -12,9 +12,8 @@ public static class WatchedDirectoryMatcher
 {
     /// <summary>
     /// The watched directories affected by <paramref name="changedDirectories"/>. Null there means the
-    /// change could not be pinned down, and every watched directory is returned: losing precision costs
-    /// a re-listing nobody needed, while assuming nothing happened costs a subscriber the change it was
-    /// waiting for, and only one of those is recoverable.
+    /// change could not be pinned down. When the source root is known, only watched directories under that
+    /// root are returned; without a source root, every watched directory is returned as the safe fallback.
     /// </summary>
     public static List<string> Match(IReadOnlyCollection<string> watched, IReadOnlyCollection<string>? changedDirectories)
     {
@@ -41,19 +40,24 @@ public static class WatchedDirectoryMatcher
 
     /// <summary>
     /// Returns the changed directories that fall under at least one watched directory. When the source
-    /// cannot identify the changed location, returns the watched roots as a safe broad-refresh scope.
+    /// cannot identify the changed location, returns watched roots under the source root, or all watched
+    /// roots when no source root is available.
     /// </summary>
     public static List<string> MatchChangedDirectories(
         IReadOnlyCollection<string> watched,
-        IReadOnlyCollection<string>? changedDirectories)
+        IReadOnlyCollection<string>? changedDirectories,
+        string? sourceRoot = null)
     {
         if (watched.Count == 0)
             return new List<string>();
 
         if (changedDirectories == null)
-            return watched.ToList();
+            return string.IsNullOrWhiteSpace(sourceRoot)
+                ? watched.ToList()
+                : watched.Where(path => RootsOverlap(path, sourceRoot)).ToList();
 
         return changedDirectories
+            .Where(changed => string.IsNullOrWhiteSpace(sourceRoot) || IsUnderSourceRoot(changed, sourceRoot))
             .Where(changed => watched.Any(watchedPath => Touches(changed, watchedPath)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -84,4 +88,20 @@ public static class WatchedDirectoryMatcher
         var normalized = value.Replace('/', Path.DirectorySeparatorChar);
         return normalized.EndsWith(Path.DirectorySeparatorChar) ? normalized : normalized + Path.DirectorySeparatorChar;
     }
+
+    private static bool IsUnderSourceRoot(string path, string sourceRoot)
+    {
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(sourceRoot))
+            return false;
+
+        var normalizedRoot = sourceRoot.Trim().Replace('/', Path.DirectorySeparatorChar);
+        if (normalizedRoot.Length == 1 && char.IsLetter(normalizedRoot[0]))
+            normalizedRoot += Path.VolumeSeparatorChar;
+
+        var normalizedPath = WithSeparator(path);
+        return normalizedPath.StartsWith(WithSeparator(normalizedRoot), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool RootsOverlap(string first, string second)
+        => IsUnderSourceRoot(first, second) || IsUnderSourceRoot(second, first);
 }
