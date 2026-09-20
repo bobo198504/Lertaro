@@ -160,77 +160,12 @@ public static class ShellPathHelper
     /// fills a caller-supplied buffer, so it was called with a fixed 260-character one and quietly failed
     /// for anything longer, while this returns a shell-allocated string of the right size.
     /// </remarks>
-    public static string TryResolveVirtualPath(string path)
-    {
-        if (!IsVirtualShellPath(path)) return path;
 
-        var token = path.Trim();
-        var pidl = IntPtr.Zero;
-        try
-        {
-            if (SHParseDisplayName(token, IntPtr.Zero, out pidl, 0, out _) != 0 || pidl == IntPtr.Zero)
-                return path;
-
-            var physical = NameFromPidl(pidl, SIGDN_FILESYSPATH);
-            if (!string.IsNullOrEmpty(physical))
-                return physical;
-
-            var canonical = NameFromPidl(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
-            return string.IsNullOrEmpty(canonical) ? path : canonical;
-        }
-        catch
-        {
-            return path;
-        }
-        finally
-        {
-            if (pidl != IntPtr.Zero)
-                Marshal.FreeCoTaskMem(pidl);
-        }
-    }
-
-    /// <summary>The shell's name for one item id, in the requested form, or null when it has none.</summary>
-    /// <remarks>
-    /// SIGDN_FILESYSPATH fails with ERROR_FILE_NOT_FOUND for an item that lives only in the shell
-    /// namespace, which is a normal answer here rather than an error, hence the null.
-    /// </remarks>
-    private static string? NameFromPidl(IntPtr pidl, int sigdn)
-    {
-        if (SHGetNameFromIDList(pidl, sigdn, out var value) != 0 || value == IntPtr.Zero)
-            return null;
-
-        try
-        {
-            return Marshal.PtrToStringUni(value);
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(value);
-        }
-    }
-
-    /// <summary>
-    /// Dynamically retrieves the localized user-friendly display name of a Windows shell virtual folder.
-    /// </summary>
-    public static string GetVirtualFolderDisplayName(string path, string fallback)
-    {
-        if (string.IsNullOrEmpty(path)) return fallback;
-        var pidl = IntPtr.Zero;
-        try
-        {
-            if (SHParseDisplayName(path, IntPtr.Zero, out pidl, 0, out _) == 0 && pidl != IntPtr.Zero)
-            {
-                var shfi = new SHFILEINFO();
-                var res = SHGetFileInfoPidl(pidl, 0, ref shfi, (uint)Marshal.SizeOf(shfi), SHGFI_DISPLAYNAME | SHGFI_PIDL);
-                if (res != IntPtr.Zero && !string.IsNullOrEmpty(shfi.szDisplayName))
-                    return shfi.szDisplayName.Trim();
-            }
-        }
-        catch { }
-        finally { if (pidl != IntPtr.Zero) Marshal.FreeCoTaskMem(pidl); }
-        return fallback;
-    }
-
+    // TryResolveVirtualPath/GetVirtualFolderDisplayName split into ShellVirtualPaths purely to keep this
+    // file under the repo's per-file line limit; these forwarders keep this class the single public entry
+    // point plugin consumers already use.
+    public static string TryResolveVirtualPath(string path) => ShellVirtualPaths.TryResolveVirtualPath(path);
+    public static string GetVirtualFolderDisplayName(string path, string fallback) => ShellVirtualPaths.GetVirtualFolderDisplayName(path, fallback);
     private static IntPtr HIconToHBitmap(IntPtr hIcon, int size)
     {
         if (hIcon == IntPtr.Zero) return IntPtr.Zero;

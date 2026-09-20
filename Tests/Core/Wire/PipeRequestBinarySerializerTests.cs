@@ -234,12 +234,12 @@ public sealed class PipeRequestBinarySerializerTests
     }
 
     [TestMethod]
-    public void EveryMessageId_IsNamedByBothSerializerSwitches()
+    public void EveryMessageId_IsNamedByBothPayloadSwitches()
     {
         // The real guard, and the one that would have caught a forgotten arm: a payload-carrying id
         // missing from the writer's switch serializes empty and reads back with default values, which
         // no round-trip of that id alone would reveal.
-        var writer = File.ReadAllText(SerializerSource());
+        var writer = SerializerSource();
 
         var unnamed = Enum.GetValues<IpcMessageId>()
             .Select(id => id.ToString())
@@ -247,10 +247,13 @@ public sealed class PipeRequestBinarySerializerTests
             .ToList();
 
         Assert.IsEmpty(unnamed,
-            "these message ids appear in no case arm of PipeRequestBinarySerializer, so their payloads "
+            "these message ids appear in no case arm of the wire payload switches, so their payloads "
             + "are silently dropped: " + string.Join(", ", unnamed));
     }
 
+    // Both payload switches now live in IpcMessagePayloadCodec (PipeRequestBinarySerializer keeps only the
+    // frame header and stream plumbing), so the scan reads the wire layer's sources as a set: the guard is
+    // about every id being named, not about which of the two files happens to name it.
     private static string SerializerSource()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -258,8 +261,12 @@ public sealed class PipeRequestBinarySerializerTests
             dir = dir.Parent;
         Assert.IsNotNull(dir, "could not locate the repository root");
 
-        var path = Path.Combine(dir!.FullName, "Core", "Wire", "PipeRequestBinarySerializer.cs");
-        Assert.IsTrue(File.Exists(path), $"expected the serializer at {path}");
-        return path;
+        var sources = new[] { "PipeRequestBinarySerializer.cs", "IpcMessagePayloadCodec.cs" }
+            .Select(file => Path.Combine(dir!.FullName, "Core", "Wire", file))
+            .ToList();
+        foreach (var path in sources)
+            Assert.IsTrue(File.Exists(path), $"expected a wire source at {path}");
+
+        return string.Concat(sources.Select(File.ReadAllText));
     }
 }

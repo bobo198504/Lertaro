@@ -20,7 +20,7 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
     {
         if (!className.Equals("#32770", StringComparison.OrdinalIgnoreCase))
             return false;
-        if (FindBreadcrumbParent(hwnd) == IntPtr.Zero)
+        if (StandardDialogChildSearch.FindBreadcrumbParent(hwnd) == IntPtr.Zero)
             return false;
         _lastMatchWasFolderOnly = LooksLikeFolderOnlyPicker(hwnd);
         return true;
@@ -40,8 +40,8 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
 
     private static bool LooksLikeFolderOnlyPicker(IntPtr hwnd)
     {
-        var hasFileNameCombo = FindDescendant(hwnd, "ComboBoxEx32", 1148) != IntPtr.Zero;
-        var hasFolderEdit = FindDescendant(hwnd, "Edit", 1152) != IntPtr.Zero;
+        var hasFileNameCombo = StandardDialogChildSearch.FindDescendant(hwnd, "ComboBoxEx32", 1148) != IntPtr.Zero;
+        var hasFolderEdit = StandardDialogChildSearch.FindDescendant(hwnd, "Edit", 1152) != IntPtr.Zero;
         return hasFolderEdit && !hasFileNameCombo;
     }
 
@@ -50,7 +50,7 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
         try
         {
             if (hwnd == IntPtr.Zero) return null;
-            var breadcrumbParent = FindBreadcrumbParent(hwnd);
+            var breadcrumbParent = StandardDialogChildSearch.FindBreadcrumbParent(hwnd);
             if (breadcrumbParent != IntPtr.Zero)
             {
                 var child = FindWindowEx(breadcrumbParent, IntPtr.Zero, "ToolbarWindow32", null);
@@ -92,7 +92,7 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
     {
         try
         {
-            var targetEdit = FindSubEditBox(hwnd);
+            var targetEdit = StandardDialogChildSearch.FindSubEditBox(hwnd);
             if (targetEdit == IntPtr.Zero) return false;
 
             if (Directory.Exists(targetPath) && !targetPath.EndsWith("\\"))
@@ -169,7 +169,7 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
     {
         try
         {
-            var targetEdit = FindSubEditBox(hwnd);
+            var targetEdit = StandardDialogChildSearch.FindSubEditBox(hwnd);
             if (targetEdit == IntPtr.Zero) return false;
             var targetThread = GetWindowThreadProcessId(targetEdit, out var _);
             var currentThread = GetCurrentThreadId();
@@ -250,58 +250,5 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
     [DllImport("user32.dll")]
     private static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
 
-    private static IntPtr FindBreadcrumbParent(IntPtr parent)
-    {
-        if (parent == IntPtr.Zero) return IntPtr.Zero;
-        var result = IntPtr.Zero;
-        EnumChildWindows(parent, (childHwnd, lParam) =>
-        {
-            var classNameSb = new StringBuilder(256);
-            GetClassName(childHwnd, classNameSb, classNameSb.Capacity);
-            if (classNameSb.ToString().Equals("Breadcrumb Parent", StringComparison.OrdinalIgnoreCase))
-            {
-                result = childHwnd;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-        return result;
-    }
-
-    private static IntPtr FindDescendant(IntPtr parent, string className, int controlId)
-    {
-        if (parent == IntPtr.Zero) return IntPtr.Zero;
-        var result = IntPtr.Zero;
-        EnumChildWindows(parent, (childHwnd, lParam) =>
-        {
-            var classNameSb = new StringBuilder(256);
-            GetClassName(childHwnd, classNameSb, classNameSb.Capacity);
-            if (classNameSb.ToString().Equals(className, StringComparison.OrdinalIgnoreCase) && GetDlgCtrlID(childHwnd) == controlId)
-            {
-                result = childHwnd;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-        return result;
-    }
-
-    private static IntPtr FindSubEditBox(IntPtr parent)
-    {
-        if (parent == IntPtr.Zero) return IntPtr.Zero;
-        var result = IntPtr.Zero;
-        EnumChildWindows(parent, (childHwnd, lParam) =>
-        {
-            var classNameSb = new StringBuilder(256);
-            GetClassName(childHwnd, classNameSb, classNameSb.Capacity);
-            if (classNameSb.ToString().Equals("Edit", StringComparison.OrdinalIgnoreCase))
-            {
-                result = childHwnd;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-        return result;
-    }
     #endregion
 }
