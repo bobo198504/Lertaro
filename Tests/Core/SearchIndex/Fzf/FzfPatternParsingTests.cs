@@ -1,4 +1,3 @@
-using Lertaro.Core.SearchIndex;
 using Lertaro.Core.SearchIndex.Fzf;
 
 namespace Lertaro.Core.Tests.SearchIndex.Fzf;
@@ -198,4 +197,5 @@ public sealed class FzfPatternParsingTests
 
         Assert.AreEqual("read".Length + "me".Length, pattern.GetTotalTermLength());
     }
+
 }

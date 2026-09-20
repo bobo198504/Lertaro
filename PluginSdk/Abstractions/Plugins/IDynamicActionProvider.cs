@@ -41,6 +41,20 @@ public interface IDynamicActionProvider : IPluginComponent
     bool CanProvide(IReadOnlyList<ISearchResult> results);
 
     /// <summary>
+    /// Whether this provider has actions for INSTANT results -- the rows an instant-result provider
+    /// contributes (the window switcher's windows, a calculator's answer, ...). Default: false.
+    /// </summary>
+    /// <remarks>
+    /// The host keeps the actions menu closed for instant results by default: they carry no file path, so
+    /// the built-in shell actions have nothing to act on and would render as a list of dead rows. A
+    /// provider that genuinely acts on such a result has to say so here, and the host then opens the menu
+    /// for it -- this flag is a cheap declaration, not a promise: the host still asks
+    /// <see cref="CanProvide"/> before showing anything, so an instant result this provider cannot handle
+    /// keeps the menu closed rather than opening it empty.
+    /// </remarks>
+    bool CanProvideForInstantResults => false;
+
+    /// <summary>
     /// Populates and returns menu items for the root menu (hMenu = Zero) or a sub-menu.
     /// </summary>
     IEnumerable<DynamicMenuItem> GetMenuItems(IReadOnlyList<ISearchResult> results, IntPtr hMenu);
@@ -86,6 +100,15 @@ public class DynamicMenuItem
     /// (e.g. virtual Shell namespace items, custom actions).
     /// </summary>
     public Action? OnExecute { get; set; }
+    /// <summary>
+    /// A single letter that activates this item while the menu is open, shown next to the item as well
+    /// as being a trigger (case-insensitive). Default: empty, meaning the item has no mnemonic.
+    /// </summary>
+    /// <remarks>
+    /// The host matches a typed letter against this only while the menu's own filter box is empty, so
+    /// letters never steal the first keystroke of a filter. A longer value (e.g. "Ctrl+O") is display
+    /// only and is never matched -- it is a hotkey, not a mnemonic.
+    /// </remarks>
     public string ShortcutHint { get; set; } = string.Empty;
     /// <summary>
     /// Marks this as a non-rendered continuation cursor for a paged submenu. The quick-navigation

@@ -20,8 +20,10 @@ internal static class GeneralSettingsApplier
         bool autoSilentUpdate,
         bool enableHardwareAcceleration,
         bool enableFuzzyMatch,
+        bool orFirstPrecedence,
         bool enableQuickSearchClipboardAutoFill,
         bool enableEverythingIpc,
+        bool showOpenedFoldersInInlineSearch,
         bool hideTrayIcon,
         bool openFoldersInNewExplorerTabs,
         string globalTokenPrefix,
@@ -36,9 +38,14 @@ internal static class GeneralSettingsApplier
             userSettings.AutoSilentUpdate = autoSilentUpdate;
         userSettings.EnableHardwareAcceleration = enableHardwareAcceleration;
         userSettings.EnableFuzzyMatch = enableFuzzyMatch;
+        userSettings.OrFirstPrecedence = orFirstPrecedence;
         userSettings.EnableQuickSearchClipboardAutoFill = enableQuickSearchClipboardAutoFill;
         SearchContext.DefaultFuzzyMatchEnabled = enableFuzzyMatch;
+        // This process matches outside the search pipeline too (plugin catalog, favorites, shell-menu
+        // filtering, highlighting), which only ever sees the process-wide value -- see SearchContext.
+        SearchContext.DefaultAndFirstPrecedence = !orFirstPrecedence;
         userSettings.EnableEverythingIpc = enableEverythingIpc;
+        userSettings.ShowOpenedFoldersInInlineSearch = showOpenedFoldersInInlineSearch;
         userSettings.HideTrayIcon = hideTrayIcon;
         userSettings.DefaultFileManager.OpenFoldersInNewExplorerTabs = openFoldersInNewExplorerTabs;
         userSettings.GlobalTokenPrefix = string.IsNullOrWhiteSpace(globalTokenPrefix) ? ":" : globalTokenPrefix;

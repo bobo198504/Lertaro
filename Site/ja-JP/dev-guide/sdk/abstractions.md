@@ -84,7 +84,7 @@ public interface IConfigurable
 
 スキーマキーが `Icon` のテキストフィールドにはアイコンのプレビューが表示されます。WPF Path Data を直接入力でき、完全な SVG/XML を貼り付けるとホストがすべての `<path d>` 値を抽出して結合し、変換後の WPF Path Data だけを保存します。無効なアイコン内容は消去され、テーマ対応のエラーダイアログで通知されます。アイコンを指定しない場合は空の値も有効です。
 
-`PluginConfigSchema` では `OnSave` や `OnRollback` デリゲートを設定し、保存や破棄時のカスタム処理をフックできます。
+`PluginConfigSchema` では `OnSave` や `OnRollback` デリゲートを設定できます。`OnSave` はユーザーが**OK/適用**を押して変更を確定したときに実行され、`OnRollback` はキャンセルまたは破棄時に状態を復元します。
 
 ### 選択肢のローカライズラベル
 
@@ -130,4 +130,4 @@ bool isVirtual = UserPathResolver.IsVirtualPath(expanded);
 string resolved = UserPathResolver.Resolve(rawPath);
 ```
 
-`Expand` は前後の空白を取り除き、`%USERPROFILE%` などの環境変数を展開します。`Resolve` は展開後、`shell:Downloads` や `::{CLSID}` などのトークンを可能な場合に物理パスへ解決します。Shell が解決できないトークンはそのまま返されるため、ファイルシステム API に渡す前に `IsVirtualPath` で結果を確認してください。ディレクトリインデックス API で列挙できるのは、実在し、インデックス対象になっているフォルダーへ解決されたパスだけです。
+`Expand` は前後の空白を取り除き、`%USERPROFILE%` などの環境変数を展開します。`Resolve` は展開後、`shell:Downloads` や `::{CLSID}` などのトークンを可能な場合に物理パスへ解決します。`shell:AppsFolder` のように物理パスを持たない仮想フォルダーは、代わりに正規の `::{CLSID}` 名へ解決されるため、同じフォルダーのさまざまな書き方が一致します。その結果は依然として仮想パスです。Shell がまったく解析できないトークンのみがそのまま返されます。ファイルシステム API に渡す前に `IsVirtualPath` で結果を確認してください。ディレクトリインデックス API で列挙できるのは、実在し、インデックス対象になっているフォルダーへ解決されたパスだけです。

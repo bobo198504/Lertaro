@@ -10,17 +10,38 @@ internal sealed class FzfBytePattern
 {
     internal readonly record struct ByteTerm(FzfTermKind Kind, bool Inverse, byte[]? Bytes, bool CaseSensitive);
     internal readonly record struct ByteTermSet(ByteTerm[] Terms);
+    internal readonly record struct ByteTermGroup(ByteTermSet[] Sets);
 
     public readonly ByteTermSet[] TermSets;
 
-    private FzfBytePattern(ByteTermSet[] termSets) => TermSets = termSets;
+    // AND-first counterpart of the char-side FzfPattern.OrGroups: non-null only for a query that mixes
+    // '|' with spaces under AND-first precedence, in which case this is the authoritative shape.
+    public readonly ByteTermGroup[]? OrGroups;
+
+    private FzfBytePattern(ByteTermSet[] termSets) : this(termSets, null)
+    {
+    }
+
+    private FzfBytePattern(ByteTermSet[] termSets, ByteTermGroup[]? orGroups)
+    {
+        TermSets = termSets;
+        OrGroups = orGroups;
+    }
 
     public static FzfBytePattern From(FzfPattern pattern)
     {
-        var sets = new ByteTermSet[pattern.TermSets.Length];
-        for (var s = 0; s < pattern.TermSets.Length; s++)
+        var sets = Convert(pattern.TermSets);
+        return pattern.OrGroups == null
+            ? new FzfBytePattern(sets)
+            : new FzfBytePattern(sets, Convert(pattern.OrGroups));
+    }
+
+    private static ByteTermSet[] Convert(FzfTermSet[] source)
+    {
+        var sets = new ByteTermSet[source.Length];
+        for (var s = 0; s < source.Length; s++)
         {
-            var terms = pattern.TermSets[s].Terms;
+            var terms = source[s].Terms;
             var byteTerms = new ByteTerm[terms.Length];
             for (var t = 0; t < terms.Length; t++)
             {
@@ -30,7 +51,15 @@ internal sealed class FzfBytePattern
             }
             sets[s] = new ByteTermSet(byteTerms);
         }
-        return new FzfBytePattern(sets);
+        return sets;
+    }
+
+    private static ByteTermGroup[] Convert(FzfTermGroup[] source)
+    {
+        var groups = new ByteTermGroup[source.Length];
+        for (var i = 0; i < source.Length; i++)
+            groups[i] = new ByteTermGroup(Convert(source[i].Sets));
+        return groups;
     }
 
     public static FzfMatchResult Match(FzfTermKind kind, ReadOnlySpan<byte> text, byte[] pattern, bool caseSensitive, FzfScoringScheme scheme, FzfSlab slab, FzfByteBuffers buffers) => kind switch
@@ -46,6 +75,19 @@ internal sealed class FzfBytePattern
 
     public bool TryMatch(ReadOnlySpan<byte> text, out FzfPatternResult result, FzfScoringScheme scheme, FzfSlab slab, FzfByteBuffers buffers)
     {
+        // AND-first mix: groups are OR alternatives, so the first group satisfying all of its terms wins.
+        if (OrGroups != null)
+        {
+            foreach (var group in OrGroups)
+            {
+                if (TryMatchGroup(group, text, out result, scheme, slab, buffers))
+                    return true;
+            }
+
+            result = default;
+            return false;
+        }
+
         var totalScore = 0;
         var minBegin = int.MaxValue;
         var minEnd = int.MaxValue;
@@ -54,35 +96,7 @@ internal sealed class FzfBytePattern
 
         foreach (var set in TermSets)
         {
-            var matched = false;
-            FzfMatchResult best = default;
-            foreach (var term in set.Terms)
-            {
-                var current = term.Bytes == null
-                    ? FzfMatchResult.NoMatch // non-ASCII pattern text can never occur in ASCII text
-                    : Match(term.Kind, text, term.Bytes, term.CaseSensitive, scheme, slab, buffers);
-                if (current.IsMatch)
-                {
-                    if (term.Inverse)
-                    {
-                        matched = false;
-                        best = default;
-                        break;
-                    }
-
-                    matched = true;
-                    best = current;
-                    break;
-                }
-
-                if (term.Inverse)
-                {
-                    matched = true;
-                    best = new FzfMatchResult(0, 0, 0);
-                }
-            }
-
-            if (!matched)
+            if (!TryMatchSet(set, text, out var best, scheme, slab, buffers))
             {
                 result = default;
                 return false;
@@ -100,6 +114,67 @@ internal sealed class FzfBytePattern
 
         result = new FzfPatternResult(totalScore, minBegin, minEnd, maxEnd, validOffsetFound);
         return true;
+    }
+
+    // Byte twin of FzfPattern's DNF group evaluation: every term set must be satisfied, while each set
+    // keeps its own OR alternatives (including alias spellings).
+    private static bool TryMatchGroup(ByteTermGroup group, ReadOnlySpan<byte> text, out FzfPatternResult result, FzfScoringScheme scheme, FzfSlab slab, FzfByteBuffers buffers)
+    {
+        var totalScore = 0;
+        var minBegin = int.MaxValue;
+        var minEnd = int.MaxValue;
+        var maxEnd = 0;
+        var validOffsetFound = false;
+
+        foreach (var set in group.Sets)
+        {
+            if (!TryMatchSet(set, text, out var current, scheme, slab, buffers))
+            {
+                result = default;
+                return false;
+            }
+
+            totalScore += current.Score;
+            if (current.Start < current.End)
+            {
+                minBegin = Math.Min(minBegin, current.Start);
+                minEnd = Math.Min(minEnd, current.End);
+                maxEnd = Math.Max(maxEnd, current.End);
+                validOffsetFound = true;
+            }
+        }
+
+        result = new FzfPatternResult(totalScore, minBegin, minEnd, maxEnd, validOffsetFound);
+        return true;
+    }
+
+    // One AND-condition's OR alternatives (the flat shape) or one AND-group of the DNF shape -- the
+    // two are the same evaluation, so both callers share it.
+    private static bool TryMatchSet(ByteTermSet set, ReadOnlySpan<byte> text, out FzfMatchResult best, FzfScoringScheme scheme, FzfSlab slab, FzfByteBuffers buffers)
+    {
+        best = default;
+        foreach (var term in set.Terms)
+        {
+            var current = term.Bytes == null
+                ? FzfMatchResult.NoMatch // non-ASCII pattern text can never occur in ASCII text
+                : Match(term.Kind, text, term.Bytes, term.CaseSensitive, scheme, slab, buffers);
+            if (current.IsMatch)
+            {
+                if (term.Inverse)
+                    return false;
+
+                best = current;
+                return true;
+            }
+
+            if (term.Inverse)
+            {
+                best = new FzfMatchResult(0, 0, 0);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // '|' polyphonic-alias segmentation on bytes -- mirrors FzfPattern.TryMatch's segmented branch.

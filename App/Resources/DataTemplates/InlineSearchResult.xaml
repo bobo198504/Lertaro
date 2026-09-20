@@ -3,6 +3,7 @@
                     xmlns:app="clr-namespace:Lertaro.App"
                     xmlns:local="clr-namespace:Lertaro.App.Converters"
                     xmlns:helpers="clr-namespace:Lertaro.App.Helpers.Visuals"
+                    xmlns:inline="clr-namespace:Lertaro.App.Views.InlineSearchWindow.Helpers"
                     xmlns:services="clr-namespace:Lertaro.App.Services">
     <ResourceDictionary.MergedDictionaries>
         <ResourceDictionary Source="../Styles/Tokens/Colors.xaml"/>
@@ -95,7 +96,7 @@
                 </Grid.Style>
                 
                 <!-- Side-by-side name and path for standard results -->
-                <Grid>
+                <Grid inline:InlineResultColumnsBehavior.IsResultGrid="True">
                     <Grid.Style>
                         <Style TargetType="Grid">
                             <Setter Property="Visibility" Value="Visible"/>
@@ -116,17 +117,36 @@
 
                     <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Focusable="False"
                                   local:ScrollViewerHelper.BubbleMouseWheel="True">
+                        <ScrollViewer.Style>
+                            <Style TargetType="ScrollViewer">
+                                <Style.Triggers>
+                                    <!-- Single-line rows, such as opened-folder entries, have no path
+                                         subtitle. Let their main text use both result columns instead of
+                                         truncating it to the name column's share. -->
+                                    <DataTrigger Binding="{Binding HasPathSubtitle}" Value="False">
+                                        <Setter Property="Grid.ColumnSpan" Value="2"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ScrollViewer.Style>
                         <TextBlock 
                                    Foreground="{DynamicResource TextPrimary}"
                                    local:TextHighlighter.HighlightText="{Binding SearchQuery}"
                                    local:TextHighlighter.HighlightBrush="{DynamicResource AccentBlue}"
-                                   helpers:MarqueeBehavior.EnableMarquee="True"
+                                   Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}"
+                                   TextTrimming="CharacterEllipsis"
                                    FontSize="14"
                                    VerticalAlignment="Center">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="local:TextHighlighter.Text" Value="{Binding Name}"/>
                                     <Style.Triggers>
+                                        <!-- Opened-folder rows store their complete path in Name. Reuse the
+                                             path column's middle-directory compaction after the row spans both
+                                             columns, while ordinary single-line names keep normal ellipsis. -->
+                                        <DataTrigger Binding="{Binding ResultKind}" Value="OpenedFolder">
+                                            <Setter Property="inline:InlinePathDisplayBehavior.IsEnabled" Value="True"/>
+                                        </DataTrigger>
                                         <DataTrigger Binding="{Binding IsJumpToExplorerPath}" Value="True">
                                             <Setter Property="local:TextHighlighter.Text" Value="{Binding ParentDir}"/>
                                         </DataTrigger>
@@ -152,7 +172,10 @@
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondary}"
                                    VerticalAlignment="Center"
-                                   helpers:MarqueeBehavior.EnableMarquee="True"
+                                   inline:InlinePathDisplayBehavior.IsEnabled="True"
+                                   Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextAlignment="Right"
                                    local:TextHighlighter.HighlightText="{Binding SearchQuery}"
                                    local:TextHighlighter.HighlightBrush="{DynamicResource AccentBlue}">
                             <TextBlock.Style>

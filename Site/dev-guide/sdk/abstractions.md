@@ -84,7 +84,7 @@ public interface IConfigurable
 
 A text field whose schema key is `Icon` is rendered with an icon preview. It accepts WPF Path Data directly; when a complete SVG/XML document is pasted, the host extracts every `<path d>` value, combines them, and stores only the resulting WPF Path Data. Invalid icon content is cleared and reported with a themed error dialog. Empty values remain valid when no icon is desired.
 
-`PluginConfigSchema` also supports `OnSave` and `OnRollback` lifecycle delegates to manage custom persistence and rollback workflows.
+`PluginConfigSchema` also supports `OnSave` and `OnRollback` lifecycle delegates: `OnSave` runs when the user clicks **OK/Apply** to commit changes, while `OnRollback` restores state when changes are cancelled or rolled back.
 
 ### Localized choice labels
 
@@ -130,4 +130,4 @@ bool isVirtual = UserPathResolver.IsVirtualPath(expanded);
 string resolved = UserPathResolver.Resolve(rawPath);
 ```
 
-`Expand` trims the input and expands references such as `%USERPROFILE%`. `Resolve` performs that expansion and resolves tokens such as `shell:Downloads` or `::{CLSID}` to a physical path when possible. If the Shell cannot resolve a token, `Resolve` returns it unchanged; test the result with `IsVirtualPath` before passing it to filesystem APIs. Directory indexing APIs can only enumerate a path after it resolves to a real, index-covered folder.
+`Expand` trims the input and expands references such as `%USERPROFILE%`. `Resolve` performs that expansion and resolves tokens such as `shell:Downloads` or `::{CLSID}` to a physical path when possible. A virtual folder that has no physical path, such as `shell:AppsFolder`, resolves to its canonical `::{CLSID}` name instead, so every spelling of it compares equal; that result is still virtual. Only a token the Shell cannot parse at all comes back unchanged. Test the result with `IsVirtualPath` before passing it to filesystem APIs. Directory indexing APIs can only enumerate a path after it resolves to a real, index-covered folder.

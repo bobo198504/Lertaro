@@ -1,3 +1,4 @@
+using System.IO;
 using Lertaro.Plugins.BrowserData.Readers;
 using Lertaro.PluginSdk.Helpers;
 using Lertaro.PluginSdk.Services;
@@ -33,7 +34,8 @@ internal static class BrowserDataCache
 
     private static readonly string[] MonitoredFileNames =
     [
-        "Bookmarks", "History", "History-wal", "places.sqlite", "places.sqlite-wal"
+        "Bookmarks", "History", "History-wal", "Favicons", "Favicons-wal", "places.sqlite", "places.sqlite-wal",
+        "favicons.sqlite", "favicons.sqlite-wal"
     ];
 
     internal static bool IsComponentEnabled => PluginSettingsService.IsComponentEnabled(
@@ -64,10 +66,12 @@ internal static class BrowserDataCache
         var configured = PluginSettingsService.GetSetting<List<BrowserProfileConfig>>("Lertaro.Plugins.BrowserData", "Profiles", null!);
         var indexBookmarks = PluginSettingsService.GetSetting("Lertaro.Plugins.BrowserData", "IndexBookmarks", true);
         var indexHistory = PluginSettingsService.GetSetting("Lertaro.Plugins.BrowserData", "IndexHistory", true);
+        var blacklist = BrowserEntryFilter.NormalizeBlacklist(PluginSettingsService.GetSetting(
+            "Lertaro.Plugins.BrowserData", "Blacklist", new List<string>()));
         // Bookmarks/history toggles folded into the same reload signature as Profiles -- flipping either
         // one should take effect on the next query, not wait for the up-to-10-minute staleness timer.
         var signature = (configured != null ? System.Text.Json.JsonSerializer.Serialize(configured) : string.Empty)
-            + $"|{indexBookmarks}|{indexHistory}";
+            + $"|{indexBookmarks}|{indexHistory}|{System.Text.Json.JsonSerializer.Serialize(blacklist)}";
 
         var isConfigChanged = signature != _lastSignature;
         var isStale = DateTime.UtcNow - _lastLoadUtc > RefreshInterval;
@@ -94,7 +98,7 @@ internal static class BrowserDataCache
         {
             try
             {
-                var loaded = LoadAll(configured ?? new List<BrowserProfileConfig>(), indexBookmarks, indexHistory);
+                var loaded = LoadAll(configured ?? new List<BrowserProfileConfig>(), indexBookmarks, indexHistory, blacklist);
                 lock (Lock)
                 {
                     _snapshot = loaded;
@@ -144,11 +148,17 @@ internal static class BrowserDataCache
         return false;
     }
 
-    internal static List<ProfileEntries> LoadAll(List<BrowserProfileConfig> profiles, bool indexBookmarks, bool indexHistory)
+    internal static List<ProfileEntries> LoadAll(
+        List<BrowserProfileConfig> profiles,
+        bool indexBookmarks,
+        bool indexHistory,
+        IReadOnlyList<string>? blacklist = null)
     {
         var result = new List<ProfileEntries>();
         if (!indexBookmarks && !indexHistory)
             return result;
+
+        var normalizedBlacklist = BrowserEntryFilter.NormalizeBlacklist(blacklist);
 
         foreach (var profile in profiles)
         {
@@ -177,6 +187,7 @@ internal static class BrowserDataCache
                             entries.Bookmarks.AddRange(ChromiumBookmarksReader.Read(expandedPath));
                         if (indexHistory)
                             entries.History.AddRange(ChromiumHistoryReader.Read(expandedPath));
+                        AttachChromiumFavicons(entries, expandedPath);
                         break;
                     case BrowserFamily.Firefox:
                         // Firefox keeps both in one places.sqlite, read together in a single pass -- only
@@ -186,11 +197,15 @@ internal static class BrowserDataCache
                             entries.Bookmarks.AddRange(bookmarks);
                         if (indexHistory)
                             entries.History.AddRange(history);
+                        AttachFavicons(entries, FirefoxFaviconReader.Read(expandedPath));
                         break;
                     default:
                         PluginSdk.Logger.Log($"[BrowserData] '{expandedPath}' doesn't look like a Chrome/Firefox profile folder (no Bookmarks/History/places.sqlite found), skipping.", PluginSdk.LogLevel.Warn);
                         continue;
-                    }
+                }
+
+                entries.Bookmarks.RemoveAll(entry => BrowserEntryFilter.IsBlacklisted(entry, normalizedBlacklist));
+                entries.History.RemoveAll(entry => BrowserEntryFilter.IsBlacklisted(entry, normalizedBlacklist));
                 result.Add(entries);
             }
             catch (Exception ex)
@@ -199,5 +214,16 @@ internal static class BrowserDataCache
             }
         }
         return result;
+    }
+
+    private static void AttachChromiumFavicons(ProfileEntries entries, string profileDir) => AttachFavicons(entries, ChromiumFaviconReader.Read(profileDir));
+
+    private static void AttachFavicons(ProfileEntries entries, IReadOnlyDictionary<string, byte[]> icons)
+    {
+        foreach (var entry in entries.Bookmarks.Concat(entries.History))
+        {
+            if (icons.TryGetValue(entry.Url, out var imageData))
+                entry.Favicon = BrowserFaviconIconLoader.Decode(imageData);
+        }
     }
 }

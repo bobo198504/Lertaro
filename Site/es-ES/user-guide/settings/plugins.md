@@ -35,6 +35,14 @@ La lista **Filtros personalizados de la barra lateral** añade filtros con un no
 ### Ventana integrada de CoreExtensions
 
 En **Configuración → Plugins → CoreExtensions → Configurar → Ventana integrada del Explorador** puedes desactivar **Mostrar comandos rápidos en la ventana integrada**. La ventana integrada es el único sitio donde un comando rápido de un plugin (el grupo "快捷命令" y similares) aparece antes que los resultados de archivos y queda seleccionado por defecto, así que Enter ejecuta el comando en lugar de abrir el archivo coincidente; al desactivarlo, la búsqueda integrada se centra solo en archivos. Las ventanas rápida y principal no se ven afectadas.
+### Marcadores e historial del navegador
+
+El plugin **Marcadores e historial del navegador** puede buscar carpetas de perfil configuradas de navegadores basados en Chromium y de Firefox. Sus activadores predeterminados son `bb` para marcadores y `bh` para historial; puedes cambiar ambos en la configuración del plugin y desactivar por separado la indexación de marcadores o historial.
+
+El campo **Lista de bloqueo** acepta una cadena literal por línea. Un marcador o entrada del historial se oculta cuando su título o URL contiene cualquiera de las reglas, con coincidencia literal sin distinguir mayúsculas y minúsculas; no se usa coincidencia difusa. Las reglas se aplican tanto a marcadores como a historial y se activan después de que el plugin vuelva a cargar sus datos en caché.
+
+Si la base de datos local del navegador contiene un favicon coincidente, el plugin lo lee en modo de solo lectura y lo muestra en el resultado sin copiar el archivo de base de datos. Si no se puede leer el favicon, se usa el icono del navegador configurado y, después, el icono predeterminado de marcador o historial.
+
 ## 3. Soporte del ecosistema de plugins de Flow Launcher
 
 Además de los plugins nativos de `Lertaro.PluginSdk`, el módulo integrado **Flow Launcher Bridge** ofrece compatibilidad total con el extenso catálogo de Flow Launcher.

@@ -84,7 +84,7 @@ public interface IConfigurable
 
 Un campo de texto cuya clave de esquema es `Icon` se muestra con una vista previa del icono. Admite WPF Path Data directamente; al pegar un documento SVG/XML completo, el anfitrión extrae y combina todos los valores `<path d>` y guarda únicamente el WPF Path Data resultante. El contenido no válido se borra y se notifica mediante un cuadro de diálogo de error con el tema de Lertaro. Los valores vacíos siguen siendo válidos cuando no se desea ningún icono.
 
-`PluginConfigSchema` admite delegados de ciclo de vida `OnSave` y `OnRollback` para gestionar la persistencia y la restauración personalizada.
+`PluginConfigSchema` admite delegados de ciclo de vida `OnSave` y `OnRollback`: `OnSave` se ejecuta cuando el usuario pulsa **Aceptar/Aplicar** para confirmar los cambios, mientras que `OnRollback` restaura el estado cuando se cancelan o revierten.
 
 ### Etiquetas localizadas para opciones
 
@@ -130,4 +130,4 @@ bool isVirtual = UserPathResolver.IsVirtualPath(expanded);
 string resolved = UserPathResolver.Resolve(rawPath);
 ```
 
-`Expand` recorta los espacios exteriores y expande variables como `%USERPROFILE%`. `Resolve` realiza esa expansión y después intenta convertir tokens como `shell:Downloads` o `::{CLSID}` en una ruta física. Si Shell no puede resolver un token, `Resolve` lo devuelve sin cambios; comprueba el resultado con `IsVirtualPath` antes de pasarlo a las API del sistema de archivos. Las API de indexación de directorios solo pueden enumerar una ruta cuando se resuelve en una carpeta real cubierta por el índice.
+`Expand` recorta los espacios exteriores y expande variables como `%USERPROFILE%`. `Resolve` realiza esa expansión y después intenta convertir tokens como `shell:Downloads` o `::{CLSID}` en una ruta física. Una carpeta virtual sin ruta física, como `shell:AppsFolder`, se resuelve en su nombre canónico `::{CLSID}`, de modo que todas sus grafías coinciden; ese resultado sigue siendo virtual. Solo un token que Shell no puede analizar en absoluto se devuelve sin cambios. Comprueba el resultado con `IsVirtualPath` antes de pasarlo a las API del sistema de archivos. Las API de indexación de directorios solo pueden enumerar una ruta cuando se resuelve en una carpeta real cubierta por el índice.

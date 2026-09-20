@@ -32,6 +32,11 @@ public partial class App : Application
     // Held for the process lifetime so its hotkey registration and message window stay alive.
     private Services.QuickPanel.QuickPanelManager? _quickPanelManager;
 
+    // Same reason: this owns the per-favorite global hotkeys' message-only window, and dropping the
+    // instance would unregister every one of them.
+    private Services.Favorites.FavoriteHotkeyService? _favoriteHotkeys;
+    private readonly Helpers.App.DispatcherExceptionHandler _dispatcherExceptionHandler = new();
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         Services.AppLifecycle.AppRestartService.WaitForParentExit(e.Args);
@@ -67,7 +72,7 @@ public partial class App : Application
         // Global exception handlers, registered as early as possible: anything thrown before the old
         // registration point (UserSettings.Load, hook client startup, ...) crashed with no log at all.
         AppDomain.CurrentDomain.UnhandledException += (s, args) => Helpers.App.AppCrashHandler.LogException("AppDomain UnhandledException", args.ExceptionObject as Exception);
-        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        DispatcherUnhandledException += _dispatcherExceptionHandler.Handle;
         TaskScheduler.UnobservedTaskException += (s, args) => { Helpers.App.AppCrashHandler.LogException("TaskScheduler UnobservedTaskException", args.Exception); args.SetObserved(); };
 
         var settings = UserSettings.Load();
@@ -76,6 +81,7 @@ public partial class App : Application
         // favorites, shell-menu filtering, display highlighting -- reads this rather than the
         // per-request value, which only ever reaches the search pipeline's own async flow.
         SearchContext.DefaultFuzzyMatchEnabled = settings.EnableFuzzyMatch;
+        SearchContext.DefaultAndFirstPrecedence = !settings.OrFirstPrecedence;
         StartupManager.SetEnabled(settings.StartWithWindows);
         Logger.Log("=========================================");
         Logger.Log($"Application starting with arguments: {string.Join(" ", e.Args)}");
@@ -134,6 +140,19 @@ public partial class App : Application
         // Set up the quick panel. Built here rather than lazily on the first hotkey so the handler above always
         // has something to call; it creates no window of its own until it is first opened.
         _quickPanelManager = new Services.QuickPanel.QuickPanelManager();
+
+        // Per-favorite global hotkeys. Registered in this process rather than through the Hook: the App
+        // already pumps messages, and the file-manager window these navigate is resolved here anyway.
+        // Created on the Dispatcher thread, which is the thread RegisterHotKey must be called from.
+        try
+        {
+            _favoriteHotkeys = Services.Favorites.FavoriteHotkeyService.Initialize();
+            _favoriteHotkeys.AttachHandler();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[FavoriteHotkeys] Initialization failed: {ex}", LogLevel.Error);
+        }
 
         // Force load all plugins (actions and alias providers) on startup
         _ = PluginManager.Instance;
@@ -261,28 +280,6 @@ public partial class App : Application
 
     public static void HideInlineSearch() => InlineSearchManager.Instance.CloseInlineSearch();
 
-    // One-shot re-entrancy guard for the dispatcher handler: reporting an exception shows a modal
-    // crash dialog whose message pump can itself throw. The first exception is logged and swallowed
-    // (this app is a launcher that must survive one-off UI faults); a nested one -- the dialog or
-    // the half-broken UI throwing again -- is logged and deliberately left unhandled so the process
-    // fails fast instead of looping in an exception-dialog storm.
-    private int _crashReportDepth;
-
-    private void OnDispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs args)
-    {
-        var isFirst = Interlocked.CompareExchange(ref _crashReportDepth, 1, 0) == 0;
-        try
-        {
-            Helpers.App.AppCrashHandler.LogException("DispatcherUnhandledException", args.Exception);
-        }
-        finally
-        {
-            if (isFirst)
-                Interlocked.Exchange(ref _crashReportDepth, 0);
-        }
-        args.Handled = isFirst;
-    }
-
     public static void ShowSettingsWindow(string? targetSection = null) => AppWindowManager.ShowSettingsWindow(targetSection);
     public static void ShowSearchWindow() => AppWindowManager.ShowSearchWindow();
     public static void CloseAllManagedWindows() => AppWindowManager.CloseAllManagedWindows();
@@ -290,6 +287,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         Core.Services.LocalSend.LocalSendServiceManager.Instance.Stop();
+        _favoriteHotkeys?.Dispose(); _favoriteHotkeys = null;
         foreach (var provider in PluginManager.Instance.AllSearchScopeProviders.OfType<IDisposable>()) provider.Dispose();
         HookClient?.Stop(); HookClient?.Dispose(); HookClient = null;
         AppPipeService.StopServer(); AppSearchPipeService.StopServer(); Services.Everything.EverythingServiceBootstrapper.Stop(); InlineSearchManager.Instance.Dispose(); CloseAllManagedWindows();

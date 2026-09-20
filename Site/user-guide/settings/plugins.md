@@ -35,6 +35,14 @@ The **Custom Sidebar Filters** list adds extra filters with a display name, an o
 ### CoreExtensions Inline Search Window
 
 In **Settings → Plugins → CoreExtensions → Configure → Explorer Inline Window**, you can turn **Show shortcut commands in the inline window** off. The inline window is the one place a plugin shortcut command (the "快捷命令" group and the like) is listed ahead of the file results and takes the default selection, so Enter runs the command instead of opening the matched file; disabling it keeps inline searches purely about files. The quick and full windows are unaffected.
+### Browser Bookmarks & History
+
+The **Browser Bookmarks & History** plugin can search configured Chrome-family and Firefox-family profile folders. Its default triggers are `bb` for bookmarks and `bh` for history; both can be changed in the plugin configuration, as can whether bookmarks or history are indexed.
+
+The **Blacklist** field accepts one literal string per line. A bookmark or history entry is hidden when its title or URL contains any rule, using case-insensitive matching; fuzzy matching is not used. The rules apply to both bookmarks and history and take effect after the plugin reloads its cached data.
+
+When a matching favicon is available in the browser's local database, the plugin reads it in read-only mode and displays it for the result without copying the database. If no favicon can be read, the configured profile icon is used, followed by the default bookmark or history icon.
+
 ## 3. Flow Launcher Community Ecosystem Bridge
 
 In addition to native plugins built against `Lertaro.PluginSdk`, Lertaro includes a built-in **Flow Launcher Bridge** providing native-grade compatibility for the expansive Flow Launcher plugin community.

@@ -29,9 +29,6 @@ public static class Win32Helper
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
@@ -39,8 +36,6 @@ public static class Win32Helper
     }
 
     private const uint WM_GETTEXT = 0x000D;
-    private const int GWL_STYLE = -16;
-    private const int WS_VISIBLE = 0x10000000;
 
     public static string GetWindowText(IntPtr hWnd)
     {
@@ -75,16 +70,21 @@ public static class Win32Helper
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
-    public static bool IsLocalWindowVisible(IntPtr hWnd) => (GetWindowLong(hWnd, GWL_STYLE) & WS_VISIBLE) != 0;
-
-    public static List<IntPtr> GetVisibleContainers(IntPtr listerHwnd)
+    /// <summary>
+    /// The file-display containers of a lister: one per pane per TAB, so a lister showing one tab on
+    /// each side has two and one with a tab stack has more. An inactive tab keeps its container, merely
+    /// hidden, and that is what <paramref name="visibleOnly"/> selects against: the active-path logic
+    /// wants only the pane the user is looking at (a hidden tab's container must never answer for it),
+    /// while the opened-folder snapshot wants every tab the user has open.
+    /// </summary>
+    public static List<IntPtr> GetContainers(IntPtr listerHwnd, bool visibleOnly)
     {
         var containers = new List<IntPtr>();
         EnumChildWindows(listerHwnd, (hWnd, lParam) =>
         {
             if (GetClassName(hWnd).Equals("dopus.filedisplaycontainer", StringComparison.OrdinalIgnoreCase))
             {
-                if (IsWindowVisible(hWnd))
+                if (!visibleOnly || IsWindowVisible(hWnd))
                 {
                     containers.Add(hWnd);
                 }
