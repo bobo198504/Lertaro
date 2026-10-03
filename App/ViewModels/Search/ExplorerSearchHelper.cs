@@ -28,7 +28,8 @@ public static class ExplorerSearchHelper
         List<AppSearchResult> localMatches,
         CancellationToken token,
         Action? onMatchesChanged = null,
-        DirectChildrenListingCache? listingCache = null) => Task.Run(async () =>
+        DirectChildrenListingCache? listingCache = null,
+        bool folderScope = false) => Task.Run(async () =>
     {
         try
         {
@@ -38,6 +39,11 @@ public static class ExplorerSearchHelper
 
             DirectChildrenLocator.MatchInto(entries, contextDirectory, query, fileLimit, result =>
             {
+                // Over a dialog whose target takes only a folder the listing contributes folders only.
+                // Typed into an Explorer window the same listing has to keep offering files.
+                if (folderScope && !result.IsDir)
+                    return;
+
                 lock (localMatches)
                 {
                     localMatches.Add(SearchResultMapper.CreateUiResult(result, query, localMatches.Count, isApplication: false, contextDirectory));

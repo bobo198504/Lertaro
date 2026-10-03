@@ -93,30 +93,14 @@ public class TrayIconService : IDisposable
         try
         {
             _notifyIcon.Visible = false;
-            _notifyIcon.Visible = true;
+            // Re-add through the one rule that owns tray visibility: setting Visible = true here ignored
+            // the user's "hide tray icon" choice, so the icon came back every time explorer.exe restarted.
+            ApplyTrayIconVisible();
         }
         catch (Exception ex)
         {
             Logger.Log($"[TrayIconService] Failed to re-add tray icon after TaskbarCreated: {ex.Message}", LogLevel.Error);
         }
-    }
-
-    public void ShowBalloonTip(string title, string text, ToolTipIcon icon = ToolTipIcon.Info, Action? onClick = null)
-    {
-        if (_notifyIcon == null) return;
-        _notifyIcon.Visible = true;
-        if (onClick != null)
-        {
-            EventHandler balloonClicked = null!;
-            balloonClicked = (_, _) =>
-            {
-                _notifyIcon.BalloonTipClicked -= balloonClicked;
-                onClick();
-            };
-            _notifyIcon.BalloonTipClicked += balloonClicked;
-        }
-        _notifyIcon.ShowBalloonTip(5000, title, text, icon);
-        ApplyTrayIconVisible();
     }
 
     public void Dispose()

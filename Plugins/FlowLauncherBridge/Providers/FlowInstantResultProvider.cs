@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Flow.Launcher.Plugin;
 using Lertaro.PluginSdk.Abstractions.Plugins;
+using Lertaro.PluginSdk.Services;
 using Lertaro.Plugins.FlowLauncherBridge.Engine;
 
 namespace Lertaro.Plugins.FlowLauncherBridge.Providers;
@@ -27,55 +28,74 @@ public class FlowInstantResultProvider : IInstantResultProvider
         _host = host;
     }
 
-    public string Name => PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_PluginName");
+    public string Name => TranslationService.Get("FlowLauncherBridge_PluginName");
+    // Every word the user can type to reach a Flow plugin, published for the host so it strips them before
+    // matching/highlighting file names: the bridge's own word ("flow"), plus each loaded Flow plugin's own
+    // ActionKeyword -- typing one of those at the front dispatches straight to that plugin (see
+    // FlowQueryDispatcher.ParseQuery), so it is a trigger word by the same right, and before this published
+    // them the file list beside such a query was still matched and highlighted against "gh lertaro". Read
+    // live from the plugin's own settings and registry: the host never keeps a copy, and changing a word in
+    // Settings takes effect on the next keystroke.
+    public IReadOnlyList<string> QueryTriggerKeywords
+    {
+        get
+        {
+            var words = new List<string> { GetTriggerKeyword() };
+            if (_host == null)
+                return words;
 
-    private static string GetTriggerKeyword() => PluginSdk.Services.PluginSettingsService.GetSetting(
-            "Lertaro.Plugins.FlowLauncherBridge",
-            "TriggerKeyword",
-            "flow");
+            try
+            {
+                var seen = new HashSet<string>(words, StringComparer.OrdinalIgnoreCase);
+                foreach (var (keyword, plugins) in _host.KeywordPlugins)
+                {
+                    // A keyword only disabled plugins answer to is not offered at dispatch time
+                    // (FlowQueryDispatcher.GetTargetPlugins filters them out), so it must not be stripped
+                    // either -- the two sides have to agree on what the word means.
+                    if (string.IsNullOrWhiteSpace(keyword) || !plugins.Any(pair => !pair.Metadata.Disabled))
+                        continue;
+
+                    if (seen.Add(keyword))
+                        words.Add(keyword);
+                }
+            }
+            catch (Exception ex)
+            {
+                // A half-registered plugin list must not cost the user the bridge's own word -- a
+                // QueryTriggerKeywords that throws is a provider the host skips entirely.
+                PluginSdk.Logger.Log($"[FlowLauncherBridge] Reading action keywords failed: {ex.Message}", PluginSdk.LogLevel.Error);
+            }
+
+            return words;
+        }
+    }
+
+    private static string GetTriggerKeyword()
+    {
+        var value = PluginSettingsService.GetSetting(
+            "Lertaro.Plugins.FlowLauncherBridge", "TriggerKeyword", "flow");
+        return TriggerWord.Normalize(value) is { Length: > 0 } word ? word : "flow";
+    }
 
     public IEnumerable<InstantResultItem> GetInstantResults(string query)
     {
-        if (string.IsNullOrWhiteSpace(query))
-            return [];
-
         var trimmed = query.Trim();
         var keyword = GetTriggerKeyword();
-        if (string.IsNullOrWhiteSpace(keyword))
-            keyword = "flow";
 
-        if (trimmed.Equals(keyword, StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith(keyword + " ", StringComparison.OrdinalIgnoreCase))
+        // "flow" alone lists the loaded plugins; "flow <filter>" filters that list, and the sub-commands
+        // below parse their own argument the same way. Every one of them was a hand-rolled offset into the
+        // text ("install " is 8 characters, so filter[8..]) -- TriggerWord parses the same shape everywhere
+        // else in the search box, including the sub-commands here.
+        if (TriggerWord.TryMatch(query, keyword, out var filter))
         {
-            var filter = trimmed.StartsWith(keyword + " ", StringComparison.OrdinalIgnoreCase)
-                ? trimmed[(keyword.Length + 1)..].Trim()
-                : string.Empty;
-
-            if (filter.Equals("install", StringComparison.OrdinalIgnoreCase) || filter.StartsWith("install ", StringComparison.OrdinalIgnoreCase))
-            {
-                var listFilter = filter.StartsWith("install ", StringComparison.OrdinalIgnoreCase)
-                    ? filter[8..].Trim()
-                    : string.Empty;
-
+            if (TriggerWord.TryMatch(filter, "install", out var listFilter))
                 return FlowCommunityListHelper.QueryCommunityPlugins(_host, keyword, listFilter, trimmed);
-            }
 
-            if (filter.Equals("update", StringComparison.OrdinalIgnoreCase) || filter.StartsWith("update ", StringComparison.OrdinalIgnoreCase))
-            {
-                var updateFilter = filter.StartsWith("update ", StringComparison.OrdinalIgnoreCase)
-                    ? filter[7..].Trim()
-                    : string.Empty;
-
+            if (TriggerWord.TryMatch(filter, "update", out var updateFilter))
                 return FlowCommunityUpdateHelper.QueryPluginUpdates(_host, keyword, updateFilter, trimmed);
-            }
 
-            if (filter.Equals("uninstall", StringComparison.OrdinalIgnoreCase) || filter.StartsWith("uninstall ", StringComparison.OrdinalIgnoreCase))
-            {
-                var uninstallFilter = filter.StartsWith("uninstall ", StringComparison.OrdinalIgnoreCase)
-                    ? filter[10..].Trim()
-                    : string.Empty;
-
+            if (TriggerWord.TryMatch(filter, "uninstall", out var uninstallFilter))
                 return FlowCommunityUninstallHelper.QueryInstalledPluginsForUninstall(_host, uninstallFilter);
-            }
 
             var allPlugins = _host.GetAllPlugins();
             if (allPlugins.Count == 0 && string.IsNullOrEmpty(filter))
@@ -84,8 +104,8 @@ public class FlowInstantResultProvider : IInstantResultProvider
                 [
                     new InstantResultItem
                     {
-                        Title = PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_NoPluginsTitle"),
-                        Description = PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_NoPluginsDesc"),
+                        Title = TranslationService.Get("FlowLauncherBridge_NoPluginsTitle"),
+                        Description = TranslationService.Get("FlowLauncherBridge_NoPluginsDesc"),
                         ActionType = "None"
                     }
                 ];
@@ -99,7 +119,7 @@ public class FlowInstantResultProvider : IInstantResultProvider
                 return [];
 
             var items = new List<InstantResultItem>();
-            var kwPrefix = PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_KeywordPrefix");
+            var kwPrefix = TranslationService.Get("FlowLauncherBridge_KeywordPrefix");
             foreach (var pair in plugins)
             {
                 var kwSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -151,8 +171,8 @@ public class FlowInstantResultProvider : IInstantResultProvider
         if (string.IsNullOrEmpty(text))
             return false;
 
-        if (PluginSdk.Services.FuzzyMatchService.IsMatchFunc != null)
-            return PluginSdk.Services.FuzzyMatchService.IsMatch(pattern, text);
+        if (FuzzyMatchService.IsMatchFunc != null)
+            return FuzzyMatchService.IsMatch(pattern, text);
 
         return text.Contains(pattern, StringComparison.OrdinalIgnoreCase);
     }
@@ -235,7 +255,7 @@ public class FlowInstantResultProvider : IInstantResultProvider
                         // never resolve.
                         if (completed.IsCompletedSuccessfully)
                         {
-                            PluginSdk.Services.SearchRefreshService.RefreshIfMatches(current =>
+                            SearchRefreshService.RefreshIfMatches(current =>
                                 string.Equals(current?.Trim(), q.Trim(), StringComparison.OrdinalIgnoreCase));
                         }
                     }
@@ -251,8 +271,8 @@ public class FlowInstantResultProvider : IInstantResultProvider
         [
             new InstantResultItem
             {
-                Title = PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_QueryPendingTitle"),
-                Description = PluginSdk.Services.TranslationService.Get("FlowLauncherBridge_QueryPendingDesc"),
+                Title = TranslationService.Get("FlowLauncherBridge_QueryPendingTitle"),
+                Description = TranslationService.Get("FlowLauncherBridge_QueryPendingDesc"),
                 ActionType = "None"
             }
         ];

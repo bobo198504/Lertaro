@@ -47,6 +47,13 @@ internal static class ExplorerShellWindowsHelper
     public static bool IsExplorerWindow(IntPtr hwnd) => hwnd != IntPtr.Zero && HasClassName(hwnd, ExplorerWindowClass);
 
     /// <summary>
+    /// Whether an Explorer window exists at all, tab strip or not. The difference decides whether a
+    /// tab-less answer is evidence about the shell (it has no tabs) or only about timing (nothing is there
+    /// yet) -- see <see cref="ExplorerTabLocator.TabStripStateAfter"/>.
+    /// </summary>
+    public static bool HasExplorerWindow() => FindWindowEx(IntPtr.Zero, IntPtr.Zero, ExplorerWindowClass, null) != IntPtr.Zero;
+
+    /// <summary>
     /// The Explorer window a tab request should target: the one it was handed, else the foreground one,
     /// else the first Explorer window that actually has a tab.
     /// </summary>
@@ -252,6 +259,12 @@ internal static class ExplorerShellWindowsHelper
         return GetClassName(hwnd, buffer, buffer.Capacity) > 0
                && string.Equals(buffer.ToString(), className, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Whether this is Windows Explorer's own folder window -- the only kind that has the tab strip the
+    /// new-tab route drives. A third-party manager's window and the desktop are both <see langword="false"/>.
+    /// </summary>
+    internal static bool TargetsWindowsExplorer(IntPtr hwnd) => hwnd != IntPtr.Zero && HasClassName(hwnd, ExplorerWindowClass);
 
     private static bool PathsEqual(string? left, string? right) =>
         string.Equals(

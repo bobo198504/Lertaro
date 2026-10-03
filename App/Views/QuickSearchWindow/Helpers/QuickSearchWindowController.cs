@@ -17,6 +17,9 @@ public class QuickSearchWindowController
     private readonly QuickSearchWindowForegroundWatcher _foregroundWatcher;
     private readonly QuickSearchWindowFocusHelper _focusHelper;
 
+    // Where the window is sent when it hides; see the assignment in FinishHide for why.
+    private const double ParkedOffScreen = -32000;
+
     internal Lertaro.App.QuickSearchWindow Window => _window;
     internal QuickSearchWindowForegroundWatcher ForegroundWatcher => _foregroundWatcher;
     internal IntPtr LastActiveHwnd { get => _lastActiveHwnd; set => _lastActiveHwnd = value; }
@@ -224,10 +227,22 @@ public class QuickSearchWindowController
                 StayOpenChanged?.Invoke(false);
             }
 
-            _window.ViewModel.SearchQuery = string.Empty;
+            // KeepSearchText: leave the query (and its results) alone so the next summon resumes where the
+            // user left off. ShowSupport re-selects that text when the window comes back, so typing still
+            // replaces it instead of appending to it.
+            if (!UserSettings.Load().SearchWindow.KeepSearchText) _window.ViewModel.SearchQuery = string.Empty;
 
             _window.UpdateLayout();
             _window.Hide();
+            // Hiding really does take the window off screen (WS_VISIBLE is cleared, and hit-testing can no
+            // longer reach it), but Win32 still answers GetWindowRect with the rectangle it last occupied --
+            // which is a live-looking, on-screen, captioned window to any enumerator that leaves out the
+            // IsWindowVisible check. PixPin's element picker is one of them: it drew its selection box
+            // exactly where the previous summon had been. -32000 is where Windows itself parks windows it
+            // has disabled, and the value such enumerators recognise as "not a candidate". ShowWindow runs
+            // PositionWindow twice around the Show, so nothing has to undo this.
+            _window.Left = ParkedOffScreen;
+            _window.Top = ParkedOffScreen;
             PowerThrottlingHelper.WindowHidden("quick");
 
             InlineSearchManager.Instance.KeyboardHook.IsQuickSearchWindowVisible = false;
@@ -261,11 +276,17 @@ public class QuickSearchWindowController
             };
             fadeContent.BeginAnimation(UIElement.OpacityProperty, fadeOut);
 
-            Task.Run(async () =>
+            // A one-shot dispatcher timer, not a pool thread sleeping to a blocking Invoke: the thread was
+            // occupied purely to wait out an animation, supersession is already handled by the search
+            // version guard inside FinishHide, and if the app began shutting down just after a hide the
+            // Invoke threw inside a fire-and-forget task -- an unobserved exception with no context.
+            var fadeTimer = new DispatcherTimer { Interval = fadeOutDuration.TimeSpan };
+            fadeTimer.Tick += (_, _) =>
             {
-                await Task.Delay(fadeOutDuration.TimeSpan);
-                _window.Dispatcher.Invoke(FinishHide);
-            });
+                fadeTimer.Stop();
+                FinishHide();
+            };
+            fadeTimer.Start();
         }
         else
         {

@@ -251,25 +251,80 @@ public class PluginManager : PluginRegistry
         if (string.IsNullOrWhiteSpace(query)) yield break;
         if (windowType == PluginSdk.Abstractions.SearchWindowType.Inline && InlineSearchManager.Instance.ExplorerTracker.IsActiveWindowDialog) yield break;
 
-        var tempResult = new SimpleSearchResult
-        {
-            ContextDirectory = contextDirectory ?? string.Empty,
-            FullPath = string.Empty,
-            IsDir = false
-        };
-        var single = new SimpleSearchResult[] { tempResult };
+        var single = ProbeResults(contextDirectory);
 
         foreach (var action in _actions)
         {
-            if (action.Action.Keywords.Count == 0) continue;
-            if (!PluginPerformanceMonitor.Measure(action.Action, () => action.Action.IsVisibleInSearch(single, windowType))) continue;
-            if (!_filter.IsEnabled(ComponentFilter.GetDllName(action.Plugin), PluginComponentType.Action, action.Action.GetType().Name)) continue;
-            if (!PluginPerformanceMonitor.Measure(action.Action, () => action.Action.CanExecute(single))) continue;
+            // Every call in here is arbitrary plugin code, and PluginPerformanceMonitor rethrows what a
+            // plugin throws on purpose (so its counters stay honest). Without per-action isolation one
+            // bad IsVisibleInSearch/CanExecute costs the user every OTHER action's match too, because
+            // the exception walks out of this iterator and aborts the whole query -- the instant-result
+            // path already isolates each provider the same way. A local instead of a direct yield
+            // because C# forbids yield inside a try with a catch.
+            PluginSearchActionMatch? matched = null;
+            try
+            {
+                if (action.Action.Keywords.Count != 0
+                    && PluginPerformanceMonitor.Measure(action.Action, () => action.Action.IsVisibleInSearch(single, windowType))
+                    && _filter.IsEnabled(ComponentFilter.GetDllName(action.Plugin), PluginComponentType.Action, action.Action.GetType().Name)
+                    && PluginPerformanceMonitor.Measure(action.Action, () => action.Action.CanExecute(single)))
+                {
+                    var match = KeywordMatcher.TryMatchKeyword(query, action.Action.Keywords);
+                    if (match != null)
+                        matched = new PluginSearchActionMatch(action, match.Value.Keyword, match.Value.ArgumentText);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[PluginManager] Search action '{action.Action.GetType().Name}' failed: {ex}", LogLevel.Error);
+            }
 
-            var match = KeywordMatcher.TryMatchKeyword(query, action.Action.Keywords);
-            if (match == null) continue;
+            if (matched != null) yield return matched;
+        }
+    }
 
-            yield return new PluginSearchActionMatch(action, match.Value.Keyword, match.Value.ArgumentText);
+    // The one synthetic result an action's IsVisibleInSearch is asked about. At query time there is no
+    // real search result to show it yet -- SearchActionItems and ActionsVisibleIn must ask that question
+    // the same way, or the host strips a command word for a row the window will never offer (or keeps one
+    // it will).
+    private static SimpleSearchResult[] ProbeResults(string? contextDirectory) =>
+        [
+            new SimpleSearchResult
+            {
+                ContextDirectory = contextDirectory ?? string.Empty,
+                FullPath = string.Empty,
+                IsDir = false
+            }
+        ];
+
+    // The actions whose command word the search box can actually answer to in this window: the same
+    // component-enabled and IsVisibleInSearch gates SearchActionItems applies, without the keyword match
+    // (the caller holds the words, not a query to match them against). PluginTriggerQuery consults this
+    // before it takes a command word off the file search, so CoreExtensions' inline-only mkdir/touch/cmd
+    // keywords stop turning "mkdir notes" into a search for "notes" alone in the quick window, where no
+    // such row is ever offered.
+    public IEnumerable<PluginActionRegistration> ActionsVisibleIn(PluginSdk.Abstractions.SearchWindowType windowType)
+    {
+        var probe = ProbeResults(null);
+        foreach (var action in _actions)
+        {
+            bool visible;
+            try
+            {
+                visible = action.Action.Keywords.Count != 0
+                    && _filter.IsEnabled(ComponentFilter.GetDllName(action.Plugin), PluginComponentType.Action, action.Action.GetType().Name)
+                    && PluginPerformanceMonitor.Measure(action.Action, () => action.Action.IsVisibleInSearch(probe, windowType));
+            }
+            catch (Exception ex)
+            {
+                // Arbitrary plugin code, same isolation SearchActionItems applies: one action throwing
+                // must not cost the user every OTHER plugin's trigger words with it.
+                Logger.Log($"[PluginManager] Search action '{action.Action.GetType().Name}' failed its visibility check: {ex}", LogLevel.Error);
+                continue;
+            }
+
+            if (visible)
+                yield return action;
         }
     }
 

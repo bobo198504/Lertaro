@@ -21,11 +21,13 @@ public sealed class LoggerTests
     [TestCleanup]
     public void TearDown()
     {
+        // Logger holds the log file open for the process lifetime, so this test's directory cannot be
+        // deleted while it is the current log. Hand the handle to a throwaway path first.
+        Logger.Initialize("release.log", baseDirectory: Path.Combine(Path.GetTempPath(), "LertaroLoggerRelease"));
         try { Directory.Delete(_baseDir, recursive: true); } catch { }
     }
 
-    private IReadOnlyList<string> Lines() =>
-        File.ReadAllLines(_logPath);
+    private IReadOnlyList<string> Lines() => Logger.ReadLogLines(_logPath);
 
     [TestMethod]
     public void Log_DistinctMessages_EachWrittenOnce()
@@ -99,5 +101,97 @@ public sealed class LoggerTests
         var lines = Lines();
         Assert.HasCount(2, lines); // "Log cleared" + the message as a fresh first occurrence
         Assert.IsEmpty(lines.Where(l => l.Contains("(repeated x", StringComparison.Ordinal)).ToList());
+    }
+
+    // The App's log page reports a clear to the user, so it needs to know whether one happened -- the
+    // Service/Hook tabs ask their owning process over IPC and take this return value as the answer.
+    [TestMethod]
+    public void ClearCurrentLog_ReturnsTrueAndLeavesOnlyTheBanner()
+    {
+        Logger.Log("before the clear", LogLevel.Warn);
+
+        Assert.IsTrue(Logger.ClearCurrentLog());
+
+        var lines = Lines();
+        Assert.HasCount(1, lines);
+        Assert.Contains("Log cleared", lines[0]);
+    }
+
+    [TestMethod]
+    public void ClearCurrentLog_ReturnsFalseWhenTheLogFileCannotBeReopened()
+    {
+        // Recreating the writer is what a clear does, and a read-only file refuses FileMode.Create -- the
+        // same class of failure the old swallow-on-failure body hid.
+        File.SetAttributes(_logPath, FileAttributes.ReadOnly);
+        try
+        {
+            Assert.IsFalse(Logger.ClearCurrentLog());
+            Assert.DoesNotContain("Log cleared", string.Join('\n', Lines()));
+        }
+        finally
+        {
+            File.SetAttributes(_logPath, FileAttributes.Normal);
+        }
+    }
+
+    [TestMethod]
+    public void Initialize_Overwrite_StartsFreshLog()
+    {
+        Logger.Log("previous session", LogLevel.Warn);
+
+        Logger.Initialize("test.log", baseDirectory: _baseDir, overwrite: true);
+
+        var lines = Lines();
+        Assert.HasCount(1, lines);
+        Assert.Contains("Log initialized", lines[0]);
+    }
+
+    [TestMethod]
+    public void Initialize_AppendUnderSizeCap_KeepsPreviousRun()
+    {
+        Logger.Log("previous session", LogLevel.Warn);
+
+        Logger.Initialize("test.log", baseDirectory: _baseDir, overwrite: false);
+
+        var lines = Lines();
+        Assert.HasCount(3, lines); // init line + the previous run's message + the resume marker
+        Assert.Contains("previous session", lines[1]);
+        Assert.Contains("Log resumed", lines[2]);
+    }
+
+    [TestMethod]
+    public void Initialize_AppendPastSizeCap_StartsFreshLog()
+    {
+        AppendRaw(new string('x', 1024 * 1024));
+
+        Logger.Initialize("test.log", baseDirectory: _baseDir, overwrite: false);
+
+        var lines = Lines();
+        Assert.HasCount(1, lines);
+        Assert.Contains("Log initialized", lines[0]);
+    }
+
+    [TestMethod]
+    public void WriteLine_PastSizeCap_RollsTheLogOver()
+    {
+        var chunk = new string('x', 4000);
+        for (var i = 0; i < 400; i++) // ~1.6 MB of distinct lines, so the cap is crossed mid-run
+            Logger.Log($"{chunk} line {i}", LogLevel.Warn);
+
+        // Assert.IsLessThan takes (upperBound, value).
+        Assert.IsLessThan(1024L * 1024L, new FileInfo(_logPath).Length,
+            "a single long run must not grow the log past the cap");
+        Assert.Contains("Log rolled over", string.Join('\n', Lines()));
+    }
+
+    /// <summary>
+    /// Writes around the open log handle: Logger keeps one writer on the file for the process lifetime,
+    /// so a plain File.AppendAllText here would be a sharing violation.
+    /// </summary>
+    private void AppendRaw(string content)
+    {
+        using var stream = new FileStream(_logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        using var writer = new StreamWriter(stream);
+        writer.Write(content);
     }
 }

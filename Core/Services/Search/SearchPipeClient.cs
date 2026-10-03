@@ -15,7 +15,18 @@ internal sealed class SearchPipeClient
     private static async Task<NamedPipeClientStream> GetPipeAsync(CancellationToken token)
     {
         var pipe = new NamedPipeClientStream(".", "LertaroPipe", PipeDirection.InOut, PipeOptions.Asynchronous);
-        await pipe.ConnectAsync(2000, token).ConfigureAwait(false);
+        try
+        {
+            await pipe.ConnectAsync(2000, token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // This is the per-keystroke streaming entry point, and connect failures are expected for as
+            // long as the service is cold, so an undisposed stream here drops one kernel handle per typed
+            // character until the service comes up. The non-streaming path already uses `using var pipe`.
+            pipe.Dispose();
+            throw;
+        }
         // The service listening is the readiness signal: until this first succeeds, connect
         // failures elsewhere log as cold-start noise instead of real faults.
         ServicePipeReadinessGate.Instance.MarkConnected();
@@ -56,6 +67,16 @@ internal sealed class SearchPipeClient
     {
         var resp = await SendPipeCommandAsync(new SearchRequestMessage { Id = SearchRequestId.LaunchHook, RequestElevation = requestElevation }, token).ConfigureAwait(false);
         return resp.Kind == PipeResponseKind.HookLaunched ? (true, resp.Pid, null) : (false, 0, resp.Message);
+    }
+
+    // Asks the service to install a staged update package (see UpdateApplyRequestHandler): it verifies the
+    // signature itself, unpacks the payload somewhere the caller can't write, and hands it to an elevated
+    // process in this session. Ok means "the updater is running and this process should quit now" -- the
+    // update itself is no longer this process's to report on.
+    public async Task<(bool Ok, string? Error)> RequestApplyUpdateAsync(string sourceDir, CancellationToken token = default)
+    {
+        var resp = await SendPipeCommandAsync(new SearchRequestMessage { Id = SearchRequestId.ApplyUpdate, UpdateSourceDir = sourceDir }, token).ConfigureAwait(false);
+        return resp.Kind == PipeResponseKind.Ok ? (true, null) : (false, resp.Message);
     }
 
     // Fire-and-forget, called whenever a search window closes/hides (mirrors ShellIconHelper.ClearCache()'s

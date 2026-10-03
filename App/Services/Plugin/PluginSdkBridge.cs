@@ -3,6 +3,7 @@ using Lertaro.Core.SearchIndex;
 using Lertaro.Core.Services.Plugin.DirectoryIndex;
 using Lertaro.App.Helpers;
 using Lertaro.App.Services.AppWindow;
+using Lertaro.App.Services.Tray;
 using Lertaro.App.ViewModels.Settings.Plugins;
 namespace Lertaro.App.Services.Plugin;
 
@@ -56,6 +57,12 @@ internal static class PluginSdkBridge
         PluginSdk.Services.PluginMessageBoxService.ShowFunc =
             (messageBoxText, caption, button, icon, _) =>
                 Views.Controls.Dialogs.CustomMessageBox.Show(messageBoxText, caption, button, icon);
+
+        // Plugin notifications are the launcher's own windows, not the shell's: the toast pipeline cannot be
+        // pointed at a chosen monitor, given an exact duration, or relied on to display at all outside a
+        // packaged app. Whatever the SDK hands over as the calling assembly is what names the sender on the
+        // card, so a plugin cannot pick the attribution a user reads.
+        PluginSdk.Services.PluginNotificationService.ShowRequestFunc = Notifications.NotificationService.Show;
 
         // Wire up directory opening and file locating to respect configured file managers.
         PluginSdk.Services.ExplorerService.OpenDirectoryFunc = (directoryPath, fileNameOrFilePath) =>
@@ -198,6 +205,17 @@ internal static class PluginSdkBridge
         // reimplementing a literal-substring-only highlighter that misses fuzzy/alias matches
         PluginSdk.Services.FuzzyMatchService.GetHighlightMaskFunc = FuzzyMatcher.ComputeHighlightMask;
         PluginSdk.Services.FuzzyMatchService.GetMatchScoreFunc = FuzzyMatcher.ComputeMatchWeight;
+
+        // Providers get the untouched box text so a trigger word they own is still there to recognise, and
+        // with it the host's own trailing ":token" syntax. A provider that searches the remainder AS TEXT
+        // (ContentSearch's full-text query) has to take the tokens back off, and this is the only place
+        // that knows the token syntax and the configured prefix character.
+        PluginSdk.Services.SearchQueryService.StripQueryTokensFunc = query =>
+        {
+            var prefix = UserSettings.Load().GlobalTokenPrefix;
+            return Core.SearchIndex.Query.SearchQuerySortParser.Strip(
+                query, out _, !string.IsNullOrEmpty(prefix) ? prefix[0] : ':');
+        };
 
         // Wire up the directory search delegate for plugins using CoreDirectoryIndexManager
         PluginSdk.Services.DirectoryIndexerService.SearchPluginDirectoriesFunc = async (pluginId, query, token) =>

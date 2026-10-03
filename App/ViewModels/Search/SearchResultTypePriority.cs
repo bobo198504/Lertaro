@@ -33,12 +33,14 @@ public static class SearchResultTypePriority
     }
 
     // The reverse lookup for UserSettings.ResultTypeTriggers -- a handful of entries at most, so a
-    // linear scan beats maintaining a second reversed dictionary in sync.
+    // linear scan beats maintaining a second reversed dictionary in sync. Compared case-insensitively,
+    // like every other keyword comparison in the search box: a configured "A" has to fire for a typed "a",
+    // or a trigger character would be the one rule silently depending on the Shift key.
     public static string? ResolveTrigger(char firstChar, IReadOnlyDictionary<string, string> triggers)
     {
         foreach (var (typeId, trigger) in triggers)
         {
-            if (trigger.Length == 1 && trigger[0] == firstChar)
+            if (trigger is { Length: 1 } && char.ToUpperInvariant(trigger[0]) == char.ToUpperInvariant(firstChar))
                 return typeId;
         }
         return null;
@@ -68,8 +70,15 @@ public static class SearchResultTypePriority
     {
         if (query.Length == 0)
             return query;
-        return ResolveTrigger(query[0], UserSettings.Load().ResultTypeTriggers) != null
-            ? query.Substring(1)
-            : query;
+        return StripLeadingTrigger(query, UserSettings.Load().ResultTypeTriggers);
+    }
+
+    // Same rule against a caller-supplied trigger table, for the paths that already have the settings
+    // graph loaded or need the decision without touching it (see SearchResultExecutionHelper).
+    public static string StripLeadingTrigger(string query, IReadOnlyDictionary<string, string> triggers)
+    {
+        if (query.Length == 0)
+            return query;
+        return ResolveTrigger(query[0], triggers) != null ? query.Substring(1) : query;
     }
 }

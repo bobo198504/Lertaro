@@ -1,28 +1,80 @@
+using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using System.Windows.Media;
 
 namespace Lertaro.App.Views.InlineSearchWindow.Helpers;
 
 /// <summary>
-/// The screen side of the inline card's height budget: which monitor the card has to share, and how much of
-/// it the card may take.
+/// The screen side of the inline card: which monitor it is on, that monitor's DPI scale, the working area it
+/// has to stay inside, and how much vertical room it may take.
 /// </summary>
 /// <remarks>
-/// Split out purely to keep InlineCardSizingSupport under the repo's per-file line limit; this class has no
-/// state of its own, it always answers for the one window it is handed. The arithmetic itself lives in
-/// <see cref="InlineCardMetrics.AvailableCardHeight"/> so it stays testable -- what needs a live desktop is
-/// only reading the screen, the DPI and the anchored window's rectangle.
+/// Split out purely to keep the two consumers (InlineCardSizingSupport and InlineSearchWindowPositioner)
+/// under the repo's per-file line limit -- and so they cannot disagree about which screen they are talking
+/// about; the classes themselves have no state and always answer for the one window they are handed. The
+/// arithmetic lives in <see cref="InlineCardMetrics"/> so it stays testable; what needs a live desktop is only
+/// reading the screen, the DPI and the anchored window's rectangle.
 /// </remarks>
 internal static class InlineCardSpace
 {
+    private const int MdtEffectiveDpi = 0;
+    private const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("Shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    /// <summary>The monitor a window is on, for the DPI that window is being rendered at.</summary>
+    internal static IntPtr MonitorForWindow(IntPtr hwnd) => MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+
+    /// <summary>The monitor a point is on, used before this window has a handle to ask about.</summary>
+    internal static IntPtr MonitorForPoint(Point point) =>
+        MonitorFromPoint(new POINT { X = point.X, Y = point.Y }, MonitorDefaultToNearest);
+
+    /// <summary>The monitor's effective DPI as a scale factor, 1.0 when it cannot be read.</summary>
+    internal static (double X, double Y) DpiScaleFor(IntPtr monitor)
+    {
+        if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, MdtEffectiveDpi, out var dpiX, out var dpiY) == 0 && dpiX > 0 && dpiY > 0)
+            return (dpiX / 96.0, dpiY / 96.0);
+        return (1.0, 1.0);
+    }
+
+    /// <summary>
+    /// The working area the card is being docked inside: the anchored window's monitor when there is one, this
+    /// window's own otherwise (or the mouse's, before this window has a handle). Empty when there is neither.
+    /// </summary>
+    internal static Rectangle WorkingAreaFor(Lertaro.App.InlineSearchWindow window, Point mousePosition)
+    {
+        var tracker = window.Manager.ExplorerTracker;
+        var hwnd = new WindowInteropHelper(window).Handle;
+
+        if (tracker.IsDesktop)
+        {
+            var screen = window.IsVisible && hwnd != IntPtr.Zero ? Screen.FromHandle(hwnd) : Screen.FromPoint(mousePosition);
+            return screen.WorkingArea;
+        }
+
+        return tracker.ActiveHwnd != IntPtr.Zero ? Screen.FromHandle(tracker.ActiveHwnd).WorkingArea : Rectangle.Empty;
+    }
+
     /// <summary>How much vertical room the card has right now, in DIP.</summary>
     /// <remarks>
     /// The monitor is the ANCHORED window's when there is one -- that is the screen this card has to share
     /// with it -- and this window's own otherwise. This window's DPI converts the physical working area back
     /// to DIP: the positioner places the card on the anchored window's monitor, so the two agree once it has
     /// settled, and a single wrong pass before that only re-sizes the card once.
+    /// <paramref name="fullCardHeight"/> is what the caller counts as a card worth hanging outside at all,
+    /// which only the caller can price: it is the card's own chrome and row budget.
     /// </remarks>
-    internal static double AvailableHeight(Lertaro.App.InlineSearchWindow window)
+    internal static double AvailableHeight(Lertaro.App.InlineSearchWindow window, double fullCardHeight)
     {
         var tracker = window.Manager.ExplorerTracker;
         var dpiScaleY = VisualTreeHelper.GetDpi(window).DpiScaleY;
@@ -37,14 +89,28 @@ internal static class InlineCardSpace
 
         double activeWindowHeight = 0;
         double spaceBelow = 0;
+        double spaceBelowAnchorTop = double.MaxValue;
         if (tracker.ActiveHwnd != IntPtr.Zero && !tracker.IsDesktop
             && tracker.TryGetActiveWindowRect(out var rect)
             && rect.Bottom - rect.Top > 100 && rect.Right - rect.Left > 100)
         {
             activeWindowHeight = (rect.Bottom - rect.Top) / dpiScaleY;
-            spaceBelow = (screen.WorkingArea.Bottom - rect.Bottom) / dpiScaleY;
+            // To the MONITOR's bottom edge, taskbar included: the placement's room-below question is answered
+            // the same way, and a budget measured from one line with the card hung from another is what made
+            // a card sized to sit outside a window get drawn over it.
+            spaceBelow = (screen.Bounds.Bottom - rect.Bottom) / dpiScaleY;
+
+            // The edge the card's own top is anchored to when it has to lie over the window -- the same
+            // choice CalculatePhysTop makes, so the height decided here is the height that placement can
+            // actually keep on screen. Read from the positioner's last applied placement rather than asked of
+            // the dialog again: this runs on the WPF UI thread, and a dialog whose widgets carry no window
+            // handles answers that question through a synchronous call into its own process. No file list
+            // remembered yet means the window's own top edge, which is what the placement falls back to too.
+            var anchorTop = window.Positioner.PlacedFileList is { } fileList ? fileList.Top : rect.Top;
+            spaceBelowAnchorTop = Math.Max(0, screen.WorkingArea.Bottom - anchorTop) / dpiScaleY;
         }
 
-        return InlineCardMetrics.AvailableCardHeight(screen.WorkingArea.Height / dpiScaleY, activeWindowHeight, spaceBelow);
+        return InlineCardMetrics.AvailableCardHeight(
+            screen.WorkingArea.Height / dpiScaleY, activeWindowHeight, spaceBelow, spaceBelowAnchorTop, fullCardHeight);
     }
 }

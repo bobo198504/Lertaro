@@ -14,6 +14,13 @@ internal static class UserSettingsPersistence
 
     public static string SettingsPath => Path.Combine(UserDataDirectory.Value, "user-settings.json");
     private const int BackupCount = 5;
+
+    /// <summary>
+    /// One shared instance: a freshly constructed <see cref="JsonSerializerOptions"/> carries no cached
+    /// contract metadata, so every save would re-derive the serializer for the whole settings graph.
+    /// </summary>
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+
     private static UserSettings? _cachedSettings;
     private static string? _lastJsonOnDisk;
     private static readonly object CacheLock = new();
@@ -73,7 +80,7 @@ internal static class UserSettingsPersistence
             catch (IOException)
             {
                 if (--retries <= 0) throw;
-                Task.Delay(50).Wait();
+                Thread.Sleep(50);
             }
         }
     }
@@ -100,20 +107,40 @@ internal static class UserSettingsPersistence
             settings.Hotkeys.ToggleWindowHotkey = new HotkeyPageSettings().ToggleWindowHotkey;
     }
 
-    public static void Save(UserSettings settings)
+    /// <summary>
+    /// Writes <paramref name="settings"/> to <see cref="SettingsPath"/>. Returns false when the write
+    /// failed: the reason is logged and the cache is left pointing at what is actually on disk, so
+    /// <see cref="Load"/> never reports a change nothing persisted, and the caller's next change retries.
+    /// </summary>
+    public static bool Save(UserSettings settings)
     {
         NormalizeHotkeys(settings);
         Directory.CreateDirectory(Logger.UserDataDir);
         lock (CacheLock)
         {
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            if (json == _lastJsonOnDisk) { _cachedSettings = settings; return; }
-            RotateBackups(SettingsPath);
-            AtomicFileStore.Write(SettingsPath, json);
+            var json = JsonSerializer.Serialize(settings, WriteOptions);
+            if (json == _lastJsonOnDisk) { _cachedSettings = settings; return true; }
+            if (!TryPersist(json, SettingsPath)) return false;
             _cachedSettings = settings;
             _lastJsonOnDisk = json;
         }
         ExclusionRuleSet.InvalidateCache();
+        return true;
+    }
+
+    internal static bool TryPersist(string json, string settingsPath)
+    {
+        try
+        {
+            RotateBackups(settingsPath);
+            AtomicFileStore.Write(settingsPath, json);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Log($"[UserSettings] Save failed, settings on disk left unchanged: {ex.Message}", LogLevel.Error);
+            return false;
+        }
     }
 
     public static void RotateBackups(string filePath, int maxBackups = 5) => UserSettingsBackupStore.Rotate(filePath, maxBackups);

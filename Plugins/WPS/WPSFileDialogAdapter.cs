@@ -28,11 +28,18 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
     public string Name => "WPS";
 
     /// <summary>
-    /// The path goes into the dialog's file-name box, which takes a folder or a file exactly as an
-    /// Open/Save dialog's does, so callers should keep passing whichever the user picked -- hence the
-    /// default false rather than the folder-only behaviour the archive-tool adapters opt into.
+    /// Which of the two shapes the matched dialog turned out to have. An Open/Save dialog has a file-name
+    /// editor in its bottom row, which takes a folder or a file; the folder-picking ones (WPS's 上传到云 and
+    /// 导入文件夹) have nothing but their own buttons there, so they can only ever be fed a directory -- and
+    /// through the address row rather than that row, see <see cref="NavigateTo"/>.
     /// </summary>
-    public bool TargetIsFolderOnly => false;
+    /// <remarks>
+    /// Set by <see cref="CanHandle"/> for whichever hwnd it last matched, the way
+    /// StandardFileDialogAdapter does it: this adapter is a long-lived singleton tracking one dialog at a time.
+    /// </remarks>
+    public bool TargetIsFolderOnly => _lastMatchWasFolderOnly;
+
+    private bool _lastMatchWasFolderOnly;
 
     /// <summary>
     /// Two free string comparisons, then the one call that costs something.
@@ -45,9 +52,18 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
     /// window and frame, so in practice nothing but the dialog itself ever reaches the third test.
     /// </remarks>
     public bool CanHandle(IntPtr hwnd, string className, string processName)
-        => WPSDialogIdentity.IsWPSProcess(processName)
-            && WPSDialogIdentity.CouldBeDialogWindowClass(className)
-            && WPSDialogAutomation.GetDialog(hwnd) != null;
+    {
+        if (!WPSDialogIdentity.IsWPSProcess(processName)
+            || !WPSDialogIdentity.CouldBeDialogWindowClass(className))
+            return false;
+
+        var dialog = WPSDialogAutomation.GetDialog(hwnd);
+        if (dialog == null)
+            return false;
+
+        _lastMatchWasFolderOnly = !WPSDialogAutomation.HasFileNameEditor(dialog);
+        return true;
+    }
 
     /// <summary>
     /// Always null: this dialog does not report the folder it is showing.
@@ -63,8 +79,9 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
     public string? GetCurrentPath(IntPtr hwnd) => null;
 
     /// <summary>
-    /// Puts the path in the file-name box and commits it, which is how this dialog is navigated: typing a
-    /// folder and pressing Enter moves the view into it, and typing a file opens it.
+    /// Puts the path where this dialog can read it and commits it: into the file-name box of an Open/Save
+    /// dialog, whose box moves the view into a folder and opens a file, or into the address row of the
+    /// folder-picking dialogs that have no such box.
     /// </summary>
     public bool NavigateTo(IntPtr hwnd, string targetPath)
     {
@@ -74,6 +91,12 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
         var dialog = WPSDialogAutomation.GetDialog(hwnd);
         if (dialog == null)
             return false;
+
+        // The folder-picking shapes of this dialog have no field in their bottom row to type into at all, so
+        // the only way in is their address row. Asking the retrying editor lookup anyway would spend its whole
+        // 500ms budget and then report failure for a dialog that was never going to answer it.
+        if (!WPSDialogAutomation.HasFileNameEditor(dialog))
+            return WPSDialogAutomation.TryNavigateThroughLocationBar(hwnd, targetPath);
 
         var editor = WPSDialogAutomation.FindFileNameEditor(dialog, hwnd);
         if (editor == null)
@@ -105,7 +128,8 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
     /// The whole dialog's bounds, matching what every other dialog adapter reports: the host rejects a
     /// dock rect under 100px tall as "not a real target" (InlineSearchWindowPositioner.PositionWindowCore)
     /// and would silently fall back to a fixed screen position if this returned the file-name row alone.
-    /// Measured on the handle the dialog actually lives on, which is not always the one passed in.
+    /// Where that row actually is -- which is what the card lines itself up with horizontally -- is a
+    /// separate answer, in <see cref="TryGetTargetFieldBounds"/>.
     /// </summary>
     public bool GetDockBounds(IntPtr hwnd, out AdapterRect rect)
     {
@@ -121,6 +145,101 @@ public class WPSFileDialogAdapter : IFileDialogAdapter
 
         rect = new AdapterRect { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Bottom };
         return true;
+    }
+
+    /// <summary>
+    /// Where the file-name box actually sits inside that dialog, so the card can hang under it rather than
+    /// under the middle of a dialog whose box starts a third of the way in.
+    /// </summary>
+    public bool TryGetTargetFieldBounds(IntPtr hwnd, out AdapterRect bounds) =>
+        TryGetAnchored(hwnd, _targetField, WPSDialogAutomation.TryGetFileNameEditorBounds, out bounds);
+
+    /// <summary>
+    /// The dialog's file list, which is where the card hangs from when it has to lie over the dialog.
+    /// </summary>
+    public bool TryGetFileListBounds(IntPtr hwnd, out AdapterRect bounds) =>
+        TryGetAnchored(hwnd, _fileList,
+            h => WPSDialogAutomation.TryGetWidgetBounds(h, WPSDialogIdentity.FileListAreaClassName), out bounds);
+
+    private readonly MeasuredRect _targetField = new(), _fileList = new();
+
+    /// <summary>
+    /// One of the dialog's inner rects, measured through UI Automation at most once per dialog size.
+    /// </summary>
+    /// <remarks>
+    /// Only the first answer per dialog size costs anything: WPS lays its widgets out relative to the dialog's
+    /// own edges, so a dialog that has merely been dragged somewhere keeps its offsets inside itself, and those
+    /// are translated rather than re-measured. A dialog that changed size is a different matter -- there the
+    /// layout really did change -- and gets exactly one fresh, non-retrying UI Automation attempt. Failing that
+    /// attempt returns false, which is the honest answer and costs the user nothing but the placement the
+    /// dialog always had.
+    ///
+    /// That attempt is still a synchronous call into WPS's UI thread, and a WPS that is busy or tearing the
+    /// dialog down does not answer it: UI Automation's own timeout does not bound reaching the element in the
+    /// first place, so this can wait indefinitely rather than the 500ms the retry budget suggests. Callers
+    /// that cannot afford to block -- the card's placement path, which runs on a WPF thread and froze once
+    /// this was asked of it directly -- have to call from their own worker thread.
+    /// </remarks>
+    private static bool TryGetAnchored(IntPtr hwnd, MeasuredRect cache, Func<IntPtr, System.Windows.Rect?> measure, out AdapterRect bounds)
+    {
+        bounds = default;
+        if (!WPSWindowInterop.TryGetDialogRect(hwnd, out var dialogRect))
+            return false;
+
+        var dialog = new AdapterRect { Left = dialogRect.Left, Top = dialogRect.Top, Right = dialogRect.Right, Bottom = dialogRect.Bottom };
+        if (cache.Hwnd == hwnd && SameSize(dialog, cache.Dialog))
+        {
+            bounds = Translate(cache.Rect, cache.Dialog, dialog);
+            return true;
+        }
+
+        var measured = measure(hwnd);
+        if (measured == null)
+            return false;
+
+        // UI Automation reports physical screen pixels, the same space TryGetDialogRect answers in for a
+        // DPI-aware client, so nothing here is scaled -- and a Qt window makes DWM's extended-frame call
+        // fail with E_INVALIDARG, which means both of these really do come from GetWindowRect's system.
+        cache.Hwnd = hwnd;
+        cache.Dialog = dialog;
+        cache.Rect = new AdapterRect
+        {
+            Left = (int)measured.Value.Left,
+            Top = (int)measured.Value.Top,
+            Right = (int)measured.Value.Right,
+            Bottom = (int)measured.Value.Bottom,
+        };
+        bounds = cache.Rect;
+        return true;
+    }
+
+    // One inner rect, measured inside one particular dialog rect. Hwnd stays Zero until a measurement
+    // exists, and no live window is Zero, so that alone marks the cache as empty.
+    private sealed class MeasuredRect
+    {
+        public IntPtr Hwnd;
+        public AdapterRect Dialog;
+        public AdapterRect Rect;
+    }
+
+    internal static bool SameSize(AdapterRect a, AdapterRect b) =>
+        a.Right - a.Left == b.Right - b.Left && a.Bottom - a.Top == b.Bottom - b.Top;
+
+    /// <summary>
+    /// <paramref name="field"/> re-expressed for a window that has travelled from
+    /// <paramref name="from"/> to <paramref name="to"/>.
+    /// </summary>
+    internal static AdapterRect Translate(AdapterRect field, AdapterRect from, AdapterRect to)
+    {
+        var dx = to.Left - from.Left;
+        var dy = to.Top - from.Top;
+        return new AdapterRect
+        {
+            Left = field.Left + dx,
+            Top = field.Top + dy,
+            Right = field.Right + dx,
+            Bottom = field.Bottom + dy,
+        };
     }
 
     /// <summary>

@@ -96,7 +96,7 @@
                 </Grid.Style>
                 
                 <!-- Side-by-side name and path for standard results -->
-                <Grid inline:InlineResultColumnsBehavior.IsResultGrid="True">
+                <Grid>
                     <Grid.Style>
                         <Style TargetType="Grid">
                             <Setter Property="Visibility" Value="Visible"/>
@@ -111,8 +111,12 @@
                         </Style>
                     </Grid.Style>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="7*"/>
-                        <ColumnDefinition Width="3*"/>
+                        <!-- 60/40 of the width left after the icon and the shortcut badge (both Auto
+                             columns of the outer grid): the name is what the user reads first and the
+                             old 35/65 split starved it while the path, right-aligned and compacted,
+                             rarely needed its share. -->
+                        <ColumnDefinition Width="60*"/>
+                        <ColumnDefinition Width="40*"/>
                     </Grid.ColumnDefinitions>
 
                     <ScrollViewer Grid.Column="0" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" Focusable="False"
@@ -133,8 +137,7 @@
                                    Foreground="{DynamicResource TextPrimary}"
                                    local:TextHighlighter.HighlightText="{Binding SearchQuery}"
                                    local:TextHighlighter.HighlightBrush="{DynamicResource AccentBlue}"
-                                   Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}"
-                                   TextTrimming="CharacterEllipsis"
+                                   helpers:MarqueeBehavior.EnableMarquee="True"
                                    FontSize="14"
                                    VerticalAlignment="Center">
                             <TextBlock.Style>
@@ -172,9 +175,7 @@
                                    FontSize="11"
                                    Foreground="{DynamicResource TextSecondary}"
                                    VerticalAlignment="Center"
-                                   inline:InlinePathDisplayBehavior.IsEnabled="True"
-                                   Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}"
-                                   TextTrimming="CharacterEllipsis"
+                                   helpers:MarqueeBehavior.EnableMarquee="True"
                                    TextAlignment="Right"
                                    local:TextHighlighter.HighlightText="{Binding SearchQuery}"
                                    local:TextHighlighter.HighlightBrush="{DynamicResource AccentBlue}">

@@ -17,9 +17,9 @@ public sealed class ChromiumBookmarksReaderTests
         }
     }
 
-    private static string WriteBookmarksFile(TempDirectory dir, string json)
+    private static string WriteBookmarksFile(TempDirectory dir, string json, string fileName = "Bookmarks")
     {
-        var path = Path.Combine(dir.Path, "Bookmarks");
+        var path = Path.Combine(dir.Path, fileName);
         File.WriteAllText(path, json);
         return path;
     }
@@ -30,6 +30,163 @@ public sealed class ChromiumBookmarksReaderTests
         using var dir = new TempDirectory();
 
         Assert.IsEmpty(ChromiumBookmarksReader.Read(dir.Path));
+    }
+
+    // Bookmarks.bak is what Chrome/Edge leave behind when they rewrite Bookmarks, so it is the candidate
+    // substitute when Bookmarks cannot answer. These pin the whole rule: use it when needed, never when
+    // Bookmarks can, and only for a file that actually holds a tree.
+
+    [TestMethod]
+    public void Read_NoBookmarksFile_ReadsTheBakCopy()
+    {
+        using var dir = new TempDirectory();
+        WriteBookmarksFile(dir, """
+        { "roots": { "bookmark_bar": { "type": "folder", "children": [
+            { "type": "url", "name": "From Backup", "url": "https://bak.example.com" }
+        ] } } }
+        """, fileName: "Bookmarks.bak");
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("From Backup", entry.Title);
+        Assert.IsTrue(entry.IsBookmark);
+    }
+
+    [TestMethod]
+    public void Read_BothFilesPresent_NeverReadsTheBakCopy()
+    {
+        using var dir = new TempDirectory();
+        WriteBookmarksFile(dir, """
+        { "roots": { "bookmark_bar": { "type": "folder", "children": [
+            { "type": "url", "name": "Current", "url": "https://live.example.com" }
+        ] } } }
+        """);
+        // The .bak holds the PREVIOUS contents, so reading it while Bookmarks is intact would resurrect a
+        // bookmark the user already deleted.
+        WriteBookmarksFile(dir, """
+        { "roots": { "bookmark_bar": { "type": "folder", "children": [
+            { "type": "url", "name": "Deleted", "url": "https://gone.example.com" }
+        ] } } }
+        """, fileName: "Bookmarks.bak");
+
+        var entries = ChromiumBookmarksReader.Read(dir.Path);
+
+        CollectionAssert.AreEqual(new[] { "Current" }, entries.Select(e => e.Title).ToList());
+    }
+
+    [TestMethod]
+    public void Read_BookmarksFileUnparsable_FallsBackToTheBakCopy()
+    {
+        using var dir = new TempDirectory();
+        // The interrupted-write case the backup exists for: the file is there, and is not a tree.
+        WriteBookmarksFile(dir, "{ not valid json");
+        WriteBookmarksFile(dir, """
+        { "roots": { "bookmark_bar": { "type": "folder", "children": [
+            { "type": "url", "name": "Recovered", "url": "https://recovered.example.com" }
+        ] } } }
+        """, fileName: "Bookmarks.bak");
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Recovered", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_BakCopyWithNoRoots_YieldsNothing()
+    {
+        using var dir = new TempDirectory();
+        WriteBookmarksFile(dir, """{ "version": 1 }""", fileName: "Bookmarks.bak");
+
+        Assert.IsEmpty(ChromiumBookmarksReader.Read(dir.Path));
+    }
+
+    private static void Write(string dir, string fileName, string json)
+        => File.WriteAllText(Path.Combine(dir, fileName), json);
+
+    private static string OneUrlTree(string name, string url) =>
+        $$"""{ "roots": { "bookmark_bar": { "type": "folder", "children": [ { "type": "url", "name": "{{name}}", "url": "{{url}}" } ] } } }""";
+
+    // The candidate order inside one profile: AccountBookmarks, Bookmarks, AccountBookmarks.bak,
+    // Bookmarks.bak. First file that carries a tree wins and nothing later is opened.
+
+    [TestMethod]
+    public void Read_AccountBookmarksPresent_WinsOverBookmarks()
+    {
+        using var dir = new TempDirectory();
+        Write(dir.Path, "AccountBookmarks", OneUrlTree("Account", "https://account.example.com"));
+        Write(dir.Path, "Bookmarks", OneUrlTree("Local", "https://local.example.com"));
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Account", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_NoAccountBookmarks_UsesBookmarks()
+    {
+        using var dir = new TempDirectory();
+        Write(dir.Path, "Bookmarks", OneUrlTree("Local", "https://local.example.com"));
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Local", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_AccountBookmarksUnreadable_FallsToTheNextCandidate()
+    {
+        using var dir = new TempDirectory();
+        Write(dir.Path, "AccountBookmarks", "{ truncated");
+        Write(dir.Path, "Bookmarks", OneUrlTree("Local", "https://local.example.com"));
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Local", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_OnlyAccountBackupPresent_UsesThirdCandidate()
+    {
+        using var dir = new TempDirectory();
+        Write(dir.Path, "AccountBookmarks.bak", OneUrlTree("Account Backup", "https://bak-account.example.com"));
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Account Backup", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_LiveStoresCarryNoTree_UseTheLastBackup()
+    {
+        using var dir = new TempDirectory();
+        // Both live files exist but hold no bookmarks tree, and the account backup is the stub too: only
+        // the final candidate has anything. A parsed-but-empty file must not stop the walk, or one stub
+        // would hide the profile's real bookmarks.
+        Write(dir.Path, "AccountBookmarks", """{ "version": 1 }""");
+        Write(dir.Path, "Bookmarks", """{ "version": 1 }""");
+        Write(dir.Path, "AccountBookmarks.bak", """{ "version": 1 }""");
+        Write(dir.Path, "Bookmarks.bak", OneUrlTree("Recovered", "https://recovered.example.com"));
+
+        var entry = ChromiumBookmarksReader.Read(dir.Path).Single();
+
+        Assert.AreEqual("Recovered", entry.Title);
+    }
+
+    [TestMethod]
+    public void Read_EachProfileReadsOnlyItsOwnCandidates()
+    {
+        // Two profiles under one User Data folder: a candidate found in one must never satisfy the other.
+        using var root = new TempDirectory();
+        var first = Path.Combine(root.Path, "Default");
+        var second = Path.Combine(root.Path, "Profile 1");
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        Write(first, "AccountBookmarks", OneUrlTree("One Account", "https://one.example.com"));
+        Write(second, "Bookmarks", OneUrlTree("Two Local", "https://two.example.com"));
+
+        CollectionAssert.AreEqual(new[] { "One Account" }, ChromiumBookmarksReader.Read(first).Select(e => e.Title).ToList());
+        CollectionAssert.AreEqual(new[] { "Two Local" }, ChromiumBookmarksReader.Read(second).Select(e => e.Title).ToList());
+        Assert.IsEmpty(ChromiumBookmarksReader.Read(Path.Combine(root.Path, "Nonexistent")));
     }
 
     [TestMethod]

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Lertaro.PluginSdk.Abstractions;
 using Lertaro.PluginSdk.Abstractions.Plugins;
 using Lertaro.PluginSdk.Abstractions.Plugins.WindowAdapters;
@@ -21,6 +22,21 @@ public sealed class QuickNavigationPathResolverTests
         private readonly Dictionary<IntPtr, string> _nodeMap = new();
         private readonly Dictionary<uint, string> _commandMap = new();
 
+        // Reached as `FakeProvider.ConcurrentProvider` from the test methods below, so it cannot be
+        // `private`: a private nested type is visible only inside its immediately enclosing type.
+        internal sealed class ConcurrentProvider : IQuickNavigationProvider
+        {
+            public string GroupName => "Concurrent";
+            public bool CanProvide(ISearchResult result) => true;
+            public IEnumerable<DynamicMenuItem> GetMenuItems(ISearchResult result, IntPtr hMenu) => Array.Empty<DynamicMenuItem>();
+            public void ExecuteCommand(ISearchResult result, uint commandId, IntPtr ownerHwnd) { }
+            public void ClearSession() { }
+
+            private readonly ConcurrentDictionary<IntPtr, string> _nodeMap = new();
+
+            public void SeedNode(IntPtr handle, string path) => _nodeMap[handle] = path;
+        }
+
         public void SeedNode(IntPtr handle, string path) => _nodeMap[handle] = path;
         public void SeedCommand(uint commandId, string path) => _commandMap[commandId] = path;
     }
@@ -42,6 +58,17 @@ public sealed class QuickNavigationPathResolverTests
         provider.SeedNode(handle, @"C:\folder");
 
         Assert.AreEqual(@"C:\folder", QuickNavigationPathResolver.TryResolveSubMenuPath(provider, handle));
+    }
+
+    [TestMethod]
+    public void TryResolveSubMenuPath_ConcurrentNodeMap_ReturnsPath()
+    {
+        var provider = new FakeProvider.ConcurrentProvider();
+        var handle = new IntPtr(43);
+        provider.SeedNode(handle, "shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}");
+
+        Assert.AreEqual("shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}",
+            QuickNavigationPathResolver.TryResolveSubMenuPath(provider, handle));
     }
 
     [TestMethod]

@@ -70,7 +70,11 @@ internal sealed class SearchEngineDriveMaintenance
     public UsnIndexer.IndexerStatus BuildStatusSnapshot()
     {
         RefreshDrivesInStatus();
-        _indexer.Status.IsMaintenanceBusy = _isRebuilding() || HasPendingRebuilds;
+        // Under LockObj like every other Status mutation (UpdateMaintenanceBusyState, PopulateCountsFromCache,
+        // the initializer): SnapshotStatus() deep-copies under that same lock, and an unlocked write here let a
+        // concurrent snapshot observe a half-updated status.
+        lock (_indexer.LockObj)
+            _indexer.Status.IsMaintenanceBusy = _isRebuilding() || HasPendingRebuilds;
         PopulateCountsFromCache();
         // Return a locked, deep-copied snapshot (UsnIndexer.SnapshotStatus), not the live, mutable Status
         // object. PipeResponseBinarySerializer.WriteStatusAsync reads every drive's Files/Dirs/State
@@ -155,7 +159,12 @@ internal sealed class SearchEngineDriveMaintenance
                 DriveRecovery.RestoreOrRebuild(_indexer, IndexCacheDir, drive, _token(), QueueDriveRebuild, cts.Token,
                     driveName => this.CancelDriveRebuild(driveName), driveName => this.QueueDriveRebuildAfterRemoval(driveName));
         }
-        catch (OperationCanceledException)
+        // ObjectDisposedException joins the cancellation branch for the same reason it does in
+        // IndexBuilder.BuildDrives: cancelling disposes the volume handle, a SafeHandle cannot abort the
+        // native read already in flight, and the next P/Invoke on the disposed handle throws this instead
+        // of returning false. Left in the general branch a plain Stop request would report "failed".
+        catch (Exception ex) when (ex is OperationCanceledException
+                                   || (ex is ObjectDisposedException && cts.Token.IsCancellationRequested))
         {
             var present = VolumeHelper.DetectIndexableLocalDrives().Contains(drive, StringComparer.OrdinalIgnoreCase);
             _indexer.SetDriveState(drive, present ? "cached" : "unavailable");

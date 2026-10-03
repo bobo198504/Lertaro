@@ -31,6 +31,31 @@ public class PluginConfigFieldViewModel : ViewModelBase
 
     public string Label => ResolveText(SchemaField.LabelKey);
     public string Description => ResolveText(SchemaField.DescriptionKey);
+
+    /// <summary>
+    /// Shown in amber under a trigger-word field when another feature already answers to the same word.
+    /// Two features on one word is otherwise silent: both answer to it (one keystroke, two features'
+    /// rows) while the file search strips the word once, with nothing to tell the user which word to
+    /// rename -- and when the shared word is a file-filter scope keyword, the first registered scope wins
+    /// outright. Warned rather than blocked, because the inventory is live -- a plugin the user has not
+    /// enabled yet can own the word, and a word can be deliberately shared with a feature they are about
+    /// to disable.
+    /// </summary>
+    public string ConflictWarning
+    {
+        get
+        {
+            if (!SchemaField.IsTriggerWord)
+                return string.Empty;
+
+            var word = TriggerWord.Normalize(Value as string);
+            if (word.Length == 0)
+                return string.Empty;
+
+            var other = Search.Dispatch.PluginTriggerCollisionReport.FindOtherOwner(word, PluginId);
+            return other == null ? string.Empty : string.Format(ResolveText("Settings_TriggerWordTaken"), other);
+        }
+    }
     public string GroupKey => SchemaField.GroupKey;
     public string GroupName => ResolveText(GroupKey);
     public ConfigFieldType FieldType => SchemaField.FieldType;
@@ -232,6 +257,7 @@ public class PluginConfigFieldViewModel : ViewModelBase
             // buttons); the load paths write LocalValueStore directly, so staging a value this way is
             // what marks the field (and therefore its plugin) as having something to save.
             _loadSupport.MarkDirty();
+            OnPropertyChanged(nameof(ConflictWarning));
             if (_onValueChanged == null) OnPropertyChanged();
         }
     }

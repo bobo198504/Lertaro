@@ -58,7 +58,11 @@ public class LocalSendSettingsModel
     public int Port { get; set; } = 53317;
     public bool QuickSave { get; set; } = false;
     public bool QuickSaveFromFavorites { get; set; } = true;
-    public string DownloadDirectory { get; set; } = string.Empty;
+    // The shell token rather than a path built from SpecialFolder.UserProfile: Downloads is routinely
+    // redirected to another drive or localized, and only the token follows it. Resolved by
+    // LocalSendServerHelper.ResolveDownloadDirectory wherever the physical folder is needed.
+    public const string DefaultDownloadDirectory = "shell:Downloads";
+    public string DownloadDirectory { get; set; } = DefaultDownloadDirectory;
     public bool EnableHttps { get; set; } = true;
     public bool CreateChecksums { get; set; } = true;
     public bool VerifyChecksums { get; set; } = true;
@@ -180,6 +184,11 @@ public class SearchWindowSettings
     // still resets the position, which is the way back if it is already somewhere unwanted. Off by
     // default, since being able to move the window is the behavior everyone already has.
     public bool LockPosition { get; set; } = false;
+    // Keeps whatever the search box held when the quick window hid, instead of wiping it in
+    // QuickSearchWindowController.FinishHide. The next summon re-selects that text (see
+    // QuickSearchWindowShowSupport.ShowWindow), so typing still replaces it rather than appending to it.
+    // Off by default: the window is meant to start clean for the usual "summon and type" gesture.
+    public bool KeepSearchText { get; set; } = false;
 }
 
 public class PreviewWindowSettings

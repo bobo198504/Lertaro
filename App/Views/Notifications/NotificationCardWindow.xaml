@@ -1,0 +1,135 @@
+<Window x:Class="Lertaro.App.Views.Notifications.NotificationCardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:services="clr-namespace:Lertaro.App.Services"
+        Title="Notification"
+        Width="360"
+        MaxHeight="260"
+        SizeToContent="Height"
+        Background="{DynamicResource CardBackground}"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextElement.Foreground="{DynamicResource TextPrimary}">
+
+    <!-- MaxHeight is NotificationWindowManager.CardMaxHeightDip, stated here rather than assigned at runtime so
+         the card's height is final before the stack first measures it. -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Lertaro.App;component/Resources/Styles.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- The two title-bar buttons: a 24x24 hit area around a glyph, with no chrome of their own
+                 until the pointer is on them. -->
+            <Style x:Key="TitleBarButton" TargetType="Button">
+                <Setter Property="Width" Value="24"/>
+                <Setter Property="Height" Value="24"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+                <Setter Property="FontSize" Value="10"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Plate" Background="{TemplateBinding Background}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Plate" Property="Background" Value="{DynamicResource BorderColor}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <!-- No AllowsTransparency and no painted corner: this is an opaque borderless window whose corners are
+         rounded by the window manager itself (see DwmWindowCorners), so the header band and the level bar are
+         clipped by the window's real shape and text keeps ClearType. A 1 DIP rule just inside the window edge
+         stands in for the border the transparent version drew. -->
+    <Border x:Name="Surface"
+            Background="{DynamicResource CardBackground}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Only Warn and Error get the semantic colour painted down the card's edge. -->
+            <Rectangle x:Name="LevelBar" Grid.Column="0" Fill="{DynamicResource ErrorBrush}" Visibility="Collapsed"/>
+
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="32"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Title bar. Dragging moves this card for as long as it lives and nothing longer. -->
+                <Border Grid.Row="0" Background="{DynamicResource HeaderBg}"
+                        BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,0,0,1"
+                        MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                    <Grid Margin="10,0,6,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <!-- The star column is what gives the title a width to ellipsize against; an
+                                 Auto-sized title would simply push the buttons off the edge. -->
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="LevelIcon" Width="16" FontFamily="Segoe MDL2 Assets"
+                                   FontSize="14" Text="&#xE946;" VerticalAlignment="Center" Margin="0,0,8,0"
+                                   Foreground="{DynamicResource AccentBlue}"/>
+                        <TextBlock Grid.Column="1" x:Name="TxtTitle" FontSize="13" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="BtnReadAll" Style="{StaticResource TitleBarButton}" Content="&#xE73E;"
+                                    Margin="0,0,4,0" Click="BtnReadAll_Click"
+                                    ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Notifications_ReadAll]}"
+                                    AutomationProperties.Name="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Notifications_ReadAll]}"/>
+                            <Button x:Name="BtnClose" Style="{StaticResource TitleBarButton}" Content="&#xE894;"
+                                    Click="BtnClose_Click"
+                                    ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Common_Close]}"
+                                    AutomationProperties.Name="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Common_Close]}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- The name of whoever sent this, injected by the host: a plugin cannot choose it. -->
+                <TextBlock x:Name="TxtSource" Grid.Row="1" FontSize="11" Margin="12,8,12,0"
+                           Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"/>
+
+                <!-- Scrolls instead of growing the card past its budget, and never sideways. Deferred
+                     scrolling is off: dragging the thumb then repainting on release is the smear it buys,
+                     and a notification nobody reads for long does not need it. -->
+                <ScrollViewer x:Name="BodyScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled" Margin="12,6,8,12" Padding="0,0,4,0"
+                              IsDeferredScrollingEnabled="False" CanContentScroll="False">
+                    <TextBlock x:Name="TxtBody" FontSize="12" TextWrapping="Wrap"
+                               LineHeight="16.2" LineStackingStrategy="BlockLineHeight"
+                               MouseLeftButtonUp="Body_MouseLeftButtonUp"/>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Drawn once, on arrival, and faded out: the accent rim is what tells a card that has just come in
+                 from one that has merely been sitting there. Last child so it paints over the content, no fill so
+                 it cannot catch a click meant for the body, and the radius is the window's own so the rim follows
+                 the corner the window manager rounded. -->
+            <Border x:Name="ArrivalRim" Grid.ColumnSpan="2" Opacity="0" IsHitTestVisible="False"
+                    BorderThickness="2" BorderBrush="{DynamicResource AccentBlue}"
+                    CornerRadius="{DynamicResource CornerRadiusWindow}"/>
+        </Grid>
+    </Border>
+</Window>

@@ -45,9 +45,79 @@ public static class Logger
     // written once, condensed into a "(repeated x N)" tally line at every 10th occurrence,
     // and flushed with its final tally when a different message arrives.
     private const int RepeatReportInterval = 10;
+    private const long RollOverSizeBytes = 1024 * 1024;
     private static string? _lastMessage;
     private static LogLevel _lastLevel;
     private static int _repeatsSinceFirst;
+
+    // One long-lived handle instead of a CreateFile/write/CloseHandle cycle per line. Logger.Log is
+    // called from the indexer's per-drive and per-file paths, the USN monitor loops, the pipe
+    // dispatchers and the search pipeline, all of them serialized on LogLock, so at LogLevel.Debug a
+    // busy index pass used to pay thousands of open/close pairs and block every other thread behind
+    // each one.
+    //
+    // Holding that handle changes who may open the file: a reader must request FileShare.ReadWrite,
+    // because File.ReadAllText/ReadLines ask for FileShare.Read, which contradicts the write access this
+    // handle already holds and fails with a sharing violation. ReadLogLines below is the one place that
+    // knows this; anything reading a log goes through it.
+    private static StreamWriter? _writer;
+
+    /// <summary>
+    /// Reads a log file while a writer holds it open. See <see cref="_writer"/>: the BCL's convenience
+    /// readers ask for a share mode that an open write handle contradicts.
+    /// </summary>
+    public static IReadOnlyList<string> ReadLogLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        var lines = new List<string>();
+        while (reader.ReadLine() is { } line)
+            lines.Add(line);
+        return lines;
+    }
+
+    /// <summary>
+    /// Whether the current log file exists and is still under the size cap that forces a fresh file.
+    /// </summary>
+    private static bool IsLogBelowRollOver() =>
+        File.Exists(_logPath) && new FileInfo(_logPath).Length < RollOverSizeBytes;
+
+    /// <summary>
+    /// Opens the shared writer over <paramref name="append"/> semantics, replacing any writer from an
+    /// earlier <see cref="Initialize"/>. Caller holds <see cref="LogLock"/>; the new writer is also
+    /// returned so a caller can write its banner without re-checking the field.
+    /// </summary>
+    private static StreamWriter OpenWriter(bool append)
+    {
+        CloseWriter();
+        // Deliberately not FileShare.Delete: a handle held for the process lifetime cannot also let the
+        // file be deleted under it, and the alternative (share the delete, keep writing into a
+        // deleted-but-open file) loses the rest of the run's log silently. Deleting by hand while a
+        // process is running reports "file in use"; the in-app clear goes through ClearCurrentLog, which
+        // owns the handle and works.
+        _writer = new StreamWriter(new FileStream(_logPath, append ? FileMode.Append : FileMode.Create,
+            FileAccess.Write, FileShare.ReadWrite))
+        {
+            AutoFlush = true
+        };
+        return _writer;
+    }
+
+    private static void CloseWriter()
+    {
+        var writer = _writer;
+        _writer = null;
+        if (writer is null)
+            return;
+
+        try
+        {
+            writer.Dispose(); // flushes; a handle that can no longer be written must not break the caller
+        }
+        catch (IOException)
+        {
+        }
+    }
 
     /// <summary>
     /// Gets the directory where the current log file is stored.
@@ -69,7 +139,11 @@ public static class Logger
     /// system-wide (service) logs, or <see cref="UserDataDir"/> for per-user (UI) logs.
     /// If null, defaults to <see cref="UserDataDir"/>.
     /// </param>
-    /// <param name="overwrite">Whether to overwrite the log file on init.</param>
+    /// <param name="overwrite">
+    /// When <c>true</c>, the log file is truncated and this launch starts a fresh log. When <c>false</c>,
+    /// an existing log is appended to, but only while it is under <see cref="RollOverSizeBytes"/>; a log
+    /// that has already grown past that cap is truncated even then, so no single file grows without bound.
+    /// </param>
     public static void Initialize(string logFileName, string? baseDirectory = null, bool overwrite = true)
     {
         lock (LogLock)
@@ -82,28 +156,15 @@ public static class Logger
                 _lastMessage = null;
                 _repeatsSinceFirst = 0;
 
-                var shouldAppend = false;
-                if (File.Exists(_logPath))
-                {
-                    var fileInfo = new FileInfo(_logPath);
-                    if (fileInfo.Length < 1024 * 1024)
-                    {
-                        shouldAppend = true;
-                    }
-                }
+                var shouldAppend = !overwrite && IsLogBelowRollOver();
 
-                if (shouldAppend)
-                {
-                    File.AppendAllText(_logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Log resumed ({logFileName})\n");
-                }
-                else
-                {
-                    File.WriteAllText(_logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Log initialized ({logFileName})\n");
-                }
+                OpenWriter(shouldAppend).Write($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] " +
+                    $"{(shouldAppend ? "Log resumed" : "Log initialized")} ({logFileName})\n");
             }
             catch
             {
                 // Fallback: try writing next to the executable
+                CloseWriter();
                 _logDir = AppDomain.CurrentDomain.BaseDirectory;
                 _logPath = Path.Combine(_logDir, logFileName);
             }
@@ -162,7 +223,38 @@ public static class Logger
         }
     }
 
-    private static void WriteLine(string content, LogLevel level) => File.AppendAllText(_logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level}] {content}\n");
+    private static void WriteLine(string content, LogLevel level)
+    {
+        var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{level}] {content}\n";
+        var writer = _writer;
+        if (writer is null)
+        {
+            // No writer (never initialized, or the log directory was unusable and Initialize fell back to
+            // the executable directory): behave exactly as before -- one open/close per line.
+            File.AppendAllText(_logPath, line);
+            return;
+        }
+
+        if (writer.BaseStream.Length >= RollOverSizeBytes)
+        {
+            // The cap used to be looked at only at init, so one long service run grew the file without
+            // bound. It is checked per line now; a roll-over truncates, matching what a restart did before.
+            writer = OpenWriter(append: false);
+            writer.Write($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Log rolled over ({Path.GetFileName(_logPath)})\n");
+        }
+
+        try
+        {
+            writer.Write(line);
+        }
+        catch (IOException)
+        {
+            // A log that has gone unwritable (the file was deleted underneath us, the disk is full) must
+            // not stay dead: drop the handle and let the next line take the per-line path.
+            CloseWriter();
+            File.AppendAllText(_logPath, line);
+        }
+    }
 
     /// <summary>
     /// Truncates the current process's own log file. Only the process that owns a given log file is
@@ -170,19 +262,29 @@ public static class Logger
     /// directory the service runs with elevated/system rights over, which the App process cannot
     /// write to directly, so clearing it must be requested of the owning process via IPC instead.
     /// </summary>
-    public static void ClearCurrentLog()
+    /// <returns>
+    /// <c>false</c> when the file is still there with its old content, so a caller can say so rather
+    /// than report a clear that never happened.
+    /// </returns>
+    public static bool ClearCurrentLog()
     {
         lock (LogLock)
         {
             try
             {
-                File.WriteAllText(_logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Log cleared\n");
+                // Through the writer, by way of recreating it: File.WriteAllText here would collide with
+                // the handle WriteLine keeps open.
+                OpenWriter(append: false).Write($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] Log cleared\n");
                 _lastMessage = null;
                 _repeatsSinceFirst = 0;
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore
+                // The next line still takes the writer's own swallow-and-continue path, so this is the
+                // only record a failed clear leaves. Log is reentrant on LogLock.
+                Log($"[Logger] Clearing the log failed: {ex.Message}", LogLevel.Warn);
+                return false;
             }
         }
     }

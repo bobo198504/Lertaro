@@ -26,8 +26,7 @@ public sealed class LocalSendServer : IDisposable
         Port = 53317,
         Protocol = "http"
     };
-    public string DownloadDirectory { get; set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+    public string DownloadDirectory { get; set; } = LocalSendServerHelper.ResolveDownloadDirectory(null);
     public bool QuickSave { get; set; } = false;
     public bool VerifyChecksums { get; set; } = true;
     public string? ReceivePin { get; set; }
@@ -51,21 +50,42 @@ public sealed class LocalSendServer : IDisposable
     {
         if (_listener != null) return;
         _cts = new CancellationTokenSource();
-        for (var p = port; p < port + 10; p++)
+        var requestedPort = port is > 0 and <= IPEndPoint.MaxPort ? port : 53317;
+        Exception? lastBindError = null;
+        for (var offset = 0; offset < 10; offset++)
         {
-            try
-            {
-                var l = LocalSendServerHelper.TryCreateDualStackListener(p) ?? new TcpListener(IPAddress.Any, p);
-                l.Start();
-                _listener = l;
-                ActualPort = p;
-                DeviceInfo.Port = p;
+            var candidate = (long)requestedPort + offset;
+            if (candidate > IPEndPoint.MaxPort)
                 break;
-            }
-            catch { }
+            if (TryStartListener((int)candidate, out lastBindError))
+                break;
         }
-        if (_listener == null) throw new InvalidOperationException("Failed to bind LocalSend port.");
+        if (_listener == null && TryStartListener(0, out lastBindError))
+            Logger.Log($"[LocalSendServer] Requested ports {requestedPort}-{Math.Min(IPEndPoint.MaxPort, requestedPort + 9)} were unavailable; using dynamic port {ActualPort}.", LogLevel.Warn);
+        if (_listener == null)
+            throw new InvalidOperationException("Failed to bind LocalSend port.", lastBindError);
         _listenTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
+    }
+
+    private bool TryStartListener(int port, out Exception? error)
+    {
+        TcpListener? listener = null;
+        try
+        {
+            listener = LocalSendServerHelper.TryCreateDualStackListener(port) ?? new TcpListener(IPAddress.Any, port);
+            listener.Start();
+            _listener = listener;
+            ActualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+            DeviceInfo.Port = ActualPort;
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+            try { listener?.Stop(); } catch { }
+            return false;
+        }
     }
 
     private async Task AcceptLoopAsync(CancellationToken token)
@@ -83,14 +103,40 @@ public sealed class LocalSendServer : IDisposable
         }
     }
 
+    // Each connection is one socket, one TLS context and one queued work item, and the listener is
+    // bound to every interface, so neither the handshake nor the number of concurrent clients was
+    // bounded at all: one stalled peer was enough to accumulate them. Sixteen concurrent connections is
+    // generous against what LocalSend actually does (a handful of peers, two parallel file workers).
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ConnectionWaitTimeout = TimeSpan.FromSeconds(5);
+    private readonly SemaphoreSlim _connectionGate = new(16);
+
     private async Task HandleClientAsync(TcpClient client, CancellationToken token)
     {
         using (client)
         {
             try
             {
-                // ponytail: no receive timeout — transfers can be arbitrarily slow; cancellation is via _cts.
-                var connection = await LocalSendTlsHelper.CreateServerStreamAsync(client, Certificate, token).ConfigureAwait(false);
+                if (!await _connectionGate.WaitAsync(ConnectionWaitTimeout, token).ConfigureAwait(false))
+                {
+                    Logger.Log("[LocalSendServer] At the connection limit; dropping client.", LogLevel.Debug);
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            try
+            {
+                // Framing reads carry their own deadline (see LocalSendServerHandler); the handshake was
+                // the remaining untimed wait. Transfer speed is not bounded here -- the upload body has an
+                // idle timeout of its own, and a slow large file must never be cut off mid-flight.
+                var connection = await LocalSendTlsHelper.CreateServerStreamAsync(client, Certificate, token)
+                    .KeepObserved()
+                    .WaitAsync(HandshakeTimeout, token)
+                    .ConfigureAwait(false);
                 using var stream = connection.Stream;
                 await LocalSendServerHandler.ProcessAsync(
                     this, stream, client.Client.RemoteEndPoint, connection.PeerFingerprint, token).ConfigureAwait(false);
@@ -98,6 +144,10 @@ public sealed class LocalSendServer : IDisposable
             catch (Exception ex)
             {
                 Logger.Log($"[LocalSendServer] Client handling error: {ex.Message}", LogLevel.Debug);
+            }
+            finally
+            {
+                _connectionGate.Release();
             }
         }
     }
@@ -257,7 +307,10 @@ public sealed class LocalSendServer : IDisposable
         }
         var displayIndex = isAllDone ? expectedTotalFiles : Math.Max(fileIndex, completedSet.Count);
         var relPath = fileName.Replace('\\', '/').TrimStart('/');
-        var rootSavedPath = Path.Combine(DownloadDirectory, relPath.Split('/')[0]);
+        // The session's own directory, not the server default: a *Save To…* receive wrote the file
+        // somewhere else entirely, so the default-derived path either did not exist (hiding the
+        // reveal-in-Explorer button) or, worse, named an unrelated same-named folder.
+        var rootSavedPath = Path.Combine(context.DownloadDirectory, relPath.Split('/')[0]);
         var finalDict = _sessionTransferredBytes.GetOrAdd(sessionId, _ => new System.Collections.Concurrent.ConcurrentDictionary<string, long>());
         finalDict[fileId] = bytesReadTotal;
         var finalSessionTransferred = finalDict.Values.Sum();

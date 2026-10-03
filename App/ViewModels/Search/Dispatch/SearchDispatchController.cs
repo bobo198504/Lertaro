@@ -4,6 +4,8 @@ using Lertaro.App.Services;
 using Lertaro.PluginSdk.Services;
 using Lertaro.Core.SearchIndex.Query;
 using Lertaro.App.ViewModels.Search.Mapping;
+
+using SearchWindowType = Lertaro.PluginSdk.Abstractions.SearchWindowType;
 namespace Lertaro.App.ViewModels.Search.Dispatch;
 // Owns query-token parsing, dispatching a search (debounced/quick vs. blocking), and rendering the
 // resulting rows on behalf of SearchExecutionViewModel -- extracted into its own class (composition,
@@ -53,6 +55,13 @@ internal sealed class SearchDispatchController
             setResultsSeparatorVisibility,
             replaceResults);
     }
+    // Which window's inventory of command words applies to this controller. The inline window is its own
+    // window type; everything else here is the quick window, which is SearchWindowType.Main -- the same
+    // value PluginSearchResultMapper hands SearchActionItems for these two windows, so the words the host
+    // strips are exactly the ones whose rows this window can offer.
+    private SearchWindowType ActionWindowType =>
+        _getIsInlineSearchContext() ? SearchWindowType.Inline : SearchWindowType.Main;
+
     public void DispatchSearch(string value)
     {
         var globalPrefixChar = GetGlobalTokenPrefixChar();
@@ -70,6 +79,13 @@ internal sealed class SearchDispatchController
             ? FileFilterScopeResolver.Resolve(cleanQuery, out scopedQuery)
             : null;
         var searchQuery = scopeDirective != null ? scopedQuery : cleanQuery;
+        // A trigger word -- an instant provider's configured one ("cs report") or a search action's command
+        // word ("mkdir sub") -- is not part of what the user wants found, so it must not be fuzzy
+        // matched against file names nor highlighted. Skipped when
+        // a file-filter scope already claimed the leading keyword -- two prefixes cannot both win, and the
+        // scope is the more specific feature. Instant providers still receive the raw text (instantQuery).
+        if (scopeDirective == null)
+            searchQuery = PluginTriggerQuery.Strip(searchQuery, ActionWindowType);
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
             _engine.CancelPendingSearch();
@@ -112,8 +128,30 @@ internal sealed class SearchDispatchController
     }
     // DispatchSearch (debounced) and PerformSearch (blocking) both resolve to the same set of
     // search parameters -- only which SearchExecutionEngine method runs them differs.
+    //
+    // Its own delegate rather than Action<...>: the two engine methods take seventeen arguments between
+    // them, and Action stops at sixteen.
+    private delegate void EngineSearchCall(
+        string query,
+        string? searchScope,
+        bool isInlineSearchContext,
+        int fileLimit,
+        int appLimit,
+        Func<List<SearchResult>?, string?, List<AppSearchResult>> resultMapper,
+        Action<bool> onSearchStateChanged,
+        Action<List<AppSearchResult>, string, bool> onResultsUpdated,
+        Action? onLocalServiceUnavailable,
+        Func<bool>? shouldEmitInstantResults,
+        bool bypassExclusions,
+        bool resultMapperConsumesBatches,
+        Action<int>? onReceivedCountUpdated,
+        FileFilterScopeDirective? scopeDirective,
+        string? instantQuery,
+        bool emitInstantResults,
+        Action? beforeSearch);
+
     private void RunEngineSearch(
-        Action<string, string?, bool, int, int, Func<List<SearchResult>?, string?, List<AppSearchResult>>, Action<bool>, Action<List<AppSearchResult>, string, bool>, Action?, Func<bool>?, bool, bool, Action<int>?, FileFilterScopeDirective?> engineCall,
+        EngineSearchCall engineCall,
         string originalValue,
         string searchQuery,
         FileFilterScopeDirective? scopeDirective)
@@ -133,23 +171,43 @@ internal sealed class SearchDispatchController
         // (a folder scope says nothing about applications), so no app budget is needed at all.
         var hasTokens = _queryTokens.Count > 0;
         var hasScope = scopeDirective != null;
-        var fileLimit = hasTokens || hasScope ? SearchViewModel.TokenQuickSearchFileLimit : 51;
+        // Folders only, and only for the card over a dialog whose target field takes nothing but a folder --
+        // a Browse-For-Folder picker. Over an Open/Save dialog the name box wants a file, so the card has to
+        // keep finding files; typed into an Explorer window's own search box this card IS that window's search.
+        var folderScope = _getIsInlineSearchContext() && InlineSearchManager.Instance.ExplorerTracker.ActiveAdapter?.TargetIsFolderOnly == true;
+        // A folder scope drops most of what the engine answers before it reaches the list, so the ordinary
+        // 51-row budget would leave about ten folders on a mixed query. Same widening the token and scoped
+        // paths above already use, for the same reason: the rows the card may keep have to arrive first.
+        var fileLimit = hasTokens || hasScope || folderScope ? SearchViewModel.TokenQuickSearchFileLimit : 51;
         var appLimit = hasScope ? 0 : hasTokens ? SearchViewModel.FullSearchAppLimit : 51;
+        // Per search, not per paint: the mapper below is the render callback, and it asks every instant
+        // provider and search-action plugin on each call. See SearchResultMapper.InstantPassCache.
+        var instantPass = new SearchResultMapper.InstantPassCache();
         engineCall(
             searchQuery,
             hasScope ? null : _getSearchScope(),
             _getIsInlineSearchContext(),
             fileLimit,
             appLimit,
-            (resp, contextDir) => SearchResultMapper.BuildQuickResults(resp, searchQuery, hasScope ? null : _getIsInlineSearchContext() ? null : _getSearchScope(), contextDir, _getIsInlineSearchContext(), originalValue, skipDisplayCap: hasTokens || hasScope, fileFilterScope: scopeDirective),
+            (resp, contextDir) => SearchResultMapper.BuildQuickResults(resp, searchQuery, hasScope ? null : _getIsInlineSearchContext() ? null : _getSearchScope(), contextDir, _getIsInlineSearchContext(), originalValue, skipDisplayCap: hasTokens || hasScope, fileFilterScope: scopeDirective, folderScope: folderScope, instantPass: instantPass),
             state => _setIsSearching(state),
-            (results, status, final) => ApplySearchResults(originalValue, results, status, final),
+            (results, status, final) => ApplySearchResults(originalValue, searchQuery, results, status, final),
             HandleLocalServiceUnavailable,
             () => _getResultsCount() == 0,
             _bypassExclusions,
             false,
             null,
-            scopeDirective
+            scopeDirective,
+            // What the instant-result providers are handed: the untouched box text, so a provider that owns a
+            // trigger word still recognises it after the word was stripped from the file-search query above.
+            originalValue,
+            // The quick window does show instant rows; the late shouldEmitInstantResults above is its only
+            // gate, and it has to stay late because "is the list still empty?" is only answerable once the
+            // rows land.
+            true,
+            // Nothing to start alongside a quick-window search: the rows this window can show all come from
+            // the one search already, and its instant providers are folded into the mapper above.
+            null
         );
     }
     public void PerformSearch(string query)
@@ -202,6 +260,13 @@ internal sealed class SearchDispatchController
             ? FileFilterScopeResolver.Resolve(cleanQuery, out scopedQuery)
             : null;
         var searchQuery = scopeDirective != null ? scopedQuery : cleanQuery;
+        // A trigger word -- an instant provider's configured one ("cs report") or a search action's command
+        // word ("mkdir sub") -- is not part of what the user wants found, so it must not be fuzzy
+        // matched against file names nor highlighted. Skipped when
+        // a file-filter scope already claimed the leading keyword -- two prefixes cannot both win, and the
+        // scope is the more specific feature. Instant providers still receive the raw text (instantQuery).
+        if (scopeDirective == null)
+            searchQuery = PluginTriggerQuery.Strip(searchQuery, ActionWindowType);
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
             if (triggeredTypeId != null)
@@ -219,7 +284,10 @@ internal sealed class SearchDispatchController
     }
     private void HandleLocalServiceUnavailable() => _mainVm.TriggerIndexBuild();
 
-    private void ApplySearchResults(string query, List<AppSearchResult> uiResults, string statusText, bool final)
+    // `query` is the untouched box text (what the staleness check compares against); `searchQuery` is what
+    // the rows were actually matched and highlighted against, with a plugin's trigger word taken off. The
+    // "N more" row describes the search, so it is built from the second one -- see ComposeAndApplyAsync.
+    private void ApplySearchResults(string query, string searchQuery, List<AppSearchResult> uiResults, string statusText, bool final)
     {
         if (_getSearchQuery() != query)
             return;
@@ -230,17 +298,46 @@ internal sealed class SearchDispatchController
             // assembled (e.g. the inline window's "Current Folder"/"Global Search" split, each with its
             // own files right under its own header) -- token mode is the only case that needs to
             // extract/re-filter/re-cap that structure, since it collapses it into a flat file list anyway.
-            _replaceResults(uiResults);
-
-            var hasResults = uiResults.Count > 0;
-            _setResultsPanelVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
-            _setResultsSeparatorVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
-            _mainVm.Monitor.StatusBarVisibility = Visibility.Visible;
-            _mainVm.Monitor.StatusText = statusText;
+            ApplyUntokenized(uiResults, statusText);
             return;
         }
 
-        _ = ComposeAndApplyAsync(query, uiResults, _queryTokens, statusText, final);
+        _ = ComposeAndApplyGuardedAsync(query, searchQuery, uiResults, _queryTokens, statusText, final);
+    }
+
+    /// <summary>
+    /// The fire-and-forget half of the guard around <see cref="ComposeAndApplyAsync"/>. A query-token or
+    /// sidebar plugin that throws used to fault this task unobserved: nothing was logged with the query
+    /// that caused it, and because the replace-results step never ran the window kept showing the
+    /// *previous* query's rows under the text the user just typed -- which reads as "search is stuck"
+    /// rather than "one plugin failed". Rendering the untokenized rows is the honest fallback: the search
+    /// still answers, just without the token's refinement.
+    /// </summary>
+    private async Task ComposeAndApplyGuardedAsync(string query, string searchQuery, List<AppSearchResult> uiResults, IReadOnlyList<string> tokensSnapshot, string statusText, bool final)
+    {
+        try
+        {
+            await ComposeAndApplyAsync(query, searchQuery, uiResults, tokensSnapshot, statusText, final).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SearchDispatch] Query-token composition failed for '{query}': {ex.Message}. Showing the untokenized results.", LogLevel.Warn);
+            if (_getSearchQuery() != query || !ReferenceEquals(_queryTokens, tokensSnapshot))
+                return; // a newer query already owns the list; falling back would undo it
+
+            ApplyUntokenized(uiResults, statusText);
+        }
+    }
+
+    private void ApplyUntokenized(List<AppSearchResult> uiResults, string statusText)
+    {
+        _replaceResults(uiResults);
+
+        var hasResults = uiResults.Count > 0;
+        _setResultsPanelVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
+        _setResultsSeparatorVisibility(hasResults ? Visibility.Visible : Visibility.Collapsed);
+        _mainVm.Monitor.StatusBarVisibility = Visibility.Visible;
+        _mainVm.Monitor.StatusText = statusText;
     }
 
     // Token mode only: extracts the file/directory subset -- the only thing a query token is allowed to
@@ -251,7 +348,7 @@ internal sealed class SearchDispatchController
     // file rows] and caps the combined count like an ordinary quick search. QueryTokenDispatcher only
     // transforms a plain list -- deciding what any of this means for the rest of the UI (capping, "no
     // results", visibility) lives here.
-    private async Task ComposeAndApplyAsync(string query, List<AppSearchResult> uiResults, IReadOnlyList<string> tokensSnapshot, string statusText, bool final)
+    private async Task ComposeAndApplyAsync(string query, string searchQuery, List<AppSearchResult> uiResults, IReadOnlyList<string> tokensSnapshot, string statusText, bool final)
     {
         var fileRows = uiResults.Where(IsFileOrDirectory).ToList();
         // ResultKind == "InstantResult" alone isn't enough: ISearchableItemProvider (a static catalog --
@@ -266,7 +363,7 @@ internal sealed class SearchDispatchController
         if (_getSearchQuery() != query || !ReferenceEquals(_queryTokens, tokensSnapshot))
             return; // superseded by a newer query/token set while the token chain was running
 
-        var composed = QueryTokenResultComposer.Compose(instantRows, processedFileRows, query);
+        var composed = QueryTokenResultComposer.Compose(instantRows, processedFileRows, searchQuery);
 
         // A filter token (or an unclaimed one) can legitimately drop every file/directory result -- this
         // window has no separate "no results" hint of its own (unlike the full search window), it

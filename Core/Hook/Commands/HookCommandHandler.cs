@@ -56,7 +56,10 @@ public sealed class HookCommandHandler
     /// multiply the work. That is safe because a snapshot is a point-in-time value rather than an event
     /// anyone counts.
     /// </remarks>
-    private void PublishOpenedFoldersOffThread()
+    // Internal as well as used by the command path: HookIpcServer's OnConnected has to build the same
+    // snapshot off the accept loop, and sharing this method is what keeps the one-in-flight guard
+    // covering both triggers instead of letting a connect and a command build two snapshots at once.
+    internal void PublishOpenedFoldersOffThread()
     {
         if (Interlocked.CompareExchange(ref _snapshotInFlight, 1, 0) != 0)
         {
@@ -95,6 +98,9 @@ public sealed class HookCommandHandler
                     break;
                 case IpcMessageId.SetInlineWindowOnScreen:
                     _process.KeyboardHook?.IsInlineWindowOnScreen = msg.BoolVal;
+                    // Steady demand for the host's path: while the window is up its scope and dock have to
+                    // keep following, and a host read is otherwise suppressed as pointer noise.
+                    _process.ExplorerTracker?.SetInlineWindowOnScreen(msg.BoolVal);
                     break;
                 case IpcMessageId.RequestOpenedFolders:
                     PublishOpenedFoldersOffThread();
@@ -196,6 +202,11 @@ public sealed class HookCommandHandler
                 case IpcMessageId.InlineSelectionChanged:
                 case IpcMessageId.InlineSearchFinished:
                     InlineAdapterCommandHandler.Handle(_process, msg);
+                    break;
+                case IpcMessageId.ClearHookLog:
+                    // Own process, own handle, so this is the only place hook.log can be truncated. What
+                    // the App learns is that the write arrived; a failed truncation stays in this log.
+                    Logger.ClearCurrentLog();
                     break;
                 case IpcMessageId.KillProcess:
                     {

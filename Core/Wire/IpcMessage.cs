@@ -59,7 +59,13 @@ public enum IpcMessageId : byte
     //   Hook -> App  RunTool:    StringVal1 = output file, StringVal2 = tool path
     //   App -> Hook  ToolResult: BoolVal = started, IntVal = process id, StringVal1 = failure reason
     RunTool = 43,
-    ToolResult = 44
+    ToolResult = 44,
+
+    // App -> Hook: truncate hook.log. The Hook holds that file's only write handle for its whole process
+    // lifetime (see Logger), and it usually runs elevated, so the App can neither reopen nor delete the
+    // file -- it has to ask. Carries nothing, and like every other command here is only reachable by the
+    // App the hook actually launched (see HookPipePeer).
+    ClearHookLog = 46
 }
 
 public struct IpcMessage

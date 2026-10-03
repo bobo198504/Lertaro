@@ -16,6 +16,10 @@ public sealed class AudioDeviceSelectorInstantProvider : IInstantResultProvider
     private readonly CoreAudioDeviceProvider _deviceProvider = new();
 
     public string Name => TranslationService.Get("AudioDeviceSelector_ProviderName");
+    // The word the user types to invoke this provider, published for the host so it can strip it before
+    // matching/highlighting file names. Read live from the plugin's own settings: the host never keeps a
+    // copy, and changing the word in Settings takes effect on the next keystroke.
+    public IReadOnlyList<string> QueryTriggerKeywords => [GetTriggerKeyword()];
 
     public IEnumerable<InstantResultItem> GetInstantResults(string query)
     {
@@ -77,24 +81,11 @@ public sealed class AudioDeviceSelectorInstantProvider : IInstantResultProvider
             : null;
     }
 
-    internal static bool TryParseQuery(string query, string keyword, out string searchTerm)
-    {
-        searchTerm = string.Empty;
-        if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(keyword))
-            return false;
-
-        var trimmedQuery = query.Trim();
-        var normalizedKeyword = keyword.Trim();
-        if (trimmedQuery.Equals(normalizedKeyword, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var prefix = normalizedKeyword + " ";
-        if (!trimmedQuery.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        searchTerm = trimmedQuery[ prefix.Length..].Trim();
-        return true;
-    }
+    internal static bool TryParseQuery(string query, string keyword, out string searchTerm) =>
+        // Bare "ad" activates -- the device list IS the answer. Tokenizing is the host's own rule, so a
+        // keyword padded in the settings file cannot be stripped from the file search while going
+        // unrecognised here.
+        TriggerWord.TryMatch(query, keyword, out searchTerm);
 
     internal static string GetIconData(AudioDeviceDirection direction, bool isDefault) => isDefault
         ? DefaultDeviceIcon

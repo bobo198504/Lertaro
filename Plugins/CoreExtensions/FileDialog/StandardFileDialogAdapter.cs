@@ -4,6 +4,7 @@ using System.Text;
 using Lertaro.PluginSdk.Services;
 using Lertaro.PluginSdk.Helpers;
 using Lertaro.PluginSdk.Abstractions.Plugins.WindowAdapters;
+using Lertaro.Plugins.CoreExtensions.InlineSearch;
 namespace Lertaro.Plugins.CoreExtensions.FileDialog;
 
 public class StandardFileDialogAdapter : IFileDialogAdapter
@@ -37,6 +38,27 @@ public class StandardFileDialogAdapter : IFileDialogAdapter
     // frame via IFileDialogCustomize, but can't remove or renumber the shell's own built-in id-1148
     // combo since that part isn't Office's to customize, only add alongside.
     public bool TargetIsFolderOnly => _lastMatchWasFolderOnly;
+
+    /// <summary>The dialog's own content region, found the same way Explorer's is.</summary>
+    /// <remarks>
+    /// The pane under the address bar first (<c>DUIViewWndClassName</c>), which is what the card is meant to
+    /// cover and line its corner with; the shell view inside it (<c>SHELLDLL_DefView</c>) only when a dialog
+    /// has no such pane. The two differ by the list's own column header: measured on a live Rimage 添加文件
+    /// 夹, the pane is 370,550..1314,980 and the view 530,584..1314,980 -- the same right edge, a 34px lower
+    /// top -- so anchoring on the view hung the card off the header row instead of off the dialog's content.
+    /// WPS reports its equivalent as one widget already (KcfdContentWidget), so this is also what makes the
+    /// two dialogs of this family corner-align the same way.
+    /// </remarks>
+    public bool TryGetFileListBounds(IntPtr hwnd, out AdapterRect bounds)
+    {
+        bounds = default;
+        var content = FindWindowEx(hwnd, IntPtr.Zero, "DUIViewWndClassName", null);
+        if (content == IntPtr.Zero) content = ExplorerAdapterHelpers.FindContentView(hwnd);
+        if (content == IntPtr.Zero || !GetWindowRect(content, out var r)) return false;
+
+        bounds = new AdapterRect { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Bottom };
+        return true;
+    }
 
     private static bool LooksLikeFolderOnlyPicker(IntPtr hwnd)
     {

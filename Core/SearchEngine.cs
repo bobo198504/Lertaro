@@ -11,7 +11,9 @@ public class SearchEngine : IDisposable
     private readonly UsnIndexer _indexer = new();
     private CancellationTokenSource? _cts;
     private readonly object _startLock = new();
-    private bool _isRebuilding = false;
+    // Volatile, not just locked: read without _startLock by the drive-maintenance callback and by
+    // TryReleaseRuntimeAfterActivity, and a stale true would silently skip an idle-time cache release.
+    private volatile bool _isRebuilding;
     private readonly ManualResetEventSlim _initializationReady = new(initialState: true);
     private MachineSettings _machineSettings = MachineSettings.Load();
     private readonly SearchEngineDriveMaintenance _drives;
@@ -21,7 +23,6 @@ public class SearchEngine : IDisposable
     private readonly SearchCancellationRegistry _searchCancellations = new();
     private static readonly string IndexCacheDir = LocalDriveCacheLocator.DefaultCacheDir;
 
-    private long _lastDriveDetectTime = 0;
     private const long IdleTrimAfterMs = 3000;
     private readonly IdleTrimGate _idleTrim = new(IdleTrimAfterMs, Environment.TickCount64);
     private readonly Timer? _idleTimer;
@@ -55,9 +56,16 @@ public class SearchEngine : IDisposable
         if (!_idleTrim.ShouldTrim(Environment.TickCount64))
             return;
 
+        // Persist each journal drive's accumulated delta first, so a restart replays from here instead of
+        // from the last cold-start catch-up point. Deliberately before the memory hand-back below: the
+        // merge this does is the biggest allocation of the two, and the trim that follows reclaims it.
+        _indexer.CompactIdleDeltas(IndexCacheDir);
+
         Logger.Log("[SearchEngine] Service has been idle for 3s. Trimming working set...", LogLevel.Debug);
         _indexer.ClearCaches();
-        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        // No compaction: the working-set trim below is what hands memory back to the OS, and compacting
+        // the large-object heap only lengthens the pause the next query pays.
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
         Win32Api.TrimWorkingSet();
     }
 
@@ -68,17 +76,14 @@ public class SearchEngine : IDisposable
     public List<SearchResult> GetRecentFiles(IReadOnlyList<string> directories, int limit, int maxAgeMinutes) => _indexer.GetRecentFiles(directories, limit, maxAgeMinutes);
     public List<SpaceIndexEntry> GetSpaceEntries(string? directory) => _indexer.GetSpaceEntries(directory);
 
-    public UsnIndexer.IndexerStatus GetStatus()
-    {
-        _indexer.Status.IsMaintenanceBusy = _isRebuilding || _drives.HasPendingRebuilds;
-        var now = Environment.TickCount64;
-        if (now - _lastDriveDetectTime > 5000 && (_indexer.Status.State is "ready" or "idle"))
-        {
-            _lastDriveDetectTime = now;
-            RefreshDrivesInStatus();
-        }
-        return _drives.BuildStatusSnapshot();
-    }
+    /// <summary>
+    /// The status snapshot, composed in one place: <see cref="SearchEngineDriveMaintenance.BuildStatusSnapshot"/>
+    /// refreshes the drive list, derives <c>IsMaintenanceBusy</c> under the indexer lock, and returns a
+    /// deep copy. This used to duplicate both steps beforehand, which made the extra unlocked
+    /// <c>IsMaintenanceBusy</c> write racy against the locked updates elsewhere in the indexer and the
+    /// extra 5 s-throttled refresh dead weight, since the snapshot refreshed unconditionally anyway.
+    /// </summary>
+    public UsnIndexer.IndexerStatus GetStatus() => _drives.BuildStatusSnapshot();
 
     private void RefreshDrivesInStatus()
         => _drives.RefreshDrivesInStatus();
@@ -271,6 +276,15 @@ public class SearchEngine : IDisposable
         Task.Run(async () =>
         {
             await Task.Delay(150);
+            // Re-checked after the wait, which is the reason for the wait: compaction walks the same
+            // structures an arriving query is reading, so doing it under a running search is a pause
+            // with nothing to show for it.
+            // ponytail: this is still a check-then-act, so a query can start one instruction after it
+            // passes. The upgrade path is a lease -- compact only while no search holds the index read
+            // lock -- which LiveIndex does not offer this caller today.
+            if (_idleTrim.HasSearchInFlight || _isRebuilding)
+                return;
+
             _indexer.CompactMemory();
         });
     }

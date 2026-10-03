@@ -40,6 +40,9 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         Services.AppLifecycle.AppRestartService.WaitForParentExit(e.Args);
+        // The shell worker pool is built here rather than on the first shell action, so that no click ever
+        // asks the loader for a thread while a third-party shell extension is holding it (see ShellThread).
+        ShellThread.Start();
         // Lertaro never set an explicit AppUserModelID, so Windows infers one on its own (commonly
         // derived from the exe's own path) -- the taskbar's default/resting icon for windows from a
         // path Windows treats as an "installed app" (Program Files + Start Menu registration) came
@@ -172,16 +175,20 @@ public partial class App : Application
                 {
                     foreach (Window window in Windows)
                     {
+                        // A view that has never run a query carries a null one (SearchExecutionViewModel
+                        // seeds _searchQuery with null!), so this walk is what holds up SearchRefreshService's
+                        // Func<string,bool>: a plugin's predicate is entitled to dereference its argument, and
+                        // most of them do. A blank box has nothing to re-run either way.
                         if (window.DataContext is QuickSearchViewModel quickVm)
                         {
                             var currentQuery = quickVm.SearchQuery;
-                            if (queryMatches(currentQuery))
+                            if (!string.IsNullOrWhiteSpace(currentQuery) && queryMatches(currentQuery))
                                 quickVm.Search.PerformSearch(currentQuery);
                         }
                         else if (window.DataContext is SearchViewModel searchVm)
                         {
                             var currentQuery = searchVm.AdvancedQuery;
-                            if (queryMatches(currentQuery))
+                            if (!string.IsNullOrWhiteSpace(currentQuery) && queryMatches(currentQuery))
                                 searchVm.PerformSearch(currentQuery);
                         }
                     }
@@ -287,6 +294,9 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         Core.Services.LocalSend.LocalSendServiceManager.Instance.Stop();
+        // Before anything else: a notification still open must be ended rather than left with a caller
+        // awaiting a task no one will ever complete.
+        Services.Notifications.NotificationService.Shutdown();
         _favoriteHotkeys?.Dispose(); _favoriteHotkeys = null;
         foreach (var provider in PluginManager.Instance.AllSearchScopeProviders.OfType<IDisposable>()) provider.Dispose();
         HookClient?.Stop(); HookClient?.Dispose(); HookClient = null;

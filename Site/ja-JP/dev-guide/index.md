@@ -7,7 +7,7 @@ Lertaro 開発者向けリファレンスマニュアルへようこそ。Lertar
 - **[システムアーキテクチャ設計](./architecture)** —— SYSTEM 権限の Windows サービス、ユーザー権限の WPF UI、キーボードフックプロセスの 3 プロセス分離モデルと名前付きパイプ IPC の詳細。
 - **[クイックスタートガイド](./getting-started)** —— クラスライブラリの作成、SDK の参照、`IPlugin` エントリポイントの実装、ローカルデバッグの手順。
 - **[パッケージングと配布](./packaging)** —— ディレクトリ構造の仕様、依存ライブラリの同梱、多言語 JSON リソースの埋め込み、PostBuild 自動配置。
-- **[公式プラグインのサンプル解説](./examples)** —— オープンソースとして同梱されている `CoreExtensions`、`PinyinAlias`、`FlowLauncherBridge` の設計と実装パターンの詳細解説。
+- **[公式プラグインのサンプル解説](./examples)** —— オープンソースとして同梱されている `CoreExtensions`、`PinyinAlias`、`FlowLauncherBridge`、`FileUnlocker` の設計と実装パターンの詳細解説。
 
 ## 2. プラグイン SDK API リファレンス
 
@@ -18,6 +18,7 @@ Lertaro 開発者向けリファレンスマニュアルへようこそ。Lertar
 | **[UI とプレビューの拡張](./sdk/ui-extensions)** | `ISidebarFilterProvider`<br>`IResultColumnProvider`<br>`IQuickPanelTabProvider`<br>`IFilePreviewProvider`<br>`IThumbnailProvider`<br>`IThemeProvider`<br>`ITranslationProvider` | サイドバーフィルターカテゴリ、テーブル列の拡張、クイックパネルの動的タブ、QuickLook プレビュー描画、サムネイル抽出、WPF テーマ、多言語 i18n。 |
 | **[共通データ構造と契約](./sdk/abstractions)** | `ISearchResult`<br>`FileMetadata`<br>`IPluginSearchWindow`<br>`IConfigurable` | 検索結果の読み取り専用モデル、高精度ファイルメタデータ、親ウィンドウの制御ハンドル、スキーマ駆動型ネイティブ設定フォーム。 |
 | **[ホストが提供する各種サービス](./sdk/services)** | `FuzzyMatchService`<br>`TranslationService`<br>`IconService`<br>`FavoritesService`<br>`HistoryService`<br>`FileMetadataService`<br>`DirectoryIndexerService`<br>`MemoryMaintenanceService`<br>`RecentFilesService`<br>`ExplorerPathService`<br>`PluginSettingsService`<br>`SettingsSearchService`<br>`SettingsWindowService`<br>`SearchRefreshService`<br>`UserDataService`<br>`Logger` | 高性能ホスト機能：fzf あいまい一致とハイライトマスク、多言語解析、キャッシュ付きアイコン抽出、お気に入り管理・履歴取得、インデックスサービス連携、遅延メモリ整理、データ分離、Shell ファイル操作。 |
+| **[通知表示](./sdk/notifications)** | `PluginNotificationService`<br>`NotificationRequest`<br>`INotificationHandle`<br>`NotificationLevel`<br>`NotificationPosition`<br>`NotificationResult`<br>`NotificationFailure` | ホスト自身のウィンドウを利用したバックグラウンド通知：右下のカードスタックまたは画面下部中央の1行表示、ホストによって制限される表示時間、`Id` による置換、プラグインごとの上限、必ず完了する完了タスク。 |
 
 > [!NOTE]
-> 本マニュアルのすべてのインターフェイス定義、引数、動作仕様は `Lertaro.PluginSdk` のソースコードに基づいて厳密に記述されています。
+> 各ページのインターフェイス定義、メンバー名、既定値、引数の順序は `Lertaro.PluginSdk` のソースコードから読み取っています。ただし、プラグインの呼び出しに対して **ホスト** がどう反応するかを説明している文は、現状の動作の記録であり、プラグインが依存してよい契約ではありません。

@@ -25,6 +25,7 @@ internal static class IpcMessagePayloadCodec
             case IpcMessageId.KeyDown:
             case IpcMessageId.KeyLeft:
             case IpcMessageId.KeyRight:
+            case IpcMessageId.ClearHookLog:
                 break;
             case IpcMessageId.SetAppProcessId:
             case IpcMessageId.KillProcess:
@@ -146,6 +147,7 @@ internal static class IpcMessagePayloadCodec
             case IpcMessageId.KeyDown:
             case IpcMessageId.KeyLeft:
             case IpcMessageId.KeyRight:
+            case IpcMessageId.ClearHookLog:
                 break;
 
             case IpcMessageId.SetAppProcessId:

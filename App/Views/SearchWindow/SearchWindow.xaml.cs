@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using Lertaro.App.Views.SearchWindow;
 using Lertaro.App.Services;
+using Lertaro.App.Helpers;
+using Lertaro.Core;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Size = System.Windows.Size;
 using TextBox = System.Windows.Controls.TextBox;
@@ -32,7 +34,7 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
     // selection handler and would close a preview opened any earlier.
     private bool _restorePreviewOnFirstResult;
     internal readonly string PowerWindowId = "full:" + Guid.NewGuid().ToString("N");
-    public SearchWindow(string initialQuery = "", bool restorePreview = false)
+    public SearchWindow(string initialQuery = "", bool restorePreview = false, IReadOnlyList<AppSearchResult>? quickSearchRows = null)
     {
         InitializeComponent();
         _restorePreviewOnFirstResult = restorePreview;
@@ -61,7 +63,7 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
         // The maximized-size cap that keeps the window off the taskbar is applied per-monitor in
         // SearchWindowChromeHandler.HandleStateChanged, so it stays correct on secondary screens.
 
-        _viewModel = new SearchViewModel(initialQuery);
+        _viewModel = new SearchViewModel(initialQuery, quickSearchRows);
         this.DataContext = _viewModel;
         QuickLookManager.Instance.Reset();
 
@@ -79,7 +81,10 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
                 Keyboard.Focus(txtSearch);
                 if (initialQuery != null)
                 {
-                    txtSearch.SelectionStart = initialQuery.Length;
+                    if (SearchInputHelper.ShouldSelectCarriedText(initialQuery, UserSettings.Load().SearchWindow.KeepSearchText))
+                        txtSearch.SelectAll();
+                    else
+                        txtSearch.SelectionStart = initialQuery.Length;
                 }
             }), System.Windows.Threading.DispatcherPriority.Input);
         };
@@ -135,6 +140,12 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
     public bool UsesFloatingActionsMenu => true;
     bool ISearchWindow.KeepWindowOpenAfterActionsHotkey => true;
     public string SearchText => SearchBox.SearchTextBox.Text;
+
+    /// <summary>
+    /// Carries the quick window's rows across for the query about to be set into the box. Only needed on
+    /// this path -- a window built for the query gets them through its constructor.
+    /// </summary>
+    public void HandOffQuickSearchResults(IReadOnlyList<AppSearchResult> rows) => _viewModel.HandOffQuickSearchResults(rows);
     public TextBox SearchTextBox => SearchBox.SearchTextBox;
 
     public bool IsInActionsMode
@@ -246,11 +257,22 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
     {
         SaveWindowSize();
         _viewModel.Dispose();
-        // This window can be one of several (e.g. opened via "show more"), so on close release the icon
-        // cache and trim the working set, matching the quick/inline windows, to reclaim its bitmaps.
-        ShellIconHelper.ClearCache();
-        PathCacheMaintenance.ClearAllPathCaches();
-        Core.Win32Api.TrimWorkingSet();
+
+        // The two caches genuinely free memory, so they are still released -- off this thread, because
+        // both are process-wide and shared with any quick, inline or other full window still open.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100);
+            try { ShellIconHelper.ClearCache(); } catch { }
+            try { PathCacheMaintenance.ClearAllPathCaches(); } catch { }
+        });
+
+        // TrimWorkingSet() used to run here, synchronously, on the theory that it matched the quick
+        // window -- which documents the exact opposite about the same call: it frees nothing, it only
+        // evicts pages the next summon has to fault straight back in (measured at ~17 MB and 70 % of a
+        // summon), and because the trim is process-wide, closing one of this window's several instances
+        // did that to the windows the user still had open. Deferred, like theirs.
+        IdleWorkingSetTrimmer.WindowHidden();
         PowerThrottlingHelper.WindowHidden(PowerWindowId);
         base.OnClosed(e);
     }
@@ -262,7 +284,7 @@ public partial class SearchWindow : Window, ISearchWindow, IHasVisibleContentIns
     {
         var size = WindowState == WindowState.Normal ? new Size(Width, Height) : RestoreBounds.Size;
         if (size.Width <= 0 || size.Height <= 0) return;
-        var settings = Core.UserSettings.Load();
+        var settings = UserSettings.Load();
         settings.MainWindow.Width = UiMetrics.RoundWindowSize(size.Width);
         settings.MainWindow.Height = UiMetrics.RoundWindowSize(size.Height);
         settings.Save();

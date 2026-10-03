@@ -37,7 +37,7 @@ Run commands directly without launching a terminal window first:
 
 ### Direct URL Navigation
 
-Type or paste any URL beginning with `http://` or `https://` and press `Enter` to open it immediately in your default browser. Entering a valid protocol-less web address such as `example.com` generates two instant results in the Quick Search Window: `https://...` and `http://...`. Each result uses the two-line browser-open presentation, the query text is not modified, and an address that already includes a protocol produces one result.
+Type or paste any URL beginning with `http://` or `https://` and press `Enter` to open it immediately in your default browser. Entering a valid protocol-less web address such as `example.com` generates two instant results in the Quick Search Window: `https://...` and `http://...`. The protocol-less guess only applies to a built-in list of common domain suffixes (`.com`, `.net`, `.org`, `.cn`, `.io`, ...). That list is hard-coded and not configurable, and anything else stays a file search, so `abc.txt` produces no browser row; add the protocol yourself to open a suffix the list does not cover. Each result uses the two-line browser-open presentation, the query text is not modified, and an address that already includes a protocol produces one result.
 
 ### Clipboard text in the Quick Search Window
 
@@ -46,6 +46,8 @@ When the Quick Search Window is summoned without prefilled text, a non-empty cli
 ## 2. Keyword-Triggered Plugin Extensions
 
 By typing a short **trigger keyword + space** followed by your query, you can invoke dedicated plugin capabilities. All keywords can be customized under [**Settings → Plugins**](./settings/plugins).
+
+A half-width space, a full-width space or a tab all separate the keyword from what follows, and the keyword itself never takes part in file-name matching or highlighting. If two features answer to the same keyword, the plugin's configuration page flags it in amber under that field and names the other one -- saving is not blocked.
 
 | Default Keyword | Plugin Name | Description & Use Case | Example Usage |
 | :--- | :--- | :--- | :--- |

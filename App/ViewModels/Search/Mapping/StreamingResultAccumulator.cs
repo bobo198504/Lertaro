@@ -36,6 +36,21 @@ internal sealed class StreamingResultAccumulator
     private readonly List<AppSearchResult> _lastBatchRows = new();
     private readonly HashSet<string> _seedPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    // Rows a content-style provider contributed, held at the FRONT of _rows. They come from a different
+    // source than the index and outrank it by this window's own rule, so they are never entered into
+    // _ranked -- but they do have to live in the one list every paint hands back, because a paint that
+    // composed them into a fresh list would be a multi-megabyte copy of a search that can hold six
+    // hundred thousand rows.
+    //
+    // A QUEUE rather than a single hand-off, and guarded rather than volatile: a provider that streams
+    // answers in batches, and a second batch arriving before the pump takes up the first must extend it,
+    // not replace it. The pump is the only reader; the UI thread is the only writer.
+    private readonly List<AppSearchResult> _pendingPrefix = new();
+    private readonly object _prefixLock = new();
+    private int _prefixCount;
+    // Absolute position in _rows, so it carries the prefix's own width. See FirstChangedIndex.
+    private int _firstChanged;
+
     public StreamingResultAccumulator(
         string query,
         IReadOnlyDictionary<string, int> historySnapshot,
@@ -92,7 +107,51 @@ internal sealed class StreamingResultAccumulator
     /// work proportional to what actually moved, which is the difference between a paint the list can
     /// afford several times a second and one it can afford every few minutes.
     /// </remarks>
-    public int FirstChangedIndex { get; private set; }
+    public int FirstChangedIndex => _firstChanged;
+
+    /// <summary>
+    /// The one list <see cref="Absorb"/> hands back: the content prefix, then the ranked index matches.
+    /// </summary>
+    public List<AppSearchResult> Rows => _rows;
+
+    /// <summary>How many leading rows came from a content provider rather than from the index.</summary>
+    public int ContentPrefixCount => _prefixCount;
+
+    /// <summary>
+    /// Adds rows to the front block, to be taken up by the next <see cref="Absorb"/>. Callable from any
+    /// thread while the search streams; batches already placed stay, later ones extend them.
+    /// </summary>
+    public void QueueContentPrefix(List<AppSearchResult> rows)
+    {
+        if (rows.Count == 0)
+            return;
+        lock (_prefixLock)
+        {
+            _pendingPrefix.AddRange(rows);
+        }
+    }
+
+    private bool ApplyQueuedPrefix()
+    {
+        List<AppSearchResult> queued;
+        lock (_prefixLock)
+        {
+            if (_pendingPrefix.Count == 0)
+                return false;
+            // Copied out rather than swapped: another batch can be queued while this one goes in.
+            queued = new List<AppSearchResult>(_pendingPrefix);
+            _pendingPrefix.Clear();
+        }
+
+        // Behind whatever prefix is already displayed, so a streamed answer grows the block instead of
+        // reordering the rows the user is looking at. Stamped here because RewriteRows only ever walks the
+        // ranked index matches.
+        for (var i = 0; i < queued.Count; i++)
+            queued[i].Index = _prefixCount + i;
+        _rows.InsertRange(_prefixCount, queued);
+        _prefixCount += queued.Count;
+        return true;
+    }
 
     /// <summary>
     /// Absorbs everything in <paramref name="arrivals"/> past what previous calls already took, and
@@ -118,8 +177,12 @@ internal sealed class StreamingResultAccumulator
 
     private List<AppSearchResult> AbsorbRange(IReadOnlyList<SearchResult> arrivals, int start, int count)
     {
-        FirstChangedIndex = _ranked.Count;
         _lastBatchRows.Clear();
+        // Taken up at the start of a paint rather than by the thread that queued it, so one thread ever
+        // touches _rows, and so the rewrite below restamps every row's position for the wider prefix.
+        var prefixLanded = ApplyQueuedPrefix();
+
+        var firstChanged = _ranked.Count;
 
         if (count > 0)
         {
@@ -141,27 +204,33 @@ internal sealed class StreamingResultAccumulator
 
             _consumed += count;
             chunk.Sort(CompareEntries);
-            Merge(chunk);
+            firstChanged = Merge(chunk);
         }
 
-        RewriteRows(FirstChangedIndex);
+        // A prepend moves every row that was already there, so nothing on screen can be trusted to still
+        // be in place and this paint compares from the top. Otherwise the merge's own position is where the
+        // view can start, offset by the prefix that sits in front of it.
+        RewriteRows(prefixLanded ? 0 : firstChanged);
+        _firstChanged = prefixLanded ? 0 : _prefixCount + firstChanged;
         return _rows;
     }
 
     // Only the disturbed suffix is rewritten. Index is restamped over the same range because a row
     // inserted in the middle shifts every position after it.
-    private void RewriteRows(int from)
+    private void RewriteRows(int fromRelative)
     {
-        while (_rows.Count < _ranked.Count)
+        var total = _prefixCount + _ranked.Count;
+        while (_rows.Count < total)
             _rows.Add(null!);
-        if (_rows.Count > _ranked.Count)
-            _rows.RemoveRange(_ranked.Count, _rows.Count - _ranked.Count);
+        if (_rows.Count > total)
+            _rows.RemoveRange(total, _rows.Count - total);
 
-        for (var i = from; i < _ranked.Count; i++)
+        for (var i = fromRelative; i < _ranked.Count; i++)
         {
             var row = _ranked[i].Row;
-            row.Index = i;
-            _rows[i] = row;
+            // The display position, prefix included -- what it was before a prefix existed at all.
+            row.Index = _prefixCount + i;
+            _rows[row.Index] = row;
         }
     }
 
@@ -170,21 +239,20 @@ internal sealed class StreamingResultAccumulator
     private static string NormalizePath(string path) =>
         path.Length > 3 && path[^1] == '\\' ? path.TrimEnd('\\') : path;
 
-    private void Merge(List<Entry> chunk)
+    /// <summary>Merges a sorted batch into the ranked list and returns the position it first disturbed.</summary>
+    private int Merge(List<Entry> chunk)
     {
         if (chunk.Count == 0)
-            return;
+            return _ranked.Count;
 
         if (_ranked.Count == 0)
         {
             _ranked = chunk;
-            FirstChangedIndex = 0;
-            return;
+            return 0;
         }
 
         var oldCount = _ranked.Count;
         var firstChanged = FindInsertionPoint(chunk[0]);
-        FirstChangedIndex = firstChanged;
 
         // Merge backward into the existing buffer. The untouched prefix is neither compared nor
         // copied, so a late batch that ranks near the end costs only its disturbed tail. AddRange is
@@ -202,6 +270,8 @@ internal sealed class StreamingResultAccumulator
         }
         while (chunkIndex >= 0)
             _ranked[writeIndex--] = chunk[chunkIndex--];
+
+        return firstChanged;
     }
 
     private int FindInsertionPoint(Entry entry)

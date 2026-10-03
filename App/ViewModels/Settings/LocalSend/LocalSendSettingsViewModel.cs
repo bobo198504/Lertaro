@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using System.IO;
+using System.Net;
 using System.Windows.Input;
 using Lertaro.App.Helpers;
 using Lertaro.Core;
@@ -17,6 +17,7 @@ public sealed class LocalSendSettingsViewModel : ViewModelBase
     private int _discoveryTimeout;
     private bool _quickSave;
     private string _downloadDirectory;
+    private int _port;
     private bool _enableHttps;
     private bool _createChecksums;
     private bool _verifyChecksums;
@@ -30,8 +31,9 @@ public sealed class LocalSendSettingsViewModel : ViewModelBase
         _deviceAlias = userSettings.LocalSend.DeviceAlias;
         _discoveryTimeout = userSettings.LocalSend.DiscoveryTimeout > 0 ? userSettings.LocalSend.DiscoveryTimeout : 1000;
         _quickSave = userSettings.LocalSend.QuickSave;
+        _port = userSettings.LocalSend.Port;
         _downloadDirectory = string.IsNullOrEmpty(userSettings.LocalSend.DownloadDirectory)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+            ? LocalSendSettingsModel.DefaultDownloadDirectory
             : userSettings.LocalSend.DownloadDirectory;
         _enableHttps = userSettings.LocalSend.EnableHttps;
         _createChecksums = userSettings.LocalSend.CreateChecksums;
@@ -69,11 +71,41 @@ public sealed class LocalSendSettingsViewModel : ViewModelBase
         set => SetProperty(ref _quickSave, value);
     }
 
+    /// <summary>
+    /// The port LocalSend listens on and tells peers to reach it at -- the same number for both
+    /// directions, since the protocol has a sender connect to the receiver's own HTTP port. Discovery
+    /// (multicast and announcement) is sent from it too, so one field covers receiving and sending.
+    /// </summary>
+    public int Port
+    {
+        get => _port;
+        set => SetProperty(ref _port, value);
+    }
+
+    /// <summary>
+    /// <paramref name="port"/> as the service may safely bind it: the row is a text box, so an
+    /// out-of-range or half-typed value falls back to the protocol default instead of being stored --
+    /// and 0 has to fall back with them, since every reader of Port takes 0 to mean "not configured"
+    /// (IPEndPoint.MinPort is 0, so a range check alone would let it through).
+    /// </summary>
+    internal static int ValidPort(int port) =>
+        port >= 1 && port <= IPEndPoint.MaxPort ? port : Core.Services.LocalSend.LocalSendDiscoveryService.DefaultPort;
+
     public string DownloadDirectory
     {
         get => _downloadDirectory;
-        set => SetProperty(ref _downloadDirectory, value);
+        set
+        {
+            if (SetProperty(ref _downloadDirectory, value))
+                OnPropertyChanged(nameof(DownloadDirectoryDisplay));
+        }
     }
+
+    /// <summary>
+    /// What the row shows: the folder files actually land in. The stored value stays the configured one
+    /// (the shell token by default) so applying the page never freezes it to today's physical path.
+    /// </summary>
+    public string DownloadDirectoryDisplay => Core.Services.LocalSend.LocalSendServerHelper.ResolveDownloadDirectory(_downloadDirectory);
 
     public bool EnableHttps
     {
@@ -113,6 +145,7 @@ public sealed class LocalSendSettingsViewModel : ViewModelBase
         _userSettings.LocalSend.DeviceAlias = _deviceAlias;
         _userSettings.LocalSend.DiscoveryTimeout = _discoveryTimeout > 0 ? _discoveryTimeout : 1000;
         _userSettings.LocalSend.QuickSave = _quickSave;
+        _userSettings.LocalSend.Port = ValidPort(_port);
         _userSettings.LocalSend.DownloadDirectory = _downloadDirectory;
         _userSettings.LocalSend.EnableHttps = _enableHttps;
         _userSettings.LocalSend.CreateChecksums = _createChecksums;
@@ -139,7 +172,7 @@ public sealed class LocalSendSettingsViewModel : ViewModelBase
         {
             Description = "Select LocalSend Download Directory",
             UseDescriptionForTitle = true,
-            SelectedPath = DownloadDirectory
+            SelectedPath = Core.Services.LocalSend.LocalSendServerHelper.ResolveDownloadDirectory(DownloadDirectory)
         };
 
         if (dialog.ShowDialog() == DialogResult.OK)

@@ -19,15 +19,17 @@ public sealed class ContentSearchInstantProvider : IInstantResultProvider, IFull
     };
 
     public string Name => TranslationService.Get("ContentSearch_ProviderName");
+    // The word the user types to invoke this provider, published for the host so it can strip it before
+    // matching/highlighting file names. Read live from the plugin's own settings: the host never keeps a
+    // copy, and changing the word in Settings takes effect on the next keystroke.
+    public IReadOnlyList<string> QueryTriggerKeywords => [GetTriggerKeyword()];
     public string Description => TranslationService.Get("ContentSearch_ProviderDesc");
 
     public IEnumerable<InstantResultItem> GetInstantResults(string query)
     {
-        var trigger = GetTriggerPrefix();
-        if (string.IsNullOrEmpty(query) || !query.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
+        if (!TryGetSearchTerm(query, out var keyword))
             yield break;
 
-        var keyword = query[trigger.Length..].Trim();
         var db = ContentSearchPlugin.Database;
         var scheduler = ContentSearchPlugin.Scheduler;
         if (db == null || scheduler == null)
@@ -58,25 +60,26 @@ public sealed class ContentSearchInstantProvider : IInstantResultProvider, IFull
         }
     }
 
-    public IReadOnlyList<InstantResultItem> GetFileResults(string query, int limit)
-    {
-        // The full search window calls this on its final render with the already token-stripped
-        // query. Only a real content-search keyword ("cs xxx") contributes hits; the bare "cs "
-        // placeholder has no file rows to show there.
-        var trigger = GetTriggerPrefix();
-        if (string.IsNullOrWhiteSpace(query) || !query.StartsWith(trigger, StringComparison.OrdinalIgnoreCase))
-            return Array.Empty<InstantResultItem>();
+    public IReadOnlyList<InstantResultItem> GetFileResults(string query, int limit) => GetFileResultsStreamed(query, limit).ToList();
 
-        var keyword = query[trigger.Length..].Trim();
-        if (keyword.Length == 0)
-            return Array.Empty<InstantResultItem>();
+    /// <summary>
+    /// The walk out of the content index, one row per hit, handed over as the index reaches it. The whole
+    /// answer would otherwise arrive only after a short term has read every indexed document, which on a
+    /// real corpus is seconds -- and seconds of an empty grid is the complaint this exists to answer.
+    /// </summary>
+    public IEnumerable<InstantResultItem> GetFileResultsStreamed(string query, int limit)
+    {
+        // Only a real content-search keyword ("cs xxx") contributes hits; the bare "cs " placeholder has
+        // no file rows to show there.
+        if (!TryGetSearchTerm(query, out var keyword) || keyword.Length == 0)
+            yield break;
 
         var database = ContentSearchPlugin.Database;
         if (database == null)
-            return Array.Empty<InstantResultItem>();
+            yield break;
 
-        var hits = database.SearchFts(keyword, limit);
-        return ContentSearchResultBuilder.BuildResultItems(hits).ToList();
+        foreach (var hit in database.SearchFtsStreamed(keyword, limit))
+            yield return ContentSearchResultBuilder.CreateResultItem(hit);
     }
 
     public bool[]? GetHighlightMask(string text, string query)
@@ -84,27 +87,30 @@ public sealed class ContentSearchInstantProvider : IInstantResultProvider, IFull
         if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(text))
             return null;
 
-        var triggerPrefix = GetTriggerPrefix();
-        var trimmed = query.TrimStart();
-        if (!trimmed.StartsWith(triggerPrefix, StringComparison.OrdinalIgnoreCase))
+        // Null when the word is not on the front of it -- that is this contract's way of declining, after
+        // which the host's own matcher highlights the same term the row was searched with anyway.
+        if (!TryGetSearchTerm(query, out var term))
             return null;
 
-        var remainder = trimmed[triggerPrefix.Length..].Trim();
-        if (remainder.Length == 0)
-        {
-            return new bool[text.Length];
-        }
+        var mask = new bool[text.Length];
+        if (term.Length == 0)
+            return mask;
 
-        return FuzzyMatchService.GetHighlightMask(text, remainder) ?? new bool[text.Length];
+        return FuzzyMatchService.GetHighlightMask(text, term) ?? mask;
     }
 
     private static string GetTriggerKeyword()
     {
-        _cachedTrigger ??= PluginSettingsService.GetSetting(PluginId, "TriggerKeyword", DefaultTrigger).Trim();
+        _cachedTrigger ??= TriggerWord.Normalize(PluginSettingsService.GetSetting(PluginId, "TriggerKeyword", DefaultTrigger));
         return _cachedTrigger.Length > 0 ? _cachedTrigger : DefaultTrigger;
     }
 
-    private static string GetTriggerPrefix() => GetTriggerKeyword() + " ";
+    // "cs 报告 :jpg" is the word "cs" carrying the term "报告". Providers are handed the untouched box
+    // text so they can still recognise their own word -- and with it the host's trailing token syntax,
+    // which the full-text index would otherwise search FOR ("a document containing ':jpg'"). So the
+    // tokens come off here, before the term is used as a search term or as highlight text.
+    private static bool TryGetSearchTerm(string query, out string term) =>
+        TriggerWord.TryMatchInvoked(SearchQueryService.StripQueryTokens(query), GetTriggerKeyword(), out term);
 
     /// <summary>
     /// True for exactly the query that shows the indexing placeholder ("cs" or "cs " with no

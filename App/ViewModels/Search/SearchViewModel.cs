@@ -35,6 +35,10 @@ public class SearchViewModel : ViewModelBase, IDisposable
 
     private string _advancedQuery = string.Empty;
     private List<AppSearchResult> _allResults = new();
+    // Whether _allResults holds content-provider rows (ContentSearch's "cs " hits), reported by the code
+    // that puts them in. Needed because a TYPE filter has to drop them, and finding out by asking the list
+    // costs a full scan of it -- see _filterSource.
+    private bool _allResultsHoldContentRows;
     private string _resultCountText = "";
     private bool _isSearching;
     private bool _isResultsListEnabled = true;
@@ -44,14 +48,23 @@ public class SearchViewModel : ViewModelBase, IDisposable
     public bool IsSearching
     {
         get => _isSearching;
-        private set => SetProperty(ref _isSearching, value);
+        private set
+        {
+            if (SetProperty(ref _isSearching, value))
+            {
+                // The hint below reads this, and nothing else re-raises it: without this an empty list
+                // during a search still paints "no results", which is what makes a window that is
+                // working look like a window that found nothing.
+                OnPropertyChanged(nameof(ShowNoResultsHint));
+            }
+        }
     }
     public bool IsResultsListEnabled
     {
         get => _isResultsListEnabled;
         private set => SetProperty(ref _isResultsListEnabled, value);
     }
-    public SearchViewModel(string initialQuery = "")
+    public SearchViewModel(string initialQuery = "", IReadOnlyList<AppSearchResult>? quickSearchRows = null)
     {
         _searchService = new SearchService();
         _searchEngine = new SearchExecutionEngine(_searchService);
@@ -74,7 +87,11 @@ public class SearchViewModel : ViewModelBase, IDisposable
             _searchEngine,
             _serviceStatus,
             getAllResults: () => _allResults,
-            setAllResults: v => _allResults = v,
+            setAllResults: (v, holdsContentRows) =>
+            {
+                _allResults = v;
+                _allResultsHoldContentRows = holdsContentRows;
+            },
             setIsSearching: v => IsSearching = v,
             setLoadingPanelVisibility: v => LoadingPanelVisibility = v,
             setIsSearchBoxEnabled: v => IsSearchBoxEnabled = v,
@@ -113,9 +130,31 @@ public class SearchViewModel : ViewModelBase, IDisposable
         _isSortAscending = SearchResultSortMemory.IsSortAscending;
 
         ResultCountText = string.Format(TranslationManager.Instance["Search_Total"], 0);
+        if (quickSearchRows is { Count: > 0 })
+            HandOffQuickSearchResults(quickSearchRows);
         AdvancedQuery = initialQuery;
 
         TranslationManager.Instance.PropertyChanged += OnTranslationsChanged;
+    }
+
+    /// <summary>
+    /// Shows what the quick window had on screen in this window immediately, underneath the wider search
+    /// that the same query re-issues from here.
+    /// </summary>
+    /// <remarks>
+    /// The full window asks the index for every match on the drive, so on a big index its first paint is
+    /// seconds away; showing the rows the user was already looking at costs one list copy and turns the
+    /// switch from "the results disappeared" into "the same results, in a bigger window". The first paint
+    /// of the real search replaces them, which is why they need no invalidation of their own.
+    /// </remarks>
+    internal void HandOffQuickSearchResults(IReadOnlyList<AppSearchResult> rows)
+    {
+        if (rows.Count == 0)
+            return;
+
+        _allResults = new List<AppSearchResult>(rows);
+        ApplyFiltersAndRender(extendsContent: false, unchangedPrefix: 0);
+        OnPropertyChanged(nameof(ShowNoResultsHint));
     }
     private void OnTranslationsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -244,7 +283,11 @@ public class SearchViewModel : ViewModelBase, IDisposable
             .Select(p => p!)
             .ToList();
 
-        _filterSource = IsTypeFilterSelected
+        // The copy costs a full pass over a list that can hold hundreds of thousands of rows, so it happens
+        // only when a type filter is open AND this list actually holds content rows. Those arrive once per
+        // query, on the append that adds them -- every streaming paint before that was paying the copy to
+        // filter a list that had nothing in it to filter.
+        _filterSource = IsTypeFilterSelected && _allResultsHoldContentRows
             ? _allResults.Where(r => !r.IsFullSearchFileResult).ToList()
             : _allResults;
 
@@ -284,7 +327,9 @@ public class SearchViewModel : ViewModelBase, IDisposable
         }
     }
 
-    public bool ShowNoResultsHint => !IsActionsMode && FilteredResults.Count == 0 && !string.IsNullOrWhiteSpace(AdvancedQuery);
+    // False while a search is still running: an empty list then means "nothing has arrived yet", not
+    // "there is nothing to find", and the window reads as blank either way.
+    public bool ShowNoResultsHint => !IsActionsMode && !IsSearching && FilteredResults.Count == 0 && !string.IsNullOrWhiteSpace(AdvancedQuery);
     public bool ShowWelcomeHint => !IsActionsMode && string.IsNullOrWhiteSpace(AdvancedQuery);
 
     internal void PerformSearch(string query) => _dispatcher.PerformSearch(query);

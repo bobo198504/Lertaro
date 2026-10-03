@@ -47,6 +47,42 @@ public interface IFileDialogAdapter : IPluginComponent
     bool GetDockBounds(IntPtr hwnd, out AdapterRect rect);
 
     /// <summary>
+    /// The screen bounds of the field the card's text actually lands in -- the dialog's file-name box --
+    /// for a dialog that can see it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="GetDockBounds"/> decides how wide the card may be and which edge it hangs from; this says
+    /// which part of that window the user is looking at. They are the same thing for a dialog whose target
+    /// field spans the window, but not for one like WPS's, whose dock rect is the whole 960px-wide dialog
+    /// while the file-name box only starts a third of the way in: centering the card on the dialog then
+    /// parks its left edge well to the left of the box. Default false leaves the host's own horizontal
+    /// choice in place, which is what every dialog that does not opt in gets.
+    ///
+    /// Asked on the positioning path, which runs again every time the dialog moves or resizes, so an
+    /// implementation is expected to keep it cheap and never block.
+    /// </remarks>
+    bool TryGetTargetFieldBounds(IntPtr hwnd, out AdapterRect bounds)
+    {
+        bounds = default;
+        return false;
+    }
+
+    /// <summary>
+    /// The dialog's own file list, for a dialog that can see it.
+    /// </summary>
+    /// <remarks>
+    /// Where the card hangs from when there is NO room under the dialog: the card's visible top-right corner
+    /// meets this rect's top-right, which is the same edge the card uses over a file manager's window (whose
+    /// dock rect already is its file list). Answering false leaves the card attached to the dialog's own top
+    /// edge, covering its address bar and navigation pane.
+    /// </remarks>
+    bool TryGetFileListBounds(IntPtr hwnd, out AdapterRect bounds)
+    {
+        bounds = default;
+        return false;
+    }
+
+    /// <summary>
     /// Restores focus to the appropriate control in the dialog window.
     /// </summary>
     bool RestoreFocus(IntPtr hwnd);

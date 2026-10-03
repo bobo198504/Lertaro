@@ -7,6 +7,10 @@ namespace Lertaro.Plugins.ProcessManager;
 public class ProcessManagerInstantProvider : IInstantResultProvider
 {
     public string Name => TranslationService.Get("ProcessManager_Name");
+    // The word the user types to invoke this provider, published for the host so it can strip it before
+    // matching/highlighting file names. Read live from the plugin's own settings: the host never keeps a
+    // copy, and changing the word in Settings takes effect on the next keystroke.
+    public IReadOnlyList<string> QueryTriggerKeywords => [GetTriggerKeyword()];
 
 
     // Falls back to the default even if an empty string was already persisted before RequireNonEmpty
@@ -15,7 +19,7 @@ public class ProcessManagerInstantProvider : IInstantResultProvider
     private static string GetTriggerKeyword()
     {
         var value = PluginSettingsService.GetSetting("Lertaro.Plugins.ProcessManager", "TriggerKeyword", "ps");
-        return string.IsNullOrWhiteSpace(value) ? "ps" : value;
+        return TriggerWord.Normalize(value) is { Length: > 0 } word ? word : "ps";
     }
 
     private static string GetProcessPath(Process proc)
@@ -76,21 +80,11 @@ public class ProcessManagerInstantProvider : IInstantResultProvider
             return [];
 
         var keyword = GetTriggerKeyword();
-        if (string.IsNullOrWhiteSpace(keyword))
+        // Bare "ps" activates and lists every process; with a term it filters. One shared tokenizing rule
+        // with the host's own word-stripping, so a keyword padded in its settings entry cannot be stripped
+        // from the file search while going unrecognised here.
+        if (!TriggerWord.TryMatch(query, keyword, out var searchTerm))
             return [];
-
-        var trimmed = query.Trim();
-        var isPsQuery = string.Equals(trimmed, keyword, StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.StartsWith(keyword + " ", StringComparison.OrdinalIgnoreCase);
-
-        if (!isPsQuery)
-            return [];
-
-        var searchTerm = "";
-        if (trimmed.StartsWith(keyword + " ", StringComparison.OrdinalIgnoreCase))
-        {
-            searchTerm = trimmed.Substring(keyword.Length + 1).Trim();
-        }
 
         Process[] processes;
         try

@@ -12,21 +12,22 @@ internal static class InlineCardMetrics
     // card bounded: section titles are rows in the list and cannot make a tenth row appear.
     internal const int DefaultRows = 9;
 
-    // The floor a screen-aware budget never drops below. Below this the list stops being usable, so the card
-    // is allowed to take more of the screen than the shares below would otherwise grant it -- the list scrolls
-    // at every budget, so the entries themselves are never lost.
-    internal const int MinRows = 4;
+    // The cap over a file dialog: a dialog is mostly other people's controls, and the card that covers one
+    // should leave as much of it usable as possible. The jump shortcuts keep working 1..4; 5..9 simply have
+    // nothing to jump to here.
+    internal const int DialogRows = 4;
+
+    // The floor a screen-aware budget never drops below, and it is deliberately low: an over-tall card is
+    // the one thing that actually blocks the window it is docked to, so in a space too short for four rows
+    // the card takes two and scrolls rather than pushing further over the host window. Two rows still show a
+    // selection with a neighbour, which is the least the list can be and stay legible.
+    internal const int MinRows = 2;
 
     // How much of the monitor's working area, and how much of the window the card is anchored to, the card
     // may occupy. The second one is what keeps a docked card from covering the dialog it belongs to: it is
     // capped to a share of that window instead of growing to whatever its rows would need.
     internal const double WorkingAreaHeightShare = 0.9;
     internal const double AnchoredWindowHeightShare = 0.6;
-
-    // The shell reserves this many wrapped path lines so selecting ordinary long paths does not move the
-    // bottom-anchored search bar. This is only an estimate for the shell; the path banner itself remains
-    // naturally sized and can grow beyond it when the complete path needs more lines.
-    internal const int PathPreviewReservedRows = 5;
 
     /// <summary>What the results area should occupy right now.</summary>
     /// <param name="ShownItems">Bound items to occupy with real rows, including any section titles.</param>
@@ -70,23 +71,46 @@ internal static class InlineCardMetrics
     internal static double ResultsAreaHeight(int rows) => Math.Max(0, rows) * UiMetrics.InlineRowHeight;
 
     /// <summary>
+    /// Whether the space under an anchored window can hold the tallest the card can ever be. The one place
+    /// that answers it, because the height budget and the placement have to agree: a card sized to hang
+    /// outside and then drawn inside (or the reverse) is what made it cover a file list it had room to sit
+    /// below, and asking about the card's CURRENT height made it change corners between two result counts.
+    /// </summary>
+    internal static bool HasRoomToHangBelow(double spaceBelowActiveWindow, double fullCardHeight) =>
+        spaceBelowActiveWindow >= fullCardHeight;
+
+    /// <summary>
     /// How much vertical room the card has, in DIP, given the screen and the window it is anchored to.
     /// </summary>
     /// <remarks>
     /// Deliberately independent of the card's own height: deriving a budget from a size that the budget
-    /// itself decides is what makes a layout oscillate between two answers. Either there is room BELOW the
-    /// anchored window, in which case the card fits there and covers nothing, or there is not and the card
-    /// has to sit over that window, in which case it may take a share of the window's height rather than all
-    /// of it. A zero <paramref name="activeWindowHeight"/> means there is no window to be anchored to (the
-    /// desktop, or nothing tracked), so only the working-area share applies.
+    /// itself decides is what makes a layout oscillate between two answers. Hanging BELOW the anchored window
+    /// is the preferred answer and wins when that space can hold the full card, because it covers none of the
+    /// window the user is working in (the taskbar strip counts as space, and is allowed to be covered);
+    /// anything shorter goes over the anchored window, where it may take a share of that window's height
+    /// rather than all of it. A zero <paramref name="activeWindowHeight"/> means there is no window to be
+    /// anchored to (the desktop, or nothing tracked), so only the working-area share applies.
     /// </remarks>
-    internal static double AvailableCardHeight(double workingAreaHeight, double activeWindowHeight, double spaceBelowActiveWindow)
+    internal static double AvailableCardHeight(
+        double workingAreaHeight,
+        double activeWindowHeight,
+        double spaceBelowActiveWindow,
+        double spaceBelowAnchorTop,
+        double fullCardHeight)
     {
         var workingAreaLimit = Math.Max(0, workingAreaHeight) * WorkingAreaHeightShare;
         if (activeWindowHeight <= 0)
             return workingAreaLimit;
 
-        var room = Math.Max(Math.Max(0, spaceBelowActiveWindow), activeWindowHeight * AnchoredWindowHeightShare);
+        // When the card has to lie over the window it is anchored to the top of that placement is fixed --
+        // it starts at the anchor's top edge -- so the room left on screen below *that edge* is the real
+        // ceiling, alongside the share of the window. Capping by the window share alone left the positioner's
+        // on-screen clamp pulling the whole card up to a y that no longer moves with the window, which is how
+        // a dialog near the bottom of the screen ended up with the card parked at a fixed point above it.
+        var overAnchoredWindow = Math.Min(activeWindowHeight * AnchoredWindowHeightShare, spaceBelowAnchorTop);
+        var room = HasRoomToHangBelow(spaceBelowActiveWindow, fullCardHeight)
+            ? spaceBelowActiveWindow
+            : overAnchoredWindow;
         return Math.Min(workingAreaLimit, room);
     }
 

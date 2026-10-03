@@ -55,7 +55,8 @@ internal sealed class SearchStreamRenderer
         bool bypassExclusions = false,
         bool resultMapperConsumesBatches = false,
         Action<int>? onReceivedCountUpdated = null,
-        FileFilterScopeDirective? scopeDirective = null)
+        FileFilterScopeDirective? scopeDirective = null,
+        bool foldersOnly = false)
     {
         var streamedResponse = new List<SearchResult>();
         object responseLock = new();
@@ -76,6 +77,13 @@ internal sealed class SearchStreamRenderer
         {
             token.ThrowIfCancellationRequested();
             if (!SearchReachabilityGate.IsResultReachable(result))
+                return;
+
+            // The card over a dialog that takes only a folder offers folders, so everything else is dropped
+            // before it can take a row. Filtered here rather than after ranking so the row budget, the
+            // progressive paint sizes and the "N results" count all describe the rows the window may actually
+            // list.
+            if (foldersOnly && !result.IsDir)
                 return;
 
             // The filter pattern constrains FILE names; a folder always passes (same semantics the
@@ -118,7 +126,7 @@ internal sealed class SearchStreamRenderer
 
             var statusText = uiResults.Count > 0
                 ? SearchResultMapper.FormatSearchStatus(0, received)
-                : final ? "No matching results" : string.Empty;
+                : string.Empty;
 
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {

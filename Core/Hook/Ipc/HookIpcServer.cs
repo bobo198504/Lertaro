@@ -32,12 +32,38 @@ public sealed class HookIpcServer : IDisposable
 
     public event Action? OnConnected;
 
-    public HookIpcServer() => _sendChannel = Channel.CreateUnbounded<IpcMessage>(new UnboundedChannelOptions
-    {
-        SingleWriter = false,
-        SingleReader = true
+    /// <summary>
+    /// Raised when a connection that had been established goes away (the App crashed, was killed, or its
+    /// pipe broke). The commands that gate key suppression only ever arrive over the pipe, so whoever
+    /// holds those flags has to be told the link is down -- otherwise a hook that outlives its App keeps
+    /// swallowing Escape and the arrows in every application for the rest of the session.
+    /// </summary>
+    public event Action? OnDisconnected;
 
-    });
+    /// <summary>
+    /// The event queue's ceiling. SendMessage is called for every keystroke, mouse click and captured
+    /// path, and the only reader runs while an App is connected -- so with no App connected (every App
+    /// restart window, and the state a crashed App leaves the hook in) an unbounded queue retained each
+    /// event with its heap strings for the rest of the session.
+    /// </summary>
+    internal const int SendQueueCapacity = 4096;
+
+    /// <summary>
+    /// The one send queue, built here so the bound is a property of the channel rather than of a field
+    /// initializer nobody can look at.
+    /// </summary>
+    internal static Channel<IpcMessage> CreateSendChannel() => Channel.CreateBounded<IpcMessage>(
+        new BoundedChannelOptions(SendQueueCapacity)
+        {
+            // Drop the oldest rather than the newest: a queued keystroke notification is worth less than
+            // the working set of a process that also holds system-wide hooks, and the events the App
+            // cares about are the ones that just happened.
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleWriter = false,
+            SingleReader = true
+        });
+
+    public HookIpcServer() => _sendChannel = CreateSendChannel();
 
     public void Start()
     {
@@ -55,8 +81,9 @@ public sealed class HookIpcServer : IDisposable
     public void SendQuickPanelHotkey() => SendMessage(new IpcMessage { Id = IpcMessageId.QuickPanelHotkey });
     public void SendQuickNavigationHotkey() => SendMessage(new IpcMessage { Id = IpcMessageId.QuickNavigationHotkey });
 
-    private async Task ProcessWriteQueueAsync(NamedPipeServerStream pipe, CancellationToken token)
+    private async Task ProcessWriteQueueAsync(NamedPipeServerStream pipe, CancellationTokenSource connectionCts)
     {
+        var token = connectionCts.Token;
         try
         {
             var reader = _sendChannel.Reader;
@@ -75,6 +102,12 @@ public sealed class HookIpcServer : IDisposable
         catch (Exception ex)
         {
             Logger.Log($"[HookIpcServer] Write queue error: {ex.Message}", LogLevel.Warn);
+            // Ending the connection is the point of this branch. Returning quietly left the link half
+            // alive before: the hook kept reading commands and kept queueing events nothing would ever
+            // write, while the App still saw a connected pipe, so hotkeys, path capture and inline search
+            // all stopped working with both processes healthy. One write fault (a transient IO error, or
+            // ObjectDisposedException from a Dispose racing a reconnect) now costs a reconnect instead.
+            try { connectionCts.Cancel(); } catch (ObjectDisposedException) { }
         }
     }
 
@@ -128,29 +161,45 @@ public sealed class HookIpcServer : IDisposable
 
                 Logger.Log("[HookIpcServer] Waiting for App to connect on both pipes...", LogLevel.Debug);
 
-                await Task.WhenAll(
+                try
+                {
+                    await Task.WhenAll(
 
-                    eventPipe.WaitForConnectionAsync(token),
-                    cmdPipe.WaitForConnectionAsync(token)
+                        eventPipe.WaitForConnectionAsync(token),
+                        cmdPipe.WaitForConnectionAsync(token)
 
-                ).ConfigureAwait(false);
+                    ).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The fields the finally block below disposes are only assigned once BOTH sides are
+                    // up, so a one-sided failure would abandon two live streams. Each pipe is created
+                    // asking for a single server instance, and an abandoned instance keeps its name
+                    // occupied -- every later iteration's Create then fails until the finalizer happens
+                    // to run, wedging IPC for the life of the hook while the App keeps relaunching it.
+                    eventPipe.Dispose();
+                    cmdPipe.Dispose();
+                    throw;
+                }
                 Logger.Log("[HookIpcServer] App connected on both pipes.", LogLevel.Debug);
                 _eventPipe = eventPipe;
                 _cmdPipe = cmdPipe;
                 while (_sendChannel.Reader.TryRead(out _)) { }
                 OnConnected?.Invoke();
-                using var writeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                // One token owns the whole connection: the write pump cancels it when it faults, which is
+                // how a dead pump takes the read loop down with it so the loop below reconnects.
+                using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
 
-                var writeTask = ProcessWriteQueueAsync(eventPipe, writeCts.Token);
+                var writeTask = ProcessWriteQueueAsync(eventPipe, connectionCts);
 
                 try
                 {
-                    await ListenForCommands(cmdPipe, token).ConfigureAwait(false);
+                    await ListenForCommands(cmdPipe, connectionCts.Token).ConfigureAwait(false);
                 }
 
                 finally
                 {
-                    writeCts.Cancel();
+                    connectionCts.Cancel();
 
                     try { await writeTask.ConfigureAwait(false); } catch { }
                 }
@@ -169,6 +218,10 @@ public sealed class HookIpcServer : IDisposable
 
             finally
             {
+                // Set before the pipes go away: this is the "the App is gone, not just quiet" edge, and
+                // the flags that gate key suppression are only ever cleared by commands over the pipe.
+                var wasConnected = _eventPipe != null || _cmdPipe != null;
+
                 try { _eventPipe?.Dispose(); } catch { }
 
                 _eventPipe = null;
@@ -176,6 +229,11 @@ public sealed class HookIpcServer : IDisposable
                 try { _cmdPipe?.Dispose(); } catch { }
 
                 _cmdPipe = null;
+
+                if (wasConnected)
+                {
+                    try { OnDisconnected?.Invoke(); } catch (Exception ex) { Logger.Log($"[HookIpcServer] Disconnect handler threw: {ex.Message}", LogLevel.Warn); }
+                }
             }
         }
 

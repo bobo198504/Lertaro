@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Lertaro.Core.Indexer.Usn;
 using Lertaro.Core.IndexV2;
 using Lertaro.Core.IndexV2.Persistence;
@@ -62,11 +63,81 @@ public sealed class SearchCoordinatorTests
         Assert.HasCount(1, Search(drives, "notes"));
     }
 
-    private static List<SearchResult> Search(Dictionary<string, LiveIndex> drives, string query)
+    [TestMethod]
+    public void TheLimit_IsSharedByTheWholeFanOut()
+    {
+        // Two drives with ten matches each and a limit of fifteen: the budget used to be handed to every
+        // drive separately, so this streamed twenty rows and the total moved with the number of drives
+        // attached rather than staying at what the caller asked for.
+        using var dir = new TempDirectory();
+        using var c = LoadMany(dir, "C", 10);
+        using var d = LoadMany(dir, "D", 10);
+        var drives = new Dictionary<string, LiveIndex> { ["C"] = c, ["D"] = d };
+
+        var hits = Search(drives, "report", limit: 15);
+
+        Assert.HasCount(15, hits);
+    }
+
+    [TestMethod]
+    public void ARequestAlreadySpent_ReachesNoDriveAtAll()
+    {
+        using var dir = new TempDirectory();
+        using var c = LoadMany(dir, "C", 10);
+        using var d = LoadMany(dir, "D", 10);
+        var drives = new Dictionary<string, LiveIndex> { ["C"] = c, ["D"] = d };
+
+        Assert.HasCount(0, Search(drives, "report", limit: 0));
+    }
+
+    [TestMethod]
+    public void ASlowClient_DoesNotLockTheOtherDrivesOutOfEmission()
+    {
+        // onResult used to be called inside one lock shared by the whole fan-out. The production callback
+        // writes to a BOUNDED channel, so a client that stops draining parked that write -- and with it
+        // every other drive's, for as long as it took.
+        //
+        // So: the first row of each thread holds the callback open until another thread is inside it too.
+        // Under a serialising lock nothing can ever get inside concurrently, both waits expire, and the
+        // deepest observed overlap stays at 1.
+        using var dir = new TempDirectory();
+        using var c = LoadMany(dir, "C", 6);
+        using var d = LoadMany(dir, "D", 6);
+        var drives = new Dictionary<string, LiveIndex> { ["C"] = c, ["D"] = d };
+
+        var inside = 0;
+        var maxInside = 0;
+        var hits = new List<SearchResult>();
+        var gate = new object();
+        using var twoInside = new ManualResetEventSlim(false);
+        var firstPerThread = new ConcurrentDictionary<int, byte>();
+
+        SearchCoordinator.SearchStreaming(drives, new object(), "report", 100, r =>
+        {
+            var depth = Interlocked.Increment(ref inside);
+            lock (gate)
+            {
+                if (depth > maxInside) maxInside = depth;
+                hits.Add(r);
+            }
+
+            if (depth >= 2)
+                twoInside.Set();
+            if (firstPerThread.TryAdd(Environment.CurrentManagedThreadId, 0))
+                twoInside.Wait(TimeSpan.FromSeconds(5));
+
+            Interlocked.Decrement(ref inside);
+        }, CancellationToken.None, null);
+
+        Assert.HasCount(12, hits);
+        Assert.IsTrue(maxInside >= 2, $"no two threads were ever inside onResult at the same time (max depth {maxInside})");
+    }
+
+    private static List<SearchResult> Search(Dictionary<string, LiveIndex> drives, string query, int limit = 100)
     {
         var hits = new List<SearchResult>();
         var gate = new object();
-        SearchCoordinator.SearchStreaming(drives, new object(), query, 100,
+        SearchCoordinator.SearchStreaming(drives, new object(), query, limit,
             r => { lock (gate) hits.Add(r); }, CancellationToken.None, null);
         return hits;
     }
@@ -75,6 +146,16 @@ public sealed class SearchCoordinatorTests
     {
         var path = Path.Combine(dir.Path, $"{drive}.idx");
         SnapshotWriter.Write(BuildStore(drive, fileName), path);
+        return new LiveIndex(Snapshot.Open(path));
+    }
+
+    private static LiveIndex LoadMany(TempDirectory dir, string drive, int count)
+    {
+        var path = Path.Combine(dir.Path, $"{drive}many.idx");
+        var store = BuildStore(drive, "unused.txt");
+        for (var i = 0; i < count; i++)
+            store.Records.Add(new FileRecord((ulong)(i + 3), 1, $"report{i}.txt", FileRecordFlags.None));
+        SnapshotWriter.Write(store, path);
         return new LiveIndex(Snapshot.Open(path));
     }
 
