@@ -1,6 +1,6 @@
 # 宿主開放服務
 
-`Lertaro.PluginSdk.Services` 命名空間下提供了一組高效能的靜態基礎設施服務。這些服務對宿主內部包裝的核心演算法、快取與平台介面進行了輕量級封裝，使外掛模組能夠以極簡的程式碼直接複用宿主能力。
+`Lertaro.PluginSdk.Services` 命名空間下提供了一組高效能的靜態基礎設施服務。它們輕量封裝了宿主內部的核心演算法、快取與平台介面，使外掛模組能夠以少量程式碼直接複用宿主能力。
 
 ## 1. 核心靜態服務一覽
 
@@ -8,7 +8,7 @@
 | :--- | :--- | :--- |
 | **`FuzzyMatchService`** | `bool IsMatch(string pattern, string text)`<br>`bool[]? GetHighlightMask(string text, string query)`<br>`double GetMatchScore(string text, string query)` | 運行與宿主完全一致的 fzf 模糊比對引擎，計算字元級的反白布林遮罩（自動支援中文字元拼音多級兜底），並提供用於統一排序的比對品質評分。 |
 | **`TranslationService`** | `string Get(string key)`<br>`bool TryGet(string key, out string result)`<br>`string Format(string key, params object[] args)`<br>`string GetCurrentCulture()`<br>`IReadOnlyList<string> GetSupportedCultures(Assembly assembly)`<br>`Dictionary<string, string> LoadEmbeddedTranslations(Assembly assembly, string cultureKey, string typeName)`<br>`event Action<string>? CultureChanged` | 多語言動態剖析與執行階段變更廣播。`GetCurrentCulture()` 返回使用者在設定中心顯式選取的介面語言代碼（如 `"zh-HK"`）；訂閱 `CultureChanged` 可在介面語言切換時動態重新整理內部狀態或重載字典。`TryGet` 回答某個鍵是否解析成功，而 `Get` 會退回可見的 `[key]` 佔位文字而不是擲出例外。`GetSupportedCultures(assembly)` 列出某個組件的內嵌資源所涵蓋的語系；`LoadEmbeddedTranslations(assembly, cultureKey, typeName)` 則返回單一語系的字典。 |
-| **`IconService`** | `ImageSource? GetIcon(string path, bool isDir)`<br>`ImageSource? GetThumbnail(string path, int size)`<br>`ImageSource? GetIconFromCacheOnly(string path, bool isDir, out bool needsLoad)` | 帶記憶體與磁碟快取的 Windows Shell 檔案圖示與縮圖擷取服務。`GetIconFromCacheOnly` 完全不會碰觸 Shell：它只返回已經快取的內容，並透過 `needsLoad` 回報是否仍需要真正載入一次，列表得以先立即繪製、事後再補齊圖示，靠的就是這個機制。 |
+| **`IconService`** | `ImageSource? GetIcon(string path, bool isDir)`<br>`ImageSource? GetThumbnail(string path, int size)`<br>`ImageSource? GetIconFromCacheOnly(string path, bool isDir, out bool needsLoad)` | 帶記憶體與磁碟快取的 Windows Shell 檔案圖示與縮圖擷取服務。`GetIconFromCacheOnly` 完全不會碰觸 Shell：它只返回已經快取的內容，並透過 `needsLoad` 回報是否仍需要真正載入一次，列表得以先繪製、事後再補齊圖示，靠的就是這個機制。 |
 | **`FavoritesService`** | `IEnumerable<FavoriteItem> GetFavorites()`<br>`bool IsFavorite(string path)`<br>`bool TryAddFavorite(FavoriteItem favorite)` | 讀取收藏清單、檢查路徑是否已登記，並透過宿主橋接新增收藏項目。 |
 | **`HistoryService`** | `IEnumerable<HistoryEntry> GetHistoryEntries()` | 讀取搜尋記錄項目，按最近開啟時間降序排列，包含關聯的搜尋關鍵字、檔案類型與單筆記錄的使用次數。同一實體路徑最多出現一次，並歸屬於最近一次開啟它時使用的關鍵字。 |
 | **`FileMetadataService`** | `Task<IReadOnlyDictionary<string, FileMetadata>> GetMetadataAsync(IReadOnlyList<string> paths)` | 批次查詢外部路徑的實體檔案大小與時間戳記（僅用於查詢未出現在當前搜尋結果集中的外部路徑）。 |
@@ -20,7 +20,7 @@
 | **`SettingsSearchService`** | `IReadOnlyList<SettingsSearchEntryInfo> GetEntries()`<br>`void Invalidate()` | 讀取宿主目前可搜尋的設定項目，並在動態提供的項目發生變更時通知宿主重新整理快取快照。 |
 | **`SettingsWindowService`** | `bool ShowWindow(string? targetSection = null)`<br>`bool ShowEntry(SettingsSearchEntryInfo? entry)` | 請求宿主顯示主題化設定視窗，或直接跳轉到可搜尋的設定項目，不啟動 URI 或其他程序。 |
 | **`SearchRefreshService`** | `void RefreshIfMatches(Func<string, bool> queryMatches)` | 用於非同步即時計算來源完成後台資料獲取後，通知宿主原地重跑當前比對的搜尋查詢並重新整理檢視。 |
-| **`UserDataService`** | `string? GetUserDataDirectory()`<br>`string? GetSharedDataDirectory()` | 獲取當前使用者的專屬資料目錄（存放私有設定）與機器級全域共用資料目錄（共用 Python/Node 執行階段）。兩者都可為 `null`：宿主也許解析不到這類資料夾，因此請檢查 `null`，而不是假定一定有路徑。 |
+| **`UserDataService`** | `string? GetUserDataDirectory()`<br>`string? GetSharedDataDirectory()` | 獲取當前使用者的專屬資料目錄（存放私有設定）與機器級全域共用資料目錄。兩者都可為 `null`：宿主也許解析不到這類資料夾，因此請檢查 `null`，而不是假定一定有路徑。共用目錄僅由服務寫入；外掛程式可讀取，但自身檔案須存放在使用者資料目錄。 |
 | **`Logger`** | `void Log(string message, LogLevel level = LogLevel.Info)` | 統一輸出記錄至 `app.log`，並在設定中心的即時記錄檢視器中同步呈現。它位於基底命名空間 `Lertaro.PluginSdk`，**不是** `Lertaro.PluginSdk.Services`。 |
 | **`PluginPromptService`** | `IReadOnlyDictionary<string, object?>? Prompt(string title, IReadOnlyList<PluginConfigField> fields, IReadOnlyDictionary<string, object?>? initialValues = null)` | 快顯基於 Schema 自動轉譯的小型強制回應輸入對話方塊，向使用者請求一次性輸入。此方法為同步：它返回使用者提交的值，使用者取消時返回 `null`。請勿對它 `await`。 |
 | **`PluginNotificationService`** | `INotificationHandle Show(NotificationRequest request)`<br>`Task<NotificationResult> ShowAsync(NotificationRequest request)`<br>`bool Show(string title, string text, Action? onClick = null)` | 由宿主自身的視窗顯示背景通知：右下角的卡片堆（`NotificationPosition.CardStack`），或螢幕下方置中的一行提示（`BottomNotice`）。宿主會把要求的時長裁剪到該位置允許的範圍，依呼叫端組件標記發送者（外掛程式無法偽造自己的來源），並在獨佔全螢幕應用佔用螢幕時把卡片降級成那一行提示。它不會把例外拋進外掛程式的背景執行緒，句柄的工作也必然完成，包括什麼都沒顯示出來的情況；`bool` 多載只表示宿主是否受理了請求。要取得回覆而非單純告知時，改用 `PluginMessageBoxService`。完整契約——時長與上限、以 `Id` 取代、失敗原因、點擊語意、放置與執行緒——見[**通知卡片**](./notifications)。 |
