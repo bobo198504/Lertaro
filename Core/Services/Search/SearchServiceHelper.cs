@@ -36,6 +36,41 @@ internal static class SearchServiceHelper
         }
     }
 
+    /// <summary>
+    /// What the caller is asking this decision for. The two callers differ on exactly one point -- the
+    /// partially-indexed local drive whose path is excluded -- so the whole decision stays here, in one
+    /// place, with this as its only input rather than a second copy of the rules at the call site.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The difference is real and comes from what each caller does with a "yes". The search path uses it
+    /// to live-scan the excluded subtree, which is how content that was deliberately kept out of the index
+    /// stays findable -- including through the `*` prefix that bypasses result filtering, where the whole
+    /// point is to see what the rules hid. The enumeration path has no such fallback: its "no" sends the
+    /// request to the service index, and its "yes" drops it into the in-process source branch
+    /// (<c>IndexedDirectoryEnumerator.EnumerateAsync</c>), which knows nothing about a local drive. So for
+    /// the enumeration API the new behavior would have been a regression, not a feature: an excluded local
+    /// directory would stop being listed from the index it is genuinely in, in exchange for nothing.
+    /// </para>
+    /// <para>
+    /// Upstream's requirement is that the enumeration API keep its previous behavior, so
+    /// <see cref="DirectoryEnumeration"/> preserves it exactly while <see cref="Search"/> gains the
+    /// exclusion-aware scan. Everything other than the excluded-partially-indexed-drive case is shared
+    /// between them.
+    /// </para>
+    /// </remarks>
+    internal enum LiveSearchIntent
+    {
+        /// <summary>The search path: excluded content on a partially-indexed drive is live-scanned.</summary>
+        Search,
+
+        /// <summary>
+        /// The directory enumeration API: unchanged from before exclusion-aware live search existed -- a
+        /// local drive that is enabled for indexing is answered from its index, excluded or not.
+        /// </summary>
+        DirectoryEnumeration
+    }
+
     // Three-tier rule, based purely on whether `dir`'s content actually made it into an index -- never on
     // caller intent (see SearchService.SearchStreamingAsync for the separate, orthogonal question of
     // whether MATCHED results get filtered by ExcludedPaths/globs/regexes once found). The distinction
@@ -54,10 +89,13 @@ internal static class SearchServiceHelper
     //      -- always live-scan, there's no index data to fall back on.
     // Tiers and rules are deliberately separate questions: if the journal-capable builds ever start
     // honouring exclusions too, they move to tier 2 by the rule below -- not by a filesystem name list.
+    //
+    // The one tier the two intents read differently is tier 2 for a local drive: see LiveSearchIntent.
     public static bool CheckNeedsLiveSearch(
         string dir,
         ExclusionRuleSet exclusionRules,
-        MachineSettings? machineSettings = null)
+        MachineSettings? machineSettings = null,
+        LiveSearchIntent intent = LiveSearchIntent.Search)
     {
         // WSL can take seconds to wake after an idle period. Its configured in-memory index is the
         // sole automatic-search source; only explicit user actions may touch the distro filesystem.
@@ -75,8 +113,7 @@ internal static class SearchServiceHelper
                 if (!isConfigured)
                     return true;
 
-                return exclusionRules.IsExcludedPath(dir, true)
-                    || exclusionRules.IsExcludedPath(Path.Combine(dir, "_live_search_dummy.txt"), false);
+                return IsExcludedAsDirectory(dir, exclusionRules);
             }
 
             // Any local drive currently enabled for indexing is built by one of the local build paths, and
@@ -94,14 +131,34 @@ internal static class SearchServiceHelper
             if (!IsPartiallyIndexedLocalDrive(VolumeHelper.SupportsUsnJournal(driveLetter)))
                 return false;
 
-            // Excluded exactly as the network branch does, including the dummy-file probe: a rule that
-            // names a DIRECTORY (an ExcludedPaths entry, or a glob like `node_modules`) only matches the
-            // directory spelling, so a path that is itself a directory has to be asked about as one.
-            return exclusionRules.IsExcludedPath(dir, true)
-                || exclusionRules.IsExcludedPath(Path.Combine(dir, "_live_search_dummy.txt"), false);
+            // The one point where the two callers part company -- see NeedsLiveSearchForExcludedPath.
+            return NeedsLiveSearchForExcludedPath(intent, isExcluded: IsExcludedAsDirectory(dir, exclusionRules));
         }
         catch { return true; }
     }
+
+    /// <summary>
+    /// The tier-2 boundary, as a pure decision: an enabled but only partially-indexed local drive whose
+    /// path the rules match. Testable without a real non-journal volume, which is the only place the two
+    /// callers' answers differ and therefore the only part worth pinning separately.
+    /// </summary>
+    /// <remarks>
+    /// Only the search path live-scans here. Its "yes" is what keeps deliberately-excluded content
+    /// findable, notably through the `*` prefix whose entire purpose is to show what the rules hid. The
+    /// enumeration API has no live-scan fallback to reach -- its "yes" branch routes to the in-process
+    /// sources, which cannot answer for a local drive -- so for it the same "yes" would mean dropping a
+    /// directory its own index genuinely holds, with nothing in exchange. Upstream requires that API's
+    /// previous behavior, hence the split here rather than a second copy of the rule at the call site.
+    /// </remarks>
+    internal static bool NeedsLiveSearchForExcludedPath(LiveSearchIntent intent, bool isExcluded) =>
+        intent == LiveSearchIntent.Search && isExcluded;
+
+    // A rule that names a DIRECTORY (an ExcludedPaths entry, or a glob like `node_modules`) only matches
+    // the directory spelling, so a path that is itself a directory has to be asked about as one -- the
+    // same dummy-file probe the network branch above uses for the same reason.
+    private static bool IsExcludedAsDirectory(string dir, ExclusionRuleSet exclusionRules) =>
+        exclusionRules.IsExcludedPath(dir, true)
+        || exclusionRules.IsExcludedPath(Path.Combine(dir, "_live_search_dummy.txt"), false);
 
     // Whether an enabled local drive's index can be missing content its own build path skipped. Only a
     // non-journal volume is walked by LocalDriveWalkBuilder (see UsnIndexerBuildExtensions -> IndexBuilder),

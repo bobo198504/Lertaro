@@ -12,8 +12,8 @@ namespace Lertaro.Core.Indexer.Usn.Journal;
 // The exclusion/ignore rules are not read here: they arrive as `options` from the caller, because this
 // walk runs in the --service process, where UserSettings resolves to a per-user directory that does not
 // exist for LocalSystem -- reading it there silently produced defaults, so the user's exclusions never
-// reached the walk at all. The production caller passes WalkOptions.FromMachineSettings, the source the
-// service can actually read.
+// reached the walk at all. The production caller passes the rules the App sent over SetMachineSettings,
+// held in that process's memory only (UsnIndexer.WalkOptions).
 internal static class LocalDriveWalkBuilder
 {
     // `root` is taken as an explicit parameter (not derived from `drive` internally) so this can be pointed

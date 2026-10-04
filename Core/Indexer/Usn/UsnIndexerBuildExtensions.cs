@@ -84,11 +84,13 @@ public static class UsnIndexerBuildExtensions
             (drive, onProgress, token) =>
             {
                 var previousStore = GetPreviousStore(drive);
-                // The machine copy, not the per-user settings: this walk runs in the --service process,
-                // whose UserSettings path does not exist. Read per build rather than captured once so a
-                // rules change the App mirrored in is picked up by the next rebuild.
+                // The indexer's own rules, not the per-user settings: this walk runs in the --service
+                // process, whose UserSettings path does not exist. They arrive from the SetMachineSettings
+                // request the App sent and live only in this process's memory (UsnIndexer.WalkOptions).
+                // Read per build rather than captured once so a rules change is picked up by the next
+                // rebuild. Empty until the App has sent any, which means "filter nothing".
                 return LocalDriveWalkBuilder.Build(drive, $"{drive}:\\", previousStore, onProgress ?? ((_, _) => { }), token,
-                    WalkOptions.FromMachineSettings(MachineSettings.Load()),
+                    indexer.WalkOptions,
                     forceFullScan,
                     onCheckpoint: (checkpointStore, _) => indexer.PublishLocalDriveCheckpoint(cacheDir, drive, checkpointStore, token));
             },

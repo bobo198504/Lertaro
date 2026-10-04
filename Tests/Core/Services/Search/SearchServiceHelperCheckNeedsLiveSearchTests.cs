@@ -35,6 +35,64 @@ public sealed class SearchServiceHelperCheckNeedsLiveSearchTests
     public void IsPartiallyIndexedLocalDrive_EnabledJournalCapableDrive_KeepsTodaysBehaviour() =>
         Assert.IsFalse(SearchServiceHelper.IsPartiallyIndexedLocalDrive(isJournalCapable: true));
 
+    // The two callers' answers differ in exactly one case, and this pins it: a path on an enabled,
+    // non-journal local drive that an exclusion rule matches. The search path live-scans it (that is how
+    // content kept out of the index -- including via the `*` bypass prefix -- stays findable); the
+    // directory enumeration API does not, because its "yes" branch routes to the in-process sources and
+    // would mean dropping a directory its own index genuinely holds. Upstream requires that API's
+    // previous behavior, so this is the assertion that would fail if the two were ever remerged.
+    [TestMethod]
+    public void NeedsLiveSearchForExcludedPath_SearchPath_LiveScansAnExcludedPath()
+    {
+        Assert.IsTrue(SearchServiceHelper.NeedsLiveSearchForExcludedPath(
+            SearchServiceHelper.LiveSearchIntent.Search, isExcluded: true));
+    }
+
+    [TestMethod]
+    public void NeedsLiveSearchForExcludedPath_DirectoryEnumeration_KeepsTheIndexAnswer()
+    {
+        Assert.IsFalse(SearchServiceHelper.NeedsLiveSearchForExcludedPath(
+            SearchServiceHelper.LiveSearchIntent.DirectoryEnumeration, isExcluded: true));
+    }
+
+    // Neither caller live-scans a path no rule matches, so the divergence above is confined to excluded
+    // paths -- the enumeration API must not have lost its index answer for ordinary directories either.
+    [TestMethod]
+    public void NeedsLiveSearchForExcludedPath_NotExcluded_NeitherCallerLiveScans()
+    {
+        Assert.IsFalse(SearchServiceHelper.NeedsLiveSearchForExcludedPath(
+            SearchServiceHelper.LiveSearchIntent.Search, isExcluded: false));
+        Assert.IsFalse(SearchServiceHelper.NeedsLiveSearchForExcludedPath(
+            SearchServiceHelper.LiveSearchIntent.DirectoryEnumeration, isExcluded: false));
+    }
+
+    // The default is the search path's behavior, so every pre-existing call site -- which passes no intent
+    // at all -- keeps exactly what it did before the parameter existed.
+    [TestMethod]
+    public void CheckNeedsLiveSearch_OmittingTheIntent_BehavesAsTheSearchPath()
+    {
+        var rules = ExclusionRuleSet.From(EmptySettings(), @"c:\");
+        var settings = CurrentDriveEnabled("C");
+
+        Assert.AreEqual(
+            SearchServiceHelper.CheckNeedsLiveSearch(@"c:\projects", rules, settings, SearchServiceHelper.LiveSearchIntent.Search),
+            SearchServiceHelper.CheckNeedsLiveSearch(@"c:\projects", rules, settings));
+    }
+
+    // The enumeration API's routing decision on a journal-capable, enabled drive: it does not live-scan,
+    // so the request is answered from the service index. This is the path IndexedDirectoryEnumerator takes,
+    // and it must stay identical to what it returned before exclusion-aware live search existed.
+    [TestMethod]
+    public void CheckNeedsLiveSearch_DirectoryEnumeration_OnAnEnabledJournalDrive_DoesNotLiveScan()
+    {
+        var settings = EmptySettings();
+        settings.ExcludedPaths.Add(@"c:\windows");
+        var rules = ExclusionRuleSet.From(settings, @"c:\");
+
+        Assert.IsFalse(SearchServiceHelper.CheckNeedsLiveSearch(@"c:\windows", rules, CurrentDriveEnabled("C"),
+            SearchServiceHelper.LiveSearchIntent.DirectoryEnumeration));
+    }
+
     private static UserSettings EmptySettings() => new()
     {
         ExcludedPaths = new List<string>(),

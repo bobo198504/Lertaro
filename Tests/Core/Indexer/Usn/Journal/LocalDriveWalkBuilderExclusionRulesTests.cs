@@ -5,14 +5,14 @@ namespace Lertaro.Core.Tests.Indexer.Usn.Journal;
 
 // The local (FAT32/exFAT) drive walk runs in the --service process, where UserSettings.Load() resolves to
 // a per-user directory that does not exist for LocalSystem -- it returned defaults, so the user's own
-// ExcludedPaths never reached the walk. The rules now travel user settings -> machine mirror
-// (MachineSettings, the one settings file the service can read) -> WalkOptions -> the walk's real filter.
-// This is that chain end to end, through the actual file rather than a hand-built options object.
+// ExcludedPaths never reached the walk. The rules now travel user settings -> SetMachineSettings request
+// -> the indexer's in-memory WalkOptions -> the walk's real filter. This is that chain end to end,
+// through the actual walk rather than a hand-built options object.
 [TestClass]
-public sealed class LocalDriveWalkBuilderMachineRulesTests
+public sealed class LocalDriveWalkBuilderExclusionRulesTests
 {
     [TestMethod]
-    public void Build_OptionsFromTheMachineMirror_ExcludeTheListedDirectoryAndKeepItsSibling()
+    public void Build_RulesFromTheRequest_ExcludeTheListedDirectoryAndKeepItsSibling()
     {
         using var dir = new TempDirectory();
         var excluded = Path.Combine(dir.Path, "excluded");
@@ -23,15 +23,8 @@ public sealed class LocalDriveWalkBuilderMachineRulesTests
         Directory.CreateDirectory(sibling);
         File.WriteAllText(Path.Combine(sibling, "kept.txt"), "x");
 
-        var machineSettingsPath = Path.Combine(dir.Path, "machine-settings.json");
-        MachineSettings.MirrorExclusionRules(
-            new UserSettings { ExcludedPaths = [excluded], IgnoredPathGlobs = [], IgnoredPathRegexes = [] },
-            machineSettingsPath);
-        var mirror = MachineSettings.TryLoadFromFile(machineSettingsPath);
-        Assert.IsNotNull(mirror);
-
         var store = LocalDriveWalkBuilder.Build("Z", dir.Path, previousStore: null, (_, _) => { }, CancellationToken.None,
-            WalkOptions.FromMachineSettings(mirror));
+            WalkOptions.From([excluded], [], []));
 
         var names = store.Records.Select(r => r.Name).ToList();
         Assert.DoesNotContain("excluded", names);
@@ -42,11 +35,11 @@ public sealed class LocalDriveWalkBuilderMachineRulesTests
         CollectionAssert.Contains(names, "kept.txt");
     }
 
-    // The other half of the same chain, and the reason a machine file is written even when the user never
-    // touches the drive selection: a glob/regex pair set by the user has to filter the walk the same way
-    // the exclusion path above does, since all three lists travel in one field list.
+    // The other half of the same chain, and the reason a request carries all three lists rather than just
+    // the excluded paths: a glob/regex pair set by the user has to filter the walk the same way an
+    // exclusion path does, since all three travel together.
     [TestMethod]
-    public void Build_OptionsFromTheMachineMirror_HonourGlobsAndRegexesToo()
+    public void Build_RulesFromTheRequest_HonourGlobsAndRegexesToo()
     {
         using var dir = new TempDirectory();
         var modules = Path.Combine(dir.Path, "node_modules");
@@ -55,20 +48,35 @@ public sealed class LocalDriveWalkBuilderMachineRulesTests
         File.WriteAllText(Path.Combine(dir.Path, "secret-plan.txt"), "x");
         File.WriteAllText(Path.Combine(dir.Path, "kept.txt"), "x");
 
-        var machineSettingsPath = Path.Combine(dir.Path, "machine-settings.json");
-        MachineSettings.MirrorExclusionRules(
-            new UserSettings { ExcludedPaths = [], IgnoredPathGlobs = ["node_modules"], IgnoredPathRegexes = ["^secret-"] },
-            machineSettingsPath);
-        var mirror = MachineSettings.TryLoadFromFile(machineSettingsPath);
-        Assert.IsNotNull(mirror);
-
         var store = LocalDriveWalkBuilder.Build("Z", dir.Path, previousStore: null, (_, _) => { }, CancellationToken.None,
-            WalkOptions.FromMachineSettings(mirror));
+            WalkOptions.From([], ["node_modules"], ["^secret-"]));
 
         var names = store.Records.Select(r => r.Name).ToList();
         Assert.DoesNotContain("node_modules", names);
         Assert.DoesNotContain("pkg.js", names);
         Assert.DoesNotContain("secret-plan.txt", names);
+        CollectionAssert.Contains(names, "kept.txt");
+    }
+
+    // The default state of a service that has never been sent a rule, and the reason it is safe: an empty
+    // rule set filters nothing, which is the upstream behavior. Asserted through a real walk so the empty
+    // default is pinned where it actually matters -- a default that quietly excluded something would be
+    // invisible in any assertion about the rule objects themselves.
+    [TestMethod]
+    public void Build_NoRulesSent_FiltersNothing()
+    {
+        using var dir = new TempDirectory();
+        var sub = Path.Combine(dir.Path, "node_modules");
+        Directory.CreateDirectory(sub);
+        File.WriteAllText(Path.Combine(sub, "pkg.js"), "x");
+        File.WriteAllText(Path.Combine(dir.Path, "kept.txt"), "x");
+
+        var store = LocalDriveWalkBuilder.Build("Z", dir.Path, previousStore: null, (_, _) => { }, CancellationToken.None,
+            WalkOptions.Empty);
+
+        var names = store.Records.Select(r => r.Name).ToList();
+        CollectionAssert.Contains(names, "node_modules");
+        CollectionAssert.Contains(names, "pkg.js");
         CollectionAssert.Contains(names, "kept.txt");
     }
 

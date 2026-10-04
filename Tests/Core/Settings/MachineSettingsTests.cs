@@ -149,83 +149,42 @@ public sealed class MachineSettingsTests
         }
     }
 
-    // --- The mirror of the user's walk exclusion rules ---------------------------------------------
-    // The local drive walk runs in the --service process, which cannot read the per-user settings file;
-    // MachineSettings is the copy it can read, so these three tests pin the mirror the App writes there:
-    // it carries the rules, it leaves every other field alone, and an older file without the fields --
-    // which is every machine-settings.json in the field today -- still loads.
-
+    // --- The walk exclusion rules used to be mirrored here, and must not come back ------------------
+    // They are the interactive user's settings, and the service now receives them over
+    // SetMachineSettings and holds them in memory (UsnIndexer.WalkOptions) instead of a machine-level
+    // file. This pins that no rule field survives on this type: reintroducing one would silently start
+    // persisting a user's settings under a machine-wide directory again, which is exactly what upstream
+    // asked to be removed. Checked as source text because a stray property is invisible to a behavior
+    // test -- the type would simply keep working, with the extra field along for the ride.
     [TestMethod]
-    public void MirrorExclusionRules_WritesTheUsersRulesAndKeepsTheOtherFields()
+    public void MachineSettings_CarriesNoUserExclusionRuleFields()
     {
-        var path = Path.Combine(_dir, "machine-settings.json");
-        File.WriteAllText(path, """{"LocalDrives":["volume-c"],"LocalDriveSelectionConfigured":true,"ServiceLogLevel":"Debug"}""");
-        var user = new UserSettings
-        {
-            ExcludedPaths = [@"C:\excluded"],
-            IgnoredPathGlobs = ["node_modules", "*.tmp"],
-            IgnoredPathRegexes = ["^secret-"],
-        };
+        var offenders = typeof(MachineSettings).GetProperties()
+            .Select(p => p.Name)
+            .Where(name => name.Contains("Excluded", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("Ignored", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-        MachineSettings.MirrorExclusionRules(user, path);
-
-        var reloaded = MachineSettings.TryLoadFromFile(path);
-        Assert.IsNotNull(reloaded);
-        CollectionAssert.AreEqual(new[] { @"C:\excluded" }, reloaded.ExcludedPaths);
-        CollectionAssert.AreEqual(new[] { "node_modules", "*.tmp" }, reloaded.IgnoredPathGlobs);
-        CollectionAssert.AreEqual(new[] { "^secret-" }, reloaded.IgnoredPathRegexes);
-        CollectionAssert.AreEqual(new[] { "volume-c" }, reloaded.LocalDrives);
-        Assert.IsTrue(reloaded.LocalDriveSelectionConfigured);
-        Assert.AreEqual("Debug", reloaded.ServiceLogLevel);
+        Assert.IsEmpty(offenders,
+            "the walk's exclusion rules belong to the user and travel over IPC only; found on MachineSettings: "
+            + string.Join(", ", offenders));
     }
 
-    // Why the mirror reads the raw file instead of Load(): Load migrates an unconfigured drive list by
-    // stamping the drives detected at that moment into it, which would turn "every drive" into this
-    // launch's snapshot for every install whose machine file did not exist yet.
+    // Back-compat: a machine-settings.json written while the rules were mirrored here still contains the
+    // three fields. It has to keep loading, and the extra JSON keys have to be ignored rather than
+    // rejected, or every install that ran that build would fail to read its own drive selection.
     [TestMethod]
-    public void MirrorExclusionRules_FreshInstall_DoesNotStampADetectedDriveSelection()
+    public void TryLoadFromFile_FileLeftOverFromTheMirrorEra_LoadsAndIgnoresTheRuleFields()
     {
         var path = Path.Combine(_dir, "machine-settings.json");
-
-        MachineSettings.MirrorExclusionRules(new UserSettings { ExcludedPaths = [@"C:\excluded"] }, path);
-
-        var reloaded = MachineSettings.TryLoadFromFile(path);
-        Assert.IsNotNull(reloaded);
-        Assert.IsEmpty(reloaded.LocalDrives);
-        Assert.IsFalse(reloaded.LocalDriveSelectionConfigured);
-    }
-
-    // The mirror runs on every user-settings save (window moves included), so it must be a no-op unless
-    // the rules actually changed: a rewrite would churn the file, rotate its .bak, and race the service's
-    // own drive-selection write for no reason.
-    [TestMethod]
-    public void MirrorExclusionRules_UnchangedRules_LeaveTheFileUntouched()
-    {
-        var path = Path.Combine(_dir, "machine-settings.json");
-        var user = new UserSettings { ExcludedPaths = [@"C:\excluded"], IgnoredPathGlobs = [], IgnoredPathRegexes = [] };
-        MachineSettings.MirrorExclusionRules(user, path);
-        var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        File.SetLastWriteTimeUtc(path, stamp);
-
-        MachineSettings.MirrorExclusionRules(user, path);
-
-        Assert.AreEqual(stamp, File.GetLastWriteTimeUtc(path));
-    }
-
-    // Back-compat: every machine-settings.json written before the rules moved here lacks these fields,
-    // and must load as "no rules" without throwing and without disturbing the fields it does carry.
-    [TestMethod]
-    public void TryLoadFromFile_OlderFileWithoutTheRuleFields_LoadsWithEmptyRules()
-    {
-        var path = Path.Combine(_dir, "machine-settings.json");
-        File.WriteAllText(path, """{"LocalDrives":["volume-c"],"LocalDriveSelectionConfigured":true,"ServiceLogLevel":"Warn"}""");
+        File.WriteAllText(path, """
+            {"LocalDrives":["volume-c"],"LocalDriveSelectionConfigured":true,"ServiceLogLevel":"Warn",
+             "ExcludedPaths":["C:\\excluded"],"IgnoredPathGlobs":["node_modules"],"IgnoredPathRegexes":["^secret-"]}
+            """);
 
         var settings = MachineSettings.TryLoadFromFile(path);
 
         Assert.IsNotNull(settings);
-        Assert.IsEmpty(settings.ExcludedPaths);
-        Assert.IsEmpty(settings.IgnoredPathGlobs);
-        Assert.IsEmpty(settings.IgnoredPathRegexes);
         CollectionAssert.AreEqual(new[] { "volume-c" }, settings.LocalDrives);
         Assert.IsTrue(settings.LocalDriveSelectionConfigured);
         Assert.AreEqual("Warn", settings.ServiceLogLevel);

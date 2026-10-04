@@ -1,4 +1,5 @@
 using Lertaro.Core.Indexer.NetworkDrive.Walk;
+using Lertaro.Core.Indexer.Usn;
 
 namespace Lertaro.Core.Tests.Indexer.NetworkDrive.Walk;
 
@@ -61,20 +62,15 @@ public sealed class WalkOptionsTests
     }
 
     // The other source, for the walk that cannot use the first one: a local drive's walk runs in the
-    // --service process, whose UserSettings path does not exist, so its rules come off the machine copy
-    // the App mirrors them into. Same three lists through the same From() field list, and still the flags
-    // the network path walks with -- a FAT32/exFAT drive must not be filtered differently from a UNC one.
+    // --service process, whose UserSettings path does not exist, so its rules arrive over the
+    // SetMachineSettings request and live in that process's memory. Same three lists through the same
+    // From() field list, and still the flags the network path walks with -- a FAT32/exFAT drive must not
+    // be filtered differently from a UNC one. The request-to-options mapping itself is pinned in
+    // UsnServicePipeRequestProcessorTests; this covers the construction it lands on.
     [TestMethod]
-    public void FromMachineSettings_CarriesAllThreeExclusionListsAndTheNetworkFlags()
+    public void From_CarriesAllThreeExclusionListsAndTheNetworkFlags()
     {
-        var machine = new MachineSettings
-        {
-            ExcludedPaths = [@"C:\excluded", @"D:\also"],
-            IgnoredPathGlobs = ["node_modules", "*.tmp"],
-            IgnoredPathRegexes = ["^secret-"],
-        };
-
-        var options = WalkOptions.FromMachineSettings(machine);
+        var options = WalkOptions.From([@"C:\excluded", @"D:\also"], ["node_modules", "*.tmp"], ["^secret-"]);
 
         CollectionAssert.AreEqual(new[] { @"C:\excluded", @"D:\also" }, options.ExcludedPaths.ToArray());
         CollectionAssert.AreEqual(new[] { "node_modules", "*.tmp" }, options.IgnoredPathGlobs.ToArray());
@@ -83,6 +79,27 @@ public sealed class WalkOptionsTests
         Assert.AreEqual(0, options.WorkerCount);
         Assert.IsTrue(options.UseIgnoreFiles);
     }
+
+    // What a service that has never been sent a rule walks with, and the reason that is safe: the default
+    // has to filter nothing. A non-empty default would exclude paths the user never configured, on a
+    // drive whose index nobody could then explain.
+    [TestMethod]
+    public void Empty_FiltersNothing()
+    {
+        Assert.IsEmpty(WalkOptions.Empty.ExcludedPaths);
+        Assert.IsEmpty(WalkOptions.Empty.IgnoredPathGlobs);
+        Assert.IsEmpty(WalkOptions.Empty.IgnoredPathRegexes);
+        Assert.AreEqual(0, WalkOptions.Empty.MaxDepth);
+        Assert.AreEqual(0, WalkOptions.Empty.WorkerCount);
+        Assert.IsTrue(WalkOptions.Empty.UseIgnoreFiles);
+    }
+
+    // The default a caller that omits the rules gets, pinned against the property so the two cannot drift:
+    // UsnIndexer.WalkOptions starts here, and that is the value every local drive walk reads before the
+    // App has sent anything.
+    [TestMethod]
+    public void NewIndexer_StartsWithTheEmptyRuleSet() =>
+        Assert.AreSame(WalkOptions.Empty, new UsnIndexer().WalkOptions);
 
     // The regression itself: reading the rules off UserSettings in the service silently produced defaults
     // (the per-user directory does not exist for LocalSystem), so the walk filtered by nothing and the
@@ -101,7 +118,7 @@ public sealed class WalkOptionsTests
             .ToList();
 
         Assert.IsEmpty(offenders,
-            "the local drive walk runs in the service, where UserSettings does not exist; it must take its rules from its caller (WalkOptions.FromMachineSettings). Found: "
+            "the local drive walk runs in the service, where UserSettings does not exist; it must take its rules from its caller (the SetMachineSettings request, held in UsnIndexer.WalkOptions). Found: "
             + string.Join(", ", offenders));
     }
 

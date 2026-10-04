@@ -255,9 +255,9 @@ public sealed class LocalDriveWalkBuilderTests
         Assert.IsTrue(store.IsComplete);
     }
 
-    // Test-side rules: the production caller passes WalkOptions.FromMachineSettings (pinned with the
-    // machine mirror in LocalDriveWalkBuilderMachineRulesTests), so here the rules are explicit and a
-    // developer's own exclusion settings cannot change what these cases walk.
+    // Test-side rules: the production caller passes the rules the App sent over SetMachineSettings
+    // (pinned end to end in LocalDriveWalkBuilderExclusionRulesTests), so here the rules are explicit and
+    // a developer's own exclusion settings cannot change what these cases walk.
     private static WalkOptions Options(
         IReadOnlyList<string>? excludedPaths = null,
         IReadOnlyList<string>? globs = null,

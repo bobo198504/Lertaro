@@ -3,12 +3,13 @@ using Lertaro.Core.Services.Search;
 
 namespace Lertaro.App.ViewModels.Settings;
 
-// Saving the Exclusions page only mirrors the new rules into machine-settings.json, which the service
-// reads (see MachineSettings.MirrorExclusionRules / WalkOptions.FromMachineSettings) -- a read that
-// happens on the NEXT walk. An already-built FAT32/exFAT index therefore keeps serving the subtree the
-// user just excluded until something re-walks that drive, and nothing did: the rebuild only ever
-// happened on an app restart or an explicit click on the Local page's Rebuild button. So a rules change
-// queues one rebuild per affected drive here, as a side effect of the save.
+// Saving the Exclusions page only sends the new rules to the service, which holds them in memory and
+// applies them on the NEXT walk (see SearchServiceManagementExtensions.SaveMachineSettingsAsync /
+// UsnIndexer.WalkOptions) -- a read that happens on the next walk. An already-built FAT32/exFAT index
+// therefore keeps serving the subtree the user just excluded until something re-walks that drive, and
+// nothing did: the rebuild only ever happened on an app restart or an explicit click on the Local page's
+// Rebuild button. So a rules change queues one rebuild per affected drive here, as a side effect of the
+// save.
 //
 // Queue-only, deliberately: the Local page's waiting variant (LocalDriveRebuildHelper) exists because a
 // user explicitly asked for a rebuild and wants to watch it finish; blocking the settings dialog on a
