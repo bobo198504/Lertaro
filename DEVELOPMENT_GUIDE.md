@@ -154,3 +154,10 @@ When interacting with this repository, performing code modification, compilation
     - Whenever a plugin translation key, string, or locale file (under `Plugins/<PluginName>/Resources/Translations/`) is added, updated, or modified, **ALL supported plugin locales** (all locale directories present under `Resources/Translations/` for that plugin) must be updated in sync.
     - Never add or update a translation key in only one locale while leaving other locale JSON files missing the key.
     - Combine with Rule 9: No hardcoded fallback strings in `.cs` code --- when a new user-facing string is introduced in a plugin, add the translation key to all locale JSON files shipped by that plugin simultaneously.
+9. **A New SDK Extension Point Is Not Done Until the Developer Guide Documents It**
+    - Adding an interface, class or service to `Lertaro.PluginSdk` means writing it into the page covering its kind, in **every** site locale (Rule 17), and listing it in the interface table of the same locale's `dev-guide/index.md`:
+        - `dev-guide/sdk/ui-extensions.md` --- sidebar filters, result columns, quick panel tabs, clock-line calendar text, previews, thumbnails, themes, localization.
+        - `dev-guide/sdk/core-search-actions.md`, `system-adapters.md`, `abstractions.md`, `services.md`, `notifications.md` --- everything else, by what it extends.
+    - Follow the page's own shape: a numbered heading naming the interface, one sentence on what the host calls it for, the real interface in a fenced `csharp` block with its namespace line, then the handful of contract rules a plugin author would otherwise get wrong (who wins when two providers answer, who owns the data, what a disabled component does).
+    - A section inserted mid-numbering means renumbering the ones after it. That is safe: nothing links to those numbers, only to the page.
+    - Rationale: plugin authors read the guide, not the source. An interface missing from it is invisible to them even though everything compiles --- which is exactly how this rule came to exist.
