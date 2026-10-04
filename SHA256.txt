@@ -1,0 +1,10 @@
+PR #307 x64 artifacts (unsigned test build)
+
+Branch: fix/network-index-robustness @ c2947bef
+Built with: make.bat x64 steps (dotnet publish + Inno Setup 7.1.0 + Compress-Archive), .NET 10 SDK
+
+Lertaro-5.8.1-pr307-x64.zip  (contains Lertaro-Setup.exe + Lertaro-Portable.zip)
+  sha256  4dd82ab046f20f3cd6a7939b11520b7b23d1b58c02082a47c1cdf38ff570b4b4
+
+Lertaro-Setup.exe     sha256 e32af86f8e6d2910fffb58c201bb9d8ce76b5c8cc23410e5381b4125573052fa
+Lertaro-Portable.zip  sha256 213061accff16972fa33a0158da92491c65be2a5226d492aaf363c6c9a712ede
