@@ -77,6 +77,10 @@ public partial class App : Application
         // Initialize logger first so we can log elevation decisions and issues
         Logger.Initialize("app.log", overwrite: true);
 
+        // App-wide smooth wheel scrolling, keyed off ScrollViewer.CanContentScroll so virtualized lists
+        // stay item-based while pixel-scrolling lists get the glide (see SmoothWheelScrollBehavior).
+        Helpers.Visuals.SmoothWheelScrollBehavior.EnableGlobally();
+
 
         // Before anything can ask the search routing whether a drive is indexed: the App cannot read
         // machine-settings.json for itself once the service holds Data\Machine (see MachineSettings.Serve),
