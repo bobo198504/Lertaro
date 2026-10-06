@@ -79,7 +79,7 @@ public static class SmoothWheelScrollBehavior
     // below it; a spin approaches it and is then held, which is what stops a hyper-scrolling wheel from
     // building an unbounded coast. Chosen as 2x the previous build's per-notch punch (3400). Not a const
     // only so the test pinning that value is not a compile-time tautology.
-    internal static readonly double MaxVelocity = 3400.0;
+    internal static readonly double MaxVelocity = 1700.0;
 
     /// <summary>
     /// The velocity one notch feeds in at the current speed: the precise lone-notch punch, plus a share of
