@@ -140,17 +140,16 @@ internal sealed class SearchExecutionEngine : IDisposable
                 // picker takes only a folder, an Open/Save dialog's name box takes a file too, and there the card
                 // has to keep offering files. Typed into an Explorer window this card is that window's search.
                 var folderScope = isInlineSearchContext && dialogAdapter?.TargetIsFolderOnly == true;
-                if (isInlineSearchContext && tracker.ActiveHwnd != IntPtr.Zero
-                    && (tracker.IsActiveWindowExplorer || (tracker.IsActiveWindowDialog && dialogAdapter != null)))
+                var inlineGateOpen = isInlineSearchContext && tracker.ActiveHwnd != IntPtr.Zero
+                    && (tracker.IsActiveWindowExplorer || (tracker.IsActiveWindowDialog && dialogAdapter != null));
+                var contextDirectory = !string.IsNullOrWhiteSpace(searchScope)
+                    ? searchScope
+                    : tracker.ActivePath ?? tracker.LastActiveExplorerPath;
+
+                if (inlineGateOpen && !string.IsNullOrEmpty(contextDirectory))
                 {
-                    var contextDirectory = !string.IsNullOrWhiteSpace(searchScope)
-                        ? searchScope
-                        : tracker.ActivePath ?? tracker.LastActiveExplorerPath;
-                    if (!string.IsNullOrEmpty(contextDirectory))
-                    {
-                        await RenderInlineSearchAsync(query, contextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token, onLocalServiceUnavailable, bypassExclusions, folderScope).ConfigureAwait(false);
-                        return;
-                    }
+                    await RenderInlineSearchAsync(query, contextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token, onLocalServiceUnavailable, bypassExclusions, folderScope).ConfigureAwait(false);
+                    return;
                 }
 
                 var streamingScope = tracker.IsActiveWindowExplorer ? searchScope : null;
@@ -273,6 +272,7 @@ internal sealed class SearchExecutionEngine : IDisposable
         await _streamRenderer.RenderAsync(query, null, contextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token,
             GetLocalSnapshot, () => Volatile.Read(ref localUpdateVersion), localSearchTask, onLocalServiceUnavailable, bypassExclusions,
             foldersOnly: folderScope).ConfigureAwait(false);
+
     }
 
     private void EmitInstantResults(

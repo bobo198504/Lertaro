@@ -29,8 +29,14 @@ if exist "%DIST%" (
 mkdir "%DIST%"
 
 :: 3. Find the 64-bit Inno Setup 7 compiler (hoisted ahead of both passes)
-:: Try System-wide install first, then User-specific install
+:: Prefer the shared toolchain copy that lives one level above this repository, then fall back to a
+:: system-wide install, then a user-specific one.
 set "ISCC="
+
+if exist "%~dp0..\_tools\inno7\ISCC.exe" (
+    set "ISCC=%~dp0..\_tools\inno7\ISCC.exe"
+    goto :iscc_found
+)
 
 if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
     set "ISCC=C:\Program Files\Inno Setup 7\ISCC.exe"

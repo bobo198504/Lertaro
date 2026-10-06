@@ -333,6 +333,51 @@ public class ExplorerTracker : IDisposable
         _classifier = new ExplorerWindowClassifier(this, _dialogTracker);
         _pathPoller = new ExplorerActivePathPoller(_classifier);
     }
+
+    /// <summary>
+    /// Asks for the inline scope of <paramref name="hwnd"/> through the poller's paced channel.
+    /// </summary>
+    /// <remarks>
+    /// The inline window is summoned in the instant its host becomes foreground, so the mirrored
+    /// <see cref="ActivePath"/> can still describe the previous window. A caller that wants the accurate
+    /// answer asks for it here instead of reading the adapter itself: this goes through the same read
+    /// floor, STA marshalling and timeout the poller uses, so a summon cannot add a synchronous
+    /// cross-process read to the UI thread, cannot bypass the pacing, and cannot hang on a host that stops
+    /// answering. Publish the result with <see cref="UpdatePath"/> so it travels the path a polled answer
+    /// takes.
+    /// </remarks>
+    public Task<string?> RequestInlineScopeAsync(IntPtr hwnd) => _pathPoller.ReadInlineScopeAsync(hwnd, force: true);
+
+    // The window that was last acting as the path provider -- a file manager, not a file dialog. It is
+    // remembered across a dialog taking the foreground, because the dialog follow has to read ITS folder:
+    // navigating inside that window raises no activation event, so nothing else refreshes the path the
+    // moment the user switches back.
+    private IInlineSearchAdapter? _lastProviderAdapter;
+    private IntPtr _lastProviderHwnd;
+
+    /// <summary>Records the window whose folder a file dialog should be followed to.</summary>
+    public void RememberPathProvider(IInlineSearchAdapter? adapter, IntPtr hwnd)
+    {
+        if (adapter == null || hwnd == IntPtr.Zero) return;
+        _lastProviderAdapter = adapter;
+        _lastProviderHwnd = hwnd;
+    }
+
+    /// <summary>
+    /// Reads the remembered path provider's folder right now, bounded, or null when there is nothing to read.
+    /// </summary>
+    /// <remarks>
+    /// Runs on the caller's thread (the tracker's own WinEvent/poller thread), never the UI thread, and is
+    /// bounded like every other cross-process read here, so a host that stops answering cannot park it.
+    /// </remarks>
+    public string? ReadPathProviderScopeNow(TimeSpan timeout)
+    {
+        var adapter = _lastProviderAdapter;
+        var hwnd = _lastProviderHwnd;
+        if (adapter == null || hwnd == IntPtr.Zero || !ExplorerNativeHooks.IsWindow(hwnd)) return null;
+
+        return ExplorerStaInvoker.RunOnStaWithTimeout(() => adapter.GetSearchScope(hwnd), null, timeout);
+    }
     public void Start()
     {
         if (_isRunning) return;

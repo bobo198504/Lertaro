@@ -227,11 +227,12 @@ public class DirectoryOpusPathCollector : IActivePathCollector
         // inactive tabs -- is read from its own window text, which is where Directory Opus puts the
         // folder for each tab (measured on both states: they agree wherever both exist).
         var locationBar = Win32Helper.FindWindowExRecursively(containerHwnd, IntPtr.Zero, "dopus.ctl.treepath", null);
-        var reported = ChooseReportedPath(
-            locationBar != IntPtr.Zero ? Win32Helper.GetWindowText(locationBar) : null,
-            Win32Helper.GetWindowText(containerHwnd));
+        var locationText = locationBar != IntPtr.Zero ? Win32Helper.GetWindowText(locationBar) : null;
+        var containerText = Win32Helper.GetWindowText(containerHwnd);
+        var reported = ChooseReportedPath(locationText, containerText);
+        var resolved = ResolveReportedPath(reported);
 
-        return ResolveReportedPath(reported);
+        return resolved;
     }
 
     /// <summary>

@@ -24,8 +24,6 @@ internal static class ExplorerJumpSuggestionHelper
         var lastPathTrimmed = lastPath?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var isSamePath = string.Equals(searchScopeTrimmed, lastPathTrimmed, StringComparison.OrdinalIgnoreCase);
 
-        Logger.Log($"[Diagnosis] SearchScope='{searchScope}', isDialog={isDialog}, lastPath='{lastPath}', dirExists={dirExists}, isSamePath={isSamePath}", LogLevel.Debug);
-
         if (!isInlineSearchContext || !isDialog || !dirExists || string.IsNullOrEmpty(lastPath) || (!string.IsNullOrEmpty(searchScope) && isSamePath))
             return null;
 
