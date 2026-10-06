@@ -47,18 +47,32 @@ internal static class WheelDevice
     private static readonly Tracker CurrentTracker = new();
 
     /// <summary>Classify one wheel message; the evidence carries over between calls, per gesture.</summary>
+    /// <summary>Forgets the evidence gathered so far -- one gesture's verdict must not leak into the next.</summary>
+    internal static void Reset() => CurrentTracker.Clear();
+
     internal static Kind Classify(int delta) => CurrentTracker.Feed(delta, ExtraInfo());
 
-    private sealed class Tracker
+    /// <summary>Classify one message with an explicit extra-info word; used by the tests.</summary>
+    internal static Kind Classify(int delta, long extraInfo) => CurrentTracker.Feed(delta, extraInfo);
+
+    internal sealed class Tracker
     {
         private readonly int[] _magnitudes = new int[Window];
         private int _count;
         private bool _varied;  // this gesture has shown more than one magnitude -- locked to touchpad
         private bool _marked;  // the OS touch/pen marker was seen
 
+        internal void Clear()
+        {
+            _count = 0;
+            _varied = false;
+            _marked = false;
+        }
+
         internal Kind Feed(int delta, long extraInfo)
         {
             if (delta == 0) return Last();
+
 
             // 1. The OS marker wins outright: it is an explicit statement, so a touchpad whose values
             //    happen to look regular is still a touchpad.
@@ -74,12 +88,23 @@ internal static class WheelDevice
             //    the sub-notch evidence and the "has varied" lock are both cleared.
             if (magnitude % WheelDelta == 0)
             {
+                // A whole notch means a notched mouse, which ENDS any touch gesture: ponytail: the marker is
+                // never tied to a clock here, so a free-spinning wheel right after a touchpad slide is read as
+                // a touchpad until the next whole notch. That errs towards the pass-through/scaled side, and
+                // the fix, if it ever matters, is the plugin's recency window (device.h's LastWheelDevice).
                 _count = 0;
                 _varied = false;
+                _marked = false;
                 return Kind.Notched;
             }
 
-            // 3. Sub-notch: keep the recent magnitudes and read how many DISTINCT ones there are.
+            // 3. Sub-notch from here on, so the marker now applies: once the OS said touch or pen, it stays a
+            //    touchpad for the rest of the gesture, and it WINS over the numeric guess below -- a touchpad
+            //    whose values happen to look regular is still a touchpad. (A whole notch above is not a guess:
+            //    it is a notched mouse, and it ends the touch gesture.)
+            if (_marked) return Kind.Touchpad;
+
+            // 4. Keep the recent magnitudes and read how many DISTINCT ones there are.
             for (var i = 0; i + 1 < Window; i++) _magnitudes[i] = _magnitudes[i + 1];
             _magnitudes[Window - 1] = magnitude;
             if (_count < Window) _count++;
