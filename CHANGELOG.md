@@ -1,11 +1,11 @@
-﻿# 更新日志
+# 更新日志
 
 <!--
 格式：一条一行、符号标性质、中英双份、外层用代码块包住。
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
-## 5.8.4.2
+## v5.8.4.2
 
 ## 更新内容
 
@@ -16,7 +16,7 @@
 + 触控板不缓动，按 TouchpadSpeed 单独降速
 + 新增设备分类：OS 触摸标记优先，其次按子格幅值的规律性
 # 修复 App 读不到 machine-settings.json（改由服务经管道提供）
-+ 版本号 5.8.4.2（不高于上游已发布的版本线）
++ 版本号 v5.8.4.2（不高于上游已发布的版本线）
 ```
 
 ## What's changed
@@ -29,10 +29,10 @@
 + A touchpad is not eased; it is scaled down by TouchpadSpeed
 + New device classification: the OS touch marker first, then the regularity of the sub-notch magnitudes
 # Fixed the App being unable to read machine-settings.json (the service hands its copy over the pipe)
-+ Version 5.8.4.2 (never above the released upstream line)
++ Version v5.8.4.2 (never above the released upstream line)
 ```
 
-## 5.8.2.1
+## v5.8.2.1
 
 ## 更新内容
 
