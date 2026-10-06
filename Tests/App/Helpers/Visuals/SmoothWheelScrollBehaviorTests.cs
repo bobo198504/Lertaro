@@ -180,7 +180,7 @@ public sealed class SmoothWheelScrollBehaviorTests
     }
 
     [TestMethod]
-    public void TheCeilingIsTheDoubledPreviousPunch() => Assert.AreEqual(6800.0, SmoothWheelScrollBehavior.MaxVelocity, 1e-9);
+    public void TheCeilingIsThePerNotchPunch() => Assert.AreEqual(3400.0, SmoothWheelScrollBehavior.MaxVelocity, 1e-9);
 
     // -- Device-pixel snapping of what gets submitted. --
     // WPF stops using ClearType for text drawn at a non-integer device-pixel offset, and a glide's position
