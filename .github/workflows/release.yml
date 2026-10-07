@@ -35,20 +35,13 @@ jobs:
         run: |
           .\make.bat
 
-      # 5. Extract commit history since the previous tag as Release Notes
-      - name: Generate Changelog
-        id: changelog
+      # 5. This fork keeps its own release notes in the body (Chinese, English, then the hashes). The body
+      #    is only APPENDED to by this workflow, never replaced, so nothing here writes a commit list over
+      #    it; this step only leaves an empty file for the checksums step to append to.
+      - name: Prepare Release Notes
         shell: bash
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
-          echo "## Changelog (Commits)" > changelog.md
-          echo "" >> changelog.md
-          if [ -z "$PREV_TAG" ]; then
-            git log --pretty=format:"* %s (%h)" --no-merges >> changelog.md
-          else
-            git log --pretty=format:"* %s (%h)" --no-merges "$PREV_TAG..${{ github.ref_name }}" >> changelog.md
-          fi
-          echo "" >> changelog.md
+          : > changelog.md
 
       # 5.5 Sign portable ZIP and generate hash checksums
       - name: Sign Artifacts and Add Verification Info
@@ -87,9 +80,8 @@ jobs:
 
           # Append verification info to changelog.md
           echo '' >> changelog.md
-          echo '## Security Verification' >> changelog.md
+          echo '## SHA-256 Checksums' >> changelog.md
           echo '' >> changelog.md
-          echo '### SHA-256 Checksums' >> changelog.md
           echo "* **Lertaro-Setup.exe** (x64): ``$exeHash``" >> changelog.md
           echo "* **Lertaro-Portable.zip** (x64): ``$zipHash``" >> changelog.md
           echo "* **Lertaro-Setup-arm64.exe** (arm64): ``$exeHashArm``" >> changelog.md
@@ -132,7 +124,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          # APPEND, never replace: the fork's own Chinese/English notes live in the body already, and a
+          # later run of this workflow (e.g. after a tag is moved) must not wipe them.
           body_path: changelog.md
+          append_body: true
           files: |
             dist/Lertaro-Setup.exe
             dist/Lertaro-Portable.zip
