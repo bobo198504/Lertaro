@@ -5,6 +5,27 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.9.0.1
+
+## 更新内容
+
+```
+* 平滑滚动：模型 3.0 + 应用侧规则（速度预算决定行程、两条轴固定窗口、TopSpeedMul = 1.0）
++ 触控板不缓动，按 TouchpadSpeed 单独降速
++ 设备分类：OS 触摸标记优先，其次按子格幅值的规律性
++ 新增显式标记：命名事件 Local\Lertaro.SmoothScroll.Active，平滑滚动启用期间存在
+```
+
+## What's changed
+
+```
+* Smooth wheel scrolling: model 3.0 plus the app-side rules (the speed budget sets the travel, two axes
+  with fixed windows, TopSpeedMul = 1.0)
++ A touchpad is not eased; it is scaled down by TouchpadSpeed
++ Device classification: the OS touch marker first, then the regularity of the sub-notch magnitudes
++ New explicit marker: the named event Local\Lertaro.SmoothScroll.Active, present while smooth scrolling is on
+```
+
 ## v5.8.5.1
 
 ## 更新内容
