@@ -2,28 +2,46 @@ name: Fork Release Notes
 
 # This fork keeps its own release notes in CHANGELOG.md (Chinese, English, then the hashes; newest first).
 # Upstream's "Build and Release" workflow owns the release and writes its own body, so this workflow runs
-# AFTER it finishes and writes the fork's notes back as the last writer. No upstream file is touched, and
-# the hashes always come from THIS release's own assets.
+# AFTER it finishes and writes the fork's notes as the LAST writer -- one pass, no manual correction.
+# No upstream file is touched, and the hashes always come from THIS release's own assets.
 
 on:
   workflow_run:
     workflows: ["Build and Release"]
     types: [completed]
+  # Manual run: for testing this workflow, or re-writing the notes without publishing a new version.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to write the notes for (e.g. v5.8.5.1)
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   write-notes:
-    if: github.event.workflow_run.conclusion == 'success'
+    # A failed build must not touch the notes; a manual run has no conclusion to check.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: windows-latest
 
     steps:
-      - name: Resolve the tag this run published
+      - name: Resolve the tag
         id: tag
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          $tag = "${{ github.event.workflow_run.head_branch }}"
+          # An explicit input wins. Otherwise the run's branch -- a tag name for a tag push, though that is
+          # not guaranteed, so anything that does not look like a version falls back to the newest release.
+          $tag = $env:INPUT_TAG
+          if (-not $tag) { $tag = $env:RUN_BRANCH }
+          if (-not $tag -or $tag -notmatch '^v[0-9]') {
+            $tag = (gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          }
+          if (-not $tag) { Write-Error 'No tag could be resolved.'; exit 1 }
           Write-Host "tag: $tag"
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
@@ -43,7 +61,7 @@ jobs:
           $heading = "## $env:TAG"
           $i = $cl.IndexOf($heading)
           if ($i -lt 0) {
-            Write-Host "CHANGELOG.md has no '$heading' entry; leaving the release body as upstream left it."
+            Write-Host "CHANGELOG.md has no '$heading' entry; leaving the release body alone."
             exit 0
           }
 
@@ -68,4 +86,4 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'release-notes.md'
           [System.IO.File]::WriteAllText($out, ($lines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
           gh release edit $env:TAG --notes-file $out
-          Write-Host "Release body written from CHANGELOG.md."
+          Write-Host "Release body written from CHANGELOG.md (one pass)."
