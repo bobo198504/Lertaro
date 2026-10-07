@@ -1,0 +1,71 @@
+name: Fork Release Notes
+
+# This fork keeps its own release notes in CHANGELOG.md (Chinese, English, then the hashes; newest first).
+# Upstream's "Build and Release" workflow owns the release and writes its own body, so this workflow runs
+# AFTER it finishes and writes the fork's notes back as the last writer. No upstream file is touched, and
+# the hashes always come from THIS release's own assets.
+
+on:
+  workflow_run:
+    workflows: ["Build and Release"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  write-notes:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-latest
+
+    steps:
+      - name: Resolve the tag this run published
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.workflow_run.head_branch }}"
+          Write-Host "tag: $tag"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Write the release body from CHANGELOG.md
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $cl = Get-Content CHANGELOG.md -Raw -Encoding UTF8
+          $heading = "## $env:TAG"
+          $i = $cl.IndexOf($heading)
+          if ($i -lt 0) {
+            Write-Host "CHANGELOG.md has no '$heading' entry; leaving the release body as upstream left it."
+            exit 0
+          }
+
+          # The entry runs from its heading to the next version heading.
+          $rest = $cl.Substring($i)
+          $next = [regex]::Match($rest.Substring($heading.Length), '(?m)^## v[0-9.]+')
+          $entry = if ($next.Success) { $rest.Substring(0, $heading.Length + $next.Index) } else { $rest }
+          # Drop the version heading itself: the release page already shows the version.
+          $entry = $entry.Substring($heading.Length).Trim()
+
+          # Hashes from THIS release's own assets (never upstream's); the .sig files are not listed.
+          $assets = gh release view $env:TAG --json assets | ConvertFrom-Json
+          $lines = @($entry, '', '## SHA-256 Checksums', '', '```')
+          foreach ($a in $assets.assets) {
+            if ($a.name -like '*.sig') { continue }
+            $hash = $a.digest -replace '^sha256:', ''
+            if (-not $hash) { continue }
+            $lines += ('  ' + $a.name.PadRight(28) + $hash)
+          }
+          $lines += '```'
+
+          $out = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          [System.IO.File]::WriteAllText($out, ($lines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          gh release edit $env:TAG --notes-file $out
+          Write-Host "Release body written from CHANGELOG.md."
