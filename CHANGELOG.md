@@ -13,6 +13,7 @@
 * 平滑滚动：模型 3.0 + 应用侧规则（速度预算决定行程、两条轴固定窗口、TopSpeedMul = 1.0）
 + 触控板不缓动，按 TouchpadSpeed 单独降速
 + 设备分类：OS 触摸标记优先，其次按子格幅值的规律性
++ 新增显式标记：命名事件 Local\Lertaro.SmoothScroll.Active，平滑滚动启用期间存在
 ```
 
 ## What's changed
@@ -22,6 +23,7 @@
   with fixed windows, TopSpeedMul = 1.0)
 + A touchpad is not eased; it is scaled down by TouchpadSpeed
 + Device classification: the OS touch marker first, then the regularity of the sub-notch magnitudes
++ New explicit marker: the named event Local\Lertaro.SmoothScroll.Active, present while smooth scrolling is on
 ```
 
 ## v5.8.4.2

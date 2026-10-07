@@ -46,7 +46,17 @@ public static class SmoothWheelScrollBehavior
     /// <summary>What one whole notch is worth in pixels, before <see cref="TouchpadSpeed"/>.</summary>
     private const double PixelsPerNotch = 48.0;
 
-    private static readonly ConditionalWeakTable<ScrollViewer, Glide> Glides = new();
+    
+    /// <summary>
+    /// The named event another program can look for while this behaviour is active, so a global wheel tool
+    /// can keep its hands off this app's windows. Session-scoped ("Local\") on purpose: it is a marker for
+    /// programs in the same session and needs no privileges. Created while enabled, closed when disabled.
+    /// </summary>
+    internal const string ActiveEventName = @"Local\Lertaro.SmoothScroll.Active";
+
+    private static System.Threading.EventWaitHandle? _activeEvent;
+    private static bool _enabled;
+private static readonly ConditionalWeakTable<ScrollViewer, Glide> Glides = new();
     private static readonly System.Diagnostics.Stopwatch SinceStart = System.Diagnostics.Stopwatch.StartNew();
     private static bool _registered;
 
@@ -60,6 +70,18 @@ public static class SmoothWheelScrollBehavior
     {
         if (_registered) return;
         _registered = true;
+        _enabled = true;
+        try
+        {
+            // Held for the process lifetime: the event exists exactly as long as this handle stays open.
+            _activeEvent ??= new System.Threading.EventWaitHandle(
+                false, System.Threading.EventResetMode.ManualReset, ActiveEventName);
+        }
+        catch (Exception ex)
+        {
+            // The marker must never break scrolling: a linkage with another program is not worth a crash.
+            Lertaro.Core.Logger.Log($"[SmoothWheelScroll] The active marker could not be created: {ex.Message}");
+        }
 
         // Hook the BUBBLING MouseWheelEvent, not PreviewMouseWheelEvent. A class handler on the tunnel
         // event ran before ScrollViewer's own default preview handling, and its mere presence was enough
@@ -73,9 +95,20 @@ public static class SmoothWheelScrollBehavior
             handledEventsToo: false);
     }
 
-    private static void OnMouseWheel(object sender, MouseWheelEventArgs e)
+        /// <summary>
+    /// Stops smoothing and takes the marker down. Unused today -- this behaviour has no switch of its own --
+    /// but it is what a future setting would call, and it keeps the marker honest either way.
+    /// </summary>
+    public static void DisableGlobally()
     {
-        if (e.Delta == 0 || sender is not ScrollViewer scrollViewer)
+        _enabled = false;
+        _activeEvent?.Dispose();
+        _activeEvent = null;
+    }
+
+private static void OnMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!_enabled || e.Delta == 0 || sender is not ScrollViewer scrollViewer)
             return;
 
         // Glide everything that scrolls by pixel, and leave item-based scrolling alone:
