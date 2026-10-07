@@ -23,6 +23,23 @@
 + A touchpad is not eased; it is scaled down by TouchpadSpeed
 + Device classification: the OS touch marker first, then the regularity of the sub-notch magnitudes
 ```
+## v5.8.4.1
+
+## 更新内容
+
+```
+* 平滑滚动恢复为应用级缓动（撤销上游"改回原生滚轮"那一版）
++ 甩动速度上限调低（两次各减半）
+# 修复 App 读不到 machine-settings.json（当时改由服务经管道提供）
+```
+
+## What's changed
+
+```
+* Smooth wheel scrolling restored as an app-wide behaviour (upstream's "restore native wheel scrolling" is reverted)
++ The spin's speed ceiling is halved (twice)
+# Fixed the App being unable to read machine-settings.json (the service handed its copy over the pipe at the time)
+```
 ## v5.8.4.2
 
 ## 更新内容
