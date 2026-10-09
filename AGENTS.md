@@ -47,3 +47,9 @@ Not lazy about: input validation at trust boundaries, error handling that preven
 - **一次写对**：`.github/workflows/fork-release-notes.yml` 是这条规则的**可执行实现**（上游工作流先覆盖正文，
   它作为最后一个写入者再写对）。它必须存在于**默认分支 `main`** 上。
 - fork 的三条本地规则与上游差异说明，见 `_Process optimization\projects\lertaro.md` §9.22 / §9.21。
+
+- **fork 每个版本的更新日志都必须含一条「保留鼠标平滑滚动」**（中文 `+ 保留鼠标平滑滚动`，英文 `+ Keeps the smooth wheel scrolling`），
+  位置与其它条目同框；**只要上游还没把这个功能接回去，以后 fork 所有版本都带这条**（用户 2026-10-09 明确）。
+- **Ctrl+G（Quick Switch）是本 App 最重要的功能之一，不能再坏**：任何涉及活动路径提供者、对话框跟随、
+  `GlobalHotkeyDetector`、`ExplorerActivePathPoller`、`ExplorerTracker.LastActiveExplorerPath` 的改动，
+  都必须验证"在文件管理器里换目录后按 Ctrl+G 立刻跳到当前目录"，且**两个文件管理器同时开着**时也要成立。

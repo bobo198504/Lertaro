@@ -5,6 +5,22 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.9.1.2
+
+## 更新内容
+
+```
+# 修复：Quick Switch（Ctrl+G）跳回文件管理器目录时用的是上一次的路径
++ 保留鼠标平滑滚动
+```
+
+## What's changed
+
+```
+# Fix: Quick Switch (Ctrl+G) navigated to the previous folder instead of the one the file manager shows
++ Keeps the smooth wheel scrolling
+```
+
 ## v5.9.1.1
 
 ## 更新内容
