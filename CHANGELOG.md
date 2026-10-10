@@ -5,6 +5,22 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.9.1.3
+
+## 更新内容
+
+```
+# 搜索恢复原有速度（撤销查询路径上的权限检查，上游 61cfcc1c）
++ 保留鼠标平滑滚动
+```
+
+## What's changed
+
+```
+# Search speed restored (the permission check on the query path is reverted, upstream 61cfcc1c)
++ Keeps the smooth wheel scrolling
+```
+
 ## v5.9.1.2
 
 ## 更新内容
