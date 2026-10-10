@@ -11,6 +11,8 @@
 
 ```
 # 搜索恢复原有速度（撤销查询路径上的权限检查，上游 61cfcc1c）
++ 打字时搜索结果刷新更快（候选项每次搜索只算一遍）
++ 设置里的插件列表首次滚动不再卡一下
 + 保留鼠标平滑滚动
 ```
 
@@ -18,6 +20,8 @@
 
 ```
 # Search speed restored (the permission check on the query path is reverted, upstream 61cfcc1c)
++ Faster result refresh while typing (the candidate rows are built once per search)
++ The first wheel scroll over the plugin list no longer stalls
 + Keeps the smooth wheel scrolling
 ```
 

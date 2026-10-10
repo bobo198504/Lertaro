@@ -248,6 +248,30 @@ public class WheelDeviceTests
     }
 
     [TestMethod]
+    public void TheVerdictCarriesIntoTheNextGesture_SoItsFirstMessageCanGlide()
+    {
+        // Every gesture used to start from Unknown, so a free-spinning wheel's first message was passed
+        // through un-eased -- the "sticks once, then glides" feel. The verdict is kept for a second instead.
+        Assert.AreEqual(WheelDevice.Kind.Unknown, _tracker.Feed(15, 0));
+        Assert.AreEqual(WheelDevice.Kind.Unknown, _tracker.Feed(15, 0));
+        Assert.AreEqual(WheelDevice.Kind.FreeSpin, _tracker.Feed(15, 0));
+
+        _tracker.Clear();   // the next gesture starts here, the way the behaviour resets the shared tracker
+
+        Assert.AreEqual(WheelDevice.Kind.FreeSpin, _tracker.Feed(15, 0));
+    }
+
+    [TestMethod]
+    public void ANotchedVerdictAlsoCarriesIntoTheNextGesture()
+    {
+        Assert.AreEqual(WheelDevice.Kind.Notched, _tracker.Feed(120, 0));
+
+        _tracker.Clear();
+
+        Assert.AreEqual(WheelDevice.Kind.Notched, _tracker.Feed(30, 0));
+    }
+
+    [TestMethod]
     public void IrregularSubNotchValuesAreATouchpad()
     {
         _tracker.Feed(17, 0);

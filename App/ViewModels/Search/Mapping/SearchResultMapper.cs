@@ -32,6 +32,14 @@ public static class SearchResultMapper
         public bool Collected;
         public readonly List<AppSearchResult> Rows = new();
         public bool HasPluginSearchActions;
+
+        // The three candidate blocks below depend only on per-search inputs (query, scope, window kind,
+        // type order) -- not on the streamed file rows and not on contextDirectory -- so they are computed
+        // once per search instead of on every paint. Measured before this: 29 paints of "a" spent
+        // 633.8 ms and 91 MB rebuilding them (project knowledge base, search-render measurements).
+        public List<RankedCandidate>? HistoryCandidates;
+        public List<RankedCandidate>? FavoriteCandidates;
+        public List<RankedCandidate>? SearchableItemCandidates;
     }
 
     internal static List<AppSearchResult> CollectInstantPass(InstantPassCache pass, string rawQuery, string query, bool isInlineWindow, string? contextDirectory,
@@ -148,14 +156,21 @@ public static class SearchResultMapper
         // downstream path dedupe. An explicit type trigger retains its strict result domain.
         if (triggeredTypeId == null)
         {
+            if (instantPass.HistoryCandidates == null)
+            {
             var historyCandidates = HistorySearchCandidateMapper.Collect(fuzzy, scope);
             if (normalizedScopeFolders != null)
                 historyCandidates = historyCandidates.Where(c => InFileFilterScope(c.NormalizedPath)).ToList();
             candidates.AddRange(historyCandidates);
+                instantPass.HistoryCandidates = historyCandidates;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(query))
         {
+            if (instantPass.FavoriteCandidates == null)
+            {
+                var favoriteCandidates = new List<RankedCandidate>();
             var favorites = UserSettings.Load().Favorites;
             for (var i = 0; i < favorites.Count; i++)
             {
@@ -173,13 +188,15 @@ public static class SearchResultMapper
                 if (normalizedScopeFolders != null && !InFileFilterScope(normalizedFavPath))
                     continue;
                 var priority = historySnapshot.TryGetValue(normalizedFavPath, out var hp) ? hp : int.MaxValue;
-                candidates.Add(new RankedCandidate(
+                favoriteCandidates.Add(new RankedCandidate(
                     FavoriteSearchHelper.CreateFavoriteUiResult(fav, query, 0),
                     IsCurated: true,
                     priority,
                     SearchResultTypePriority.Rank(SearchResultTypePriority.FilesTypeId, typeOrder),
                     match,
                     normalizedFavPath));
+            }
+                instantPass.FavoriteCandidates = favoriteCandidates;
             }
         }
 
@@ -188,6 +205,9 @@ public static class SearchResultMapper
         // routing hid these too (its "Case B").
         if (fileFilterScope == null)
         {
+            if (instantPass.SearchableItemCandidates == null)
+            {
+                var itemCandidates = new List<RankedCandidate>();
             foreach (var (result, match) in SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow))
             {
                 var typeId = result.SourceProvider is PluginSdk.Abstractions.Plugins.ISearchableItemProvider provider
@@ -202,13 +222,15 @@ public static class SearchResultMapper
                 // lookup key has to skip it here too or an app's history priority would never resolve.
                 var lookupPath = result.IsApplication ? result.FullPath.Trim() : SearchResultHelper.NormalizePath(result.FullPath);
                 var hasHistory = historySnapshot.TryGetValue(lookupPath, out var priority);
-                candidates.Add(new RankedCandidate(
+                itemCandidates.Add(new RankedCandidate(
                     result,
                     IsCurated: hasHistory,
                     hasHistory ? priority : int.MaxValue,
                     SearchResultTypePriority.Rank(typeId, typeOrder),
                     match,
                     SearchResultHelper.NormalizePath(result.FullPath)));
+            }
+                instantPass.SearchableItemCandidates = itemCandidates;
             }
         }
 
@@ -218,6 +240,7 @@ public static class SearchResultMapper
         // other type gets, not just whatever a trigger-polluted query happened to match.
         if (fileResults != null && (triggeredTypeId == null || triggeredTypeId == SearchResultTypePriority.FilesTypeId))
         {
+            var filesTypeRank = SearchResultTypePriority.Rank(SearchResultTypePriority.FilesTypeId, typeOrder);
             foreach (var result in fileResults)
             {
                 var lookupPath = result.Path.Length > 3 && result.Path[^1] == '\\' ? result.Path.TrimEnd('\\') : result.Path;
@@ -226,7 +249,7 @@ public static class SearchResultMapper
                     SearchResultHelper.CreateUiResult(result, query, 0, isApplication: false, scope),
                     IsCurated: hasHistory,
                     hasHistory ? priority : int.MaxValue,
-                    SearchResultTypePriority.Rank(SearchResultTypePriority.FilesTypeId, typeOrder),
+                    filesTypeRank,
                     fuzzy.Rank(result.Name),
                     SearchResultHelper.NormalizePath(result.Path)));
             }

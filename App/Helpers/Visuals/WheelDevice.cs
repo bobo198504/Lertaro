@@ -88,21 +88,20 @@ internal static class WheelDevice
             //    the sub-notch evidence and the "has varied" lock are both cleared.
             if (magnitude % WheelDelta == 0)
             {
-                // A whole notch means a notched mouse, which ENDS any touch gesture: ponytail: the marker is
-                // never tied to a clock here, so a free-spinning wheel right after a touchpad slide is read as
-                // a touchpad until the next whole notch. That errs towards the pass-through/scaled side, and
-                // the fix, if it ever matters, is the plugin's recency window (device.h's LastWheelDevice).
+                // A whole notch means a notched mouse, which ENDS any touch gesture. The verdict is
+                // remembered, so the next gesture's first sub-notch message can glide instead of falling
+                // back to a pass-through -- see Remember/RecentVerdict below.
                 _count = 0;
                 _varied = false;
                 _marked = false;
-                return Kind.Notched;
+                return Remember(Kind.Notched);
             }
 
             // 3. Sub-notch from here on, so the marker now applies: once the OS said touch or pen, it stays a
             //    touchpad for the rest of the gesture, and it WINS over the numeric guess below -- a touchpad
             //    whose values happen to look regular is still a touchpad. (A whole notch above is not a guess:
             //    it is a notched mouse, and it ends the touch gesture.)
-            if (_marked) return Kind.Touchpad;
+            if (_marked) return Remember(Kind.Touchpad);
 
             // 4. Keep the recent magnitudes and read how many DISTINCT ones there are.
             for (var i = 0; i + 1 < Window; i++) _magnitudes[i] = _magnitudes[i + 1];
@@ -114,9 +113,32 @@ internal static class WheelDevice
 
         private Kind Last()
         {
-            if (_marked) return Kind.Touchpad;
-            return _count == 0 ? Kind.Unknown : SubNotchVerdict();
+            if (_marked) return Remember(Kind.Touchpad);
+            return _count == 0 ? RecentVerdict() : SubNotchVerdict();
         }
+
+        // The gesture's verdict, reused by the NEXT gesture's first messages. reaper's device.h keeps the
+        // last wheel per device; this port kept nothing, so a free-spinning wheel's first (sub-notch)
+        // message arrived with no evidence at all and was passed through un-eased -- which is the "sticks
+        // once, then glides" feel of the first scroll on a freshly opened list. ponytail: a one-second
+        // window is the smallest memory that covers a normal flick-to-flick gap; coming back to the wheel
+        // after a longer pause, or after another device, still starts from Unknown rather than guessing.
+        private const long RecencyMs = 1000;
+
+        private Kind _lastVerdict = Kind.Unknown;
+        private long _lastVerdictAt;
+
+        private Kind Remember(Kind verdict)
+        {
+            _lastVerdict = verdict;
+            _lastVerdictAt = Environment.TickCount64;
+            return verdict;
+        }
+
+        private Kind RecentVerdict()
+            => _lastVerdict != Kind.Unknown && Environment.TickCount64 - _lastVerdictAt <= RecencyMs
+                ? _lastVerdict
+                : Kind.Unknown;
 
         private int DistinctMagnitudes()
         {
@@ -139,14 +161,14 @@ internal static class WheelDevice
 
         private Kind SubNotchVerdict()
         {
-            if (_count < MinSamples) return Kind.Unknown;
+            if (_count < MinSamples) return RecentVerdict();
 
             // A value that is steady NOW is not proof of a flywheel if this gesture has ALREADY varied: a
             // touchpad creeping slowly can emit eight identical small values in a row, which would read as
             // "one fixed step" and leak the touchpad into the model. A real free-spinning wheel reports
             // its fixed step from the first message and never varies, so once varied it stays touchpad.
-            if (_varied) return Kind.Touchpad;
-            return DistinctMagnitudes() <= Levels ? Kind.FreeSpin : Kind.Touchpad;
+            if (_varied) return Remember(Kind.Touchpad);
+            return Remember(DistinctMagnitudes() <= Levels ? Kind.FreeSpin : Kind.Touchpad);
         }
     }
 }
