@@ -15,7 +15,11 @@ public class UpdateChecker
     public static UpdateChecker Instance => _instance.Value;
 
     private readonly HttpClient _httpClient;
-    private const string GITHUB_API_URL = "https://api.github.com/repos/Lertaro/Lertaro/releases/latest";
+    // This fork's own releases, deliberately not upstream's. Upstream ships fixes to main without
+    // publishing them (the permission check that slowed every search down was one of those), and an
+    // auto-update pointed at upstream would hand such a build to a portable install that cannot roll back.
+    // The fork builds the same asset names and signatures, so everything downstream is unchanged.
+    private const string GITHUB_API_URL = "https://api.github.com/repos/bobo198504/Lertaro/releases/latest";
 
     private UpdateChecker()
     {

@@ -5,6 +5,7 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+
 ## v5.9.1.3
 
 ## 更新内容
@@ -12,6 +13,7 @@
 ```
 # 搜索恢复原有速度（撤销查询路径上的权限检查，上游 61cfcc1c）
 + 打字时搜索结果刷新更快（候选项每次搜索只算一遍）
++ 自动更新只检查本仓库的发行
 + 设置里的插件列表首次滚动不再卡一下
 + 保留鼠标平滑滚动
 ```
@@ -21,6 +23,7 @@
 ```
 # Search speed restored (the permission check on the query path is reverted, upstream 61cfcc1c)
 + Faster result refresh while typing (the candidate rows are built once per search)
++ Auto-update only checks this repository's releases
 + The first wheel scroll over the plugin list no longer stalls
 + Keeps the smooth wheel scrolling
 ```

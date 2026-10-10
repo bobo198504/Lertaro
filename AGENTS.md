@@ -50,6 +50,7 @@ Not lazy about: input validation at trust boundaries, error handling that preven
 
 - **fork 每个版本的更新日志都必须含一条「保留鼠标平滑滚动」**（中文 `+ 保留鼠标平滑滚动`，英文 `+ Keeps the smooth wheel scrolling`），
   位置与其它条目同框；**只要上游还没把这个功能接回去，以后 fork 所有版本都带这条**（用户 2026-10-09 明确）。
+- **fork 每个版本的更新日志都必须含一条「自动更新只检查本仓库的发行」**（中文 `+ 自动更新只检查本仓库的发行`，英文 `+ Auto-update only checks this repository's releases`），位置与其它条目同框。本 fork 已是**正式分支**：自动更新若指向上游，上游未发版的改动会被装进便携安装（2026-10-11 拖慢搜索的权限检查即此），而便携安装无法回退。**以后 fork 所有版本都带这条**（用户 2026-10-11 明确）。
 - **Ctrl+G（Quick Switch）是本 App 最重要的功能之一，不能再坏**：任何涉及活动路径提供者、对话框跟随、
   `GlobalHotkeyDetector`、`ExplorerActivePathPoller`、`ExplorerTracker.LastActiveExplorerPath` 的改动，
   都必须验证"在文件管理器里换目录后按 Ctrl+G 立刻跳到当前目录"，且**两个文件管理器同时开着**时也要成立。
