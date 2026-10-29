@@ -82,18 +82,16 @@ public static class RankPolicy
     /// policies can be told apart afterwards. Bump it with any change to the score, the sections or the key
     /// order. It is a code constant, not a setting: a policy version that a user could edit measures nothing.
     /// </summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     public const int StrongWeight = 10;
     public const int PriorityWeight = 8;
     public const int FavoriteStrongScore = 44;
-    // A habit outranks everything a text match can earn. The owner's rule is that the thing used most
-    // often should come first, and a rarely used exact match should not jump ahead of it -- so the
-    // history tiers sit above FavoriteStrongScore (44) rather than between the match weights (26 max)
-    // and it. Previously H5 scored 34 and H3 22, which put H3 below an ordinary strong match and kept
-    // a habitual row off the top of the list.
-    public const int HistoryFiveScore = 60;
-    public const int HistoryThreeScore = 50;
+    // Baseline B: the values the fork shipped before this experiment, restored so the two orders can be
+    // compared by using them. Both tiers sit below FavoriteStrongScore, so a strong favourite still beats
+    // a habitual row; history only adds weight among rows that already matched equally well.
+    public const int HistoryFiveScore = 34;
+    public const int HistoryThreeScore = 22;
     public const int HistoryTailScore = 6;
 
     // History buckets (redesign 3.4). The thresholds decide the tier; the caps only truncate, so a fourth
@@ -487,10 +485,13 @@ public sealed class RankKeyComparer : IComparer<RankKey>
         if ((xSection == RankSection.HistoryTail) != (ySection == RankSection.HistoryTail))
             return xSection == RankSection.HistoryTail ? 1 : -1;
 
-        // Match quality FIRST: where the query sits in the name and how tightly it sits there is what the
-        // user actually typed. A row whose letters land at the start of its name is the one they meant, and
-        // it outranks a habit -- a path opened often but matching somewhere in the middle should not take the
-        // top away from a name that begins with the query.
+        // Match quality BEFORE the section. Where the query sits in the name and how tightly it sits there is
+        // what the user actually typed. Ranking the section first meant a demoted path lost to any row in a
+        // normal bucket, including one whose letters were scattered across the name -- so a scattered match
+        // came back at the top while a dozen contiguous ones followed it.
+        //
+        // Baseline B: history and the type order are NOT compared here. They only decide between rows that
+        // matched equally well, inside CompareSectionRank -- so the order is driven purely by the text.
         var byStart = x.Match.Start.CompareTo(y.Match.Start);
         if (byStart != 0)
             return byStart;
@@ -498,18 +499,6 @@ public sealed class RankKeyComparer : IComparer<RankKey>
         var byContiguity = y.Match.Contiguity.CompareTo(x.Match.Contiguity);
         if (byContiguity != 0)
             return byContiguity;
-
-        // Only after the match itself does what the user uses decide. A path opened many times is what they
-        // are reaching for, and an entry from the result type they put first is what they asked to see
-        // first. Both keys are zero or equal for the overwhelming majority of rows, so this still only ever
-        // chooses between a habit and a coincidence -- it does not reorder ordinary results.
-        var byHistory = y.HistoryTie.CompareTo(x.HistoryTie);
-        if (byHistory != 0)
-            return byHistory;
-
-        var byType = x.TypeRank.CompareTo(y.TypeRank);
-        if (byType != 0)
-            return byType;
 
         // Only now does the section decide: a demoted row still ranks behind an equally good one, so the
         // setting keeps its meaning without overriding what the user typed.
