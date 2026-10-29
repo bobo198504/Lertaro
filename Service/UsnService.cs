@@ -63,6 +63,40 @@ public class UsnService : ServiceBase
             RelaunchAppAfterUpdate();
             Logger.Log("[UsnService] Service Started successfully.");
 
+            // Restore the pages a previous run saved, as soon as each drive's index reports complete. This
+            // is what makes the first query after a restart fast: the warm-up below has to walk the whole
+            // alphabet again and only covers the letters it reached, while these pages are already in hand.
+            // A drive whose index revision moved discards its file and simply starts cold.
+            //
+            // Polled rather than called once because the drives come up at very different times -- a
+            // journal-backed volume is ready in seconds, a large exFAT one is still being walked minutes
+            // later, and the restore has nothing to put a page into until its own index is done. The pass
+            // itself is idempotent (a drive is restored once), so re-running it is just a status check.
+            _ = Task.Factory.StartNew(async () =>
+            {
+                try
+                {
+                    var deadline = Environment.TickCount64 + 10 * 60_000;
+                    while (Environment.TickCount64 < deadline)
+                    {
+                        try
+                        {
+                            _engine?.RestoreSearchPages();
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"[UsnService] Search page restore failed: {ex.Message}", LogLevel.Debug);
+                        }
+
+                        await Task.Delay(3_000).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[UsnService] Search page restore loop ended: {ex.Message}", LogLevel.Debug);
+                }
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+
             // Warm the search path while nobody is waiting for it, then pre-answer the queries a user is
             // most likely to type first.
             //

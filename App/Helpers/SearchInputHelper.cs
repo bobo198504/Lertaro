@@ -77,9 +77,7 @@ public static class SearchInputHelper
             return true;
         }
 
-        // Tab is deliberately not handled here any more: it belongs to the category bar, which decides for
-        // itself whether it is showing. Only the bare Right key still enters the actions submenu.
-        if (e.Key == Key.Right && noModifiers)
+        if ((e.Key == Key.Right && noModifiers) || (e.Key == Key.Tab && noModifiers && !isNextItemHotkey && !isPreviousItemHotkey))
         {
             menuPresenter.EnterSubMenu();
             e.Handled = true;

@@ -13,10 +13,16 @@ internal sealed class SearchStreamRenderer
 {
     // The first paint is held back only long enough for a few rows to exist -- see
     // ProgressiveRenderPlan.MinimumFirstRender, which is what actually decides whether a paint happens.
-    // This is a floor on top of that, so it is kept to about one frame at 60Hz: it used to be 40ms, which
-    // was 24ms of pure waiting on every search's first visible row, and the thing the user feels most
-    // directly while typing.
-    private const int FirstRenderDelayMs = 16;
+    //
+    // Raised from 16 to 30 ms. The tick that fires at 16 ms usually finds the stream still empty (the first
+    // row takes noticeably longer than one frame), so it painted nothing and the next real paint was the
+    // FINISHING frame anyway; when it did catch a row or two it painted a partial list that the finishing
+    // frame then replaced wholesale, because a different set of rows ranks differently. That second full pass
+    // measured out as the single largest cost after the search itself -- most of what "typing feels laggy"
+    // turned out to be. Waiting one more frame means the common query paints exactly once, with its real
+    // result. A search slow enough to still be streaming at 30 ms keeps the old behaviour and paints
+    // progressively.
+    private const int FirstRenderDelayMs = 30;
 
     // Tick period while a snapshot-style search (quick, inline) is still streaming. The duty-cycle rule in
     // ProgressiveRenderPlan is what protects the UI thread from expensive paints, so this does not have to
@@ -151,6 +157,11 @@ internal sealed class SearchStreamRenderer
                 : string.Empty;
 
             // Let pending input invalidate this query before spending a UI turn on its rows.
+            // Normal, not Background. Background does let pending input invalidate this query first, but it
+            // also queues behind every layout and render pass the previous frame caused -- measured, the rows
+            // could sit in that queue well after the data was in hand, which reads as "it hangs". Input still
+            // wins: it arrives at Input priority, above Normal. The version token above is what actually
+            // discards a stale frame, so arriving sooner cannot show a superseded result.
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (searchVersion != _getSearchVersion() || token.IsCancellationRequested)
@@ -158,7 +169,7 @@ internal sealed class SearchStreamRenderer
                 onResultsUpdated(uiResults, statusText, final);
                 if (!final)
                     onReceivedCountUpdated?.Invoke(received);
-            }, DispatcherPriority.Background, token).Task.ConfigureAwait(false);
+            }, DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
         }
 
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(token);

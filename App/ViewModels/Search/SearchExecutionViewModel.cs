@@ -246,6 +246,7 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
         SearchResultCategory.Image => "Search_Category_Image",
         SearchResultCategory.Audio => "Search_Category_Audio",
         SearchResultCategory.Video => "Search_Category_Video",
+        SearchResultCategory.Archive => "Search_Category_Archive",
         _ => "Search_Category_All",
     };
 

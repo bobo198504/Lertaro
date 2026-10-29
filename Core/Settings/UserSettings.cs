@@ -38,11 +38,14 @@ public class UserSettings
     public bool EnableHistory { get; set; } = true;
 
     /// <summary>
-    /// Writes the ranking calibration log (the quick window's top ten per query, plus what was opened) as
-    /// hashes only. On by default so a release collects data from the first day; see
-    /// dev-docs/search-ranking-redesign.md 5.5. There is no settings-page switch for it yet.
+    /// Offers the quick-window "export this page's ranking details" action. The trace is kept in memory
+    /// only; enabling this never writes a log file.
     /// </summary>
-    public bool EnableRankingEventLog { get; set; } = true;
+    public bool EnableRankingDetailsExport { get; set; } = true;
+    // Kept for the settings UI and the engine's ranking log: the newer upstream dropped it, but this build
+    // still has the RankingEventLog that reads it. Off by default -- writing a log file per keystroke is a
+    // cost with no benefit to the user.
+    public bool EnableRankingEventLog { get; set; } = false;
     public bool EnableKeywordHistory { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;
     public bool AutoCheckUpdates { get; set; } = true;
@@ -103,6 +106,9 @@ public class UserSettings
     // including the host's Light/Dark resources when the theme plugins are disabled.
     public string LightThemeId { get; set; } = string.Empty;
     public string DarkThemeId { get; set; } = string.Empty;
+    // Ordered UI font fallback list: each family covers glyphs the previous one lacks, and the app's
+    // built-in Segoe UI/Global User Interface pair remains the final fallback. Empty means default.
+    public List<string> UiFontFamilies { get; set; } = new();
     public HotkeyPageSettings Hotkeys { get; set; } = new();
     public SearchWindowSettings SearchWindow { get; set; } = new();
     public bool EnableQuickSearchClipboardAutoFill { get; set; } = false;
@@ -237,4 +243,5 @@ public class UserSettings
     public static void RestoreFrom(string sourcePath) => UserSettingsPersistence.RestoreFrom(sourcePath);
     internal static UserSettings WriteRestored(string sourcePath, string settingsPath, int backupCount, out string json)
         => UserSettingsPersistence.WriteRestored(sourcePath, settingsPath, backupCount, out json);
+
 }

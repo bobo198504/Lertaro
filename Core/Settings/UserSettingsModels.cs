@@ -106,6 +106,10 @@ public class HotkeyPageSettings
     public string PreviousItemHotkey { get; set; } = "Ctrl+P";
     public string ActionsMenuHotkey { get; set; } = "Ctrl+O";
     public string CompleteFromSelectionHotkey { get; set; } = "Ctrl+Tab";
+    // Cycles the quick window's category filter bar. The recorded value goes forward and the same key with
+    // Shift flipped goes back, so the default pair is the Tab / Shift+Tab it has always answered to. Empty
+    // leaves Tab to the result list, which is what it did before the bar existed.
+    public string CycleCategoryHotkey { get; set; } = "Tab";
     public string QuickLookHotkey { get; set; } = "Alt+P";
     public bool QuickNavTriggerOnDoubleClick { get; set; }
     public bool QuickNavTriggerOnMiddleClick { get; set; } = true;
@@ -191,6 +195,15 @@ public class SearchWindowSettings
     // QuickSearchWindowShowSupport.ShowWindow), so typing still replaces it rather than appending to it.
     // Off by default: the window is meant to start clean for the usual "summon and type" gesture.
     public bool KeepSearchText { get; set; } = false;
+    // Leaves the filter bar on the tab the last summon left it on instead of returning it to 全部 when this
+    // window hides. Session-only, like KeepSearchText: the tab is never written to the settings file, so a
+    // restart starts at 全部 whichever way this is set.
+    public bool RememberCategoryFilter { get; set; } = false;
+    // Shows the type filter bar under the quick window's search box. On by default -- it is the only way to
+    // narrow a query to one kind of entry, and a user who never uses it can give the space back to the
+    // results. Hiding it also puts the filter back on 全部 (see SearchExecutionViewModel.RebuildCategories),
+    // so a remembered tab cannot keep filtering with no visible control to clear it.
+    public bool ShowCategoryFilter { get; set; } = true;
 }
 
 public class PreviewWindowSettings

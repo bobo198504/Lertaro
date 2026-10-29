@@ -101,33 +101,33 @@ internal static class FzfAlgorithm
         return CharClass.NonWord;
     }
 
-    public static ulong GetCharMask(ReadOnlySpan<char> span)
+    public static UInt128 GetCharMask(ReadOnlySpan<char> span)
     {
-        ulong mask = 0;
+        UInt128 mask = 0;
         for (var i = 0; i < span.Length; i++)
         {
-            mask |= 1UL << MaskBit(char.ToLowerInvariant(span[i]));
+            mask |= (UInt128)1 << MaskBit(char.ToLowerInvariant(span[i]));
         }
         return mask;
     }
 
-    public static ulong GetCharMask(string text) => GetCharMask(text.AsSpan());
+    public static UInt128 GetCharMask(string text) => GetCharMask(text.AsSpan());
 
     // UTF-8 twin of GetCharMask for byte-emitted aliases (see AliasGenerationUtf8): alias segments
     // are overwhelmingly pure ASCII (pinyin syllables), where byte == char and lowering is the plain
     // A-Z shift -- the rare non-ASCII segment decodes and defers to the char version, so both
     // overloads provably bucket every input identically.
-    public static ulong GetCharMaskUtf8(ReadOnlySpan<byte> utf8)
+    public static UInt128 GetCharMaskUtf8(ReadOnlySpan<byte> utf8)
     {
         if (System.Text.Ascii.IsValid(utf8))
         {
-            ulong mask = 0;
+            UInt128 mask = 0;
             for (var i = 0; i < utf8.Length; i++)
             {
                 var c = (char)utf8[i];
                 if (c >= 'A' && c <= 'Z')
                     c = (char)(c + 32);
-                mask |= 1UL << MaskBit(c);
+                mask |= (UInt128)1 << MaskBit(c);
             }
             return mask;
         }
@@ -142,7 +142,7 @@ internal static class FzfAlgorithm
     {
         >= 'a' and <= 'z' => lower - 'a',
         >= '0' and <= '9' => 26 + (lower - '0'),
-        _ => 36 + (lower % 28)
+        _ => 36 + (lower % 92)
     };
 
     public static int LeadingWhitespaces(ReadOnlySpan<char> text)

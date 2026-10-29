@@ -108,7 +108,8 @@ public sealed unsafe class Snapshot : IDisposable
     public ReadOnlySpan<uint> NameIds => new(Section(SnapshotSection.NameIds), Count);
     public ReadOnlySpan<ushort> Flags => new(Section(SnapshotSection.Flags), Count);
     public ReadOnlySpan<int> ParentIndexes => new(Section(SnapshotSection.ParentIndexes), Count);
-    public ReadOnlySpan<ulong> UniqueMasks => new(Section(SnapshotSection.UniqueMasks), UniqueCount);
+    public ReadOnlySpan<ulong> UniqueMasksLo => new(Section(SnapshotSection.UniqueMasks), UniqueCount);
+    public ReadOnlySpan<ulong> UniqueMasksHi => new(Section(SnapshotSection.UniqueMasksHi), UniqueCount);
     public ReadOnlySpan<uint> NameOffsets => new(Section(SnapshotSection.NameOffsets), UniqueCount + 1);
 
     // Cold sections -- paged in for result display, sorting, recency and USN maintenance.

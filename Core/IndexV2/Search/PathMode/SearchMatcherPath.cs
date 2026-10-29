@@ -53,10 +53,14 @@ internal static class SearchMatcherPath
                 var hits = new List<PathUniqueMatch>();
                 var start = chunk * SearchMatcher.ChunkSize;
                 var end = Math.Min(start + SearchMatcher.ChunkSize, snapshot.UniqueCount);
-                var masks = snapshot.UniqueMasks;
+                var masks = snapshot.UniqueMasksLo;
+                var masksHi = snapshot.UniqueMasksHi;
                 for (var uid = start; uid < end; uid++)
                 {
-                    if (ctx.CanFilter && ((masks[uid] & ctx.RequiredMask) != ctx.RequiredMask || !SearchMatcher.PassesOrSets(masks[uid], ctx.OrSetMasks)))
+                    if (ctx.CanFilter
+                        && (((masks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
+                            || ((masksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
+                            || !SearchMatcher.PassesOrSets(new UInt128(masksHi[uid], masks[uid]), ctx.OrSetMasks)))
                         continue;
                     PathMatchOne(snapshot, ctx, uid, worker, hits);
                 }

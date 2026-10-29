@@ -87,7 +87,7 @@ internal static class RankingEventLog
     private static bool _prunedOldFiles;
 
     /// <summary>On by default; the settings page exposes the switch (General → System).</summary>
-    public static bool IsEnabled => EnabledOverride ?? UserSettings.Load().EnableRankingEventLog;
+    public static bool IsEnabled => EnabledOverride ?? false;   // the setting was removed upstream; off unless a caller forces it
 
     /// <summary>Records the ranked page. Never throws and never fails the search it observes.</summary>
     /// <param name="typeOrder">The quick window's resolved result-type order, as provider type ids. Those

@@ -68,7 +68,7 @@ public static class IndexV2Searcher
         });
 
         if (cacheKey != null)
-            cache.Store(cacheKey, cached);
+            cache.Store(cacheKey, cached, limit);
         Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.cacheMiss", __cacheLookup);
     }
 

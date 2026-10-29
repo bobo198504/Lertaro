@@ -5,6 +5,40 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.2.3
+
+## 更新内容
+
+```
+* 恢复 5.11.1.4 的搜索与排序引擎（上游新引擎在单键查询上明显更慢，暂不采用）
+* 历史记录与应用类型参与排序，常用项与所选类型排到前面
+* 分类标签采用上游最新的九类，新增「压缩包」
++ 设置里的标签栏选项：可隐藏类型过滤栏、可记住上次分类、可自定义循环切换键
++ 一级缓存：已取尽的页与空结果一并缓存，命中窗口延长到十分钟，重启后从磁盘恢复
++ 128 位字符掩码，宽泛查询的预筛更快
++ 快速窗首帧等一帧再画、渲染提到普通优先级、一行即可首屏
++ 设置窗先显示再填内容，插件页一次性填装并在打开时预加载
++ 热键启动失败后的重试间隔从 5 秒缩短到 0.5 秒
+# 快速切换不再因后台持锁丢掉按键
+# 插件列表不再逐条刷新导致首次进入闪烁
+```
+
+## What's changed
+
+```
+* Restores the 5.11.1.4 search and ranking engines (the newer one is noticeably slower on single-key queries, so it is not adopted yet)
+* History and result type take part in ranking, so what is used often and the chosen type come first
+* The category filters follow upstream's latest set of nine, adding Archives
++ Filter-bar options in Settings: hide the type filter bar, remember the last category, choose the cycle key
++ Page cache: pages that ran out of matches and empty results are cached too, entries live ten minutes, and they are restored from disk after a restart
++ 128-bit character masks, a faster prefilter for broad queries
++ The quick window waits one extra frame before its first paint, renders at normal priority, and paints from a single row
++ The Settings window appears before its content fills in; the plugin page is filled in one pass and preloaded when the window opens
++ The hotkey launch retry interval drops from 5 s to 0.5 s
+# Quick Switch no longer drops a keystroke because a background thread holds the lock
+# The plugin list no longer re-lays itself out once per row on first visit
+```
+
 ## v5.11.1.4
 
 ## 更新内容

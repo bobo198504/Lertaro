@@ -4,7 +4,7 @@ namespace Lertaro.Core.IndexV2.Persistence;
 
 internal enum SnapshotSection
 {
-    NameIds, Flags, ParentIndexes, UniqueMasks, NameOffsets, NameBlob,
+    NameIds, Flags, ParentIndexes, UniqueMasks, UniqueMasksHi, NameOffsets, NameBlob,
     Ids, Sizes, RecursiveSizes, CreationTimes, LastWriteTimes, LastAccessTimes,
     ChildStarts, Children, UidStarts, UidRows,
     AliasStarts, AliasEntryOffsets, AliasProviderIds, AliasBlob,
@@ -42,7 +42,7 @@ internal static class SnapshotFormat
     // each name, so a half-width query can pass the prefilter for a full-width name. A v13 mask only
     // admitted the raw characters; without a rebuild those names would be rejected before the folded
     // matcher ran. Old snapshots are rejected at open and rebuilt by the existing stale-snapshot path.
-    public const int Version = 14;
+    public const int Version = 16;
     public const int SectionAlignment = 16;
 
     internal sealed class Meta
@@ -172,7 +172,8 @@ internal static class SnapshotFormat
             4L * meta.RowCount,            // NameIds
             2L * meta.RowCount,            // Flags
             4L * meta.RowCount,            // ParentIndexes
-            8L * meta.UniqueCount,         // UniqueMasks
+            8L * meta.UniqueCount,         // UniqueMasks (low 64)
+            8L * meta.UniqueCount,         // UniqueMasksHi (high 64)
             4L * ((long)meta.UniqueCount + 1),   // NameOffsets
             meta.NameBlobLength,           // NameBlob
             16L * meta.RowCount,           // Ids

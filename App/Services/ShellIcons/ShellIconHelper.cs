@@ -17,36 +17,10 @@ public static class ShellIconHelper
     private static readonly ConcurrentDictionary<string, ImageSource> _iconCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, ImageSource> _hashToIcon = new();
 
-    /// <summary>
-    /// Releases the per-file icons, keeping the extension icons a summon needs.
-    /// </summary>
-    /// <remarks>
-    /// A search over a million files only ever shows a handful of distinct extension icons -- that is the
-    /// whole reason an ordinary row draws its extension icon rather than a per-file one. Dropping those on
-    /// hide is what made a second summon blank while the first had icons: nothing was cached left to draw.
-    /// What a hide actually needs back is the memory the per-file icons took, so those go and the extension
-    /// icons stay. This is also why the cost does not scale with the file count: a million files still means
-    /// a few dozen extension entries.
-    /// </remarks>
     public static void ClearCache()
     {
-        try
-        {
-            foreach (var key in _iconCache.Keys)
-            {
-                // Extension keys are the bare ".pdf" / "::directory::" forms; a per-file key carries a
-                // separator because it is a path. Keeping the extension ones is the whole point.
-                if (key.IndexOf('\\') < 0 && key.IndexOf('/') < 0)
-                    continue;
-
-                _iconCache.TryRemove(key, out _);
-            }
-
-            _hashToIcon.Clear();
-        }
-        catch
-        {
-        }
+        _iconCache.Clear();
+        _hashToIcon.Clear();
     }
 
     private const int MaxIconCacheEntries = 2000;
@@ -78,12 +52,6 @@ public static class ShellIconHelper
         return icon;
     }
 
-    // Extensions whose icon is worth reading off the file itself. .exe and .lnk are deliberately NOT here:
-    // reading theirs means touching the file (or resolving a shortcut through IShellLink), measured at a
-    // steady 200-400 ms, longer than the list takes to paint -- so the row drew the type icon and swapped it
-    // later, which reads as "the icons load twice". They now share the shell's own .exe / .lnk type icon, the
-    // way a file manager draws a plain listing, and the cost stops scaling with how many executables a search
-    // happens to match.
     private static bool IsUniqueIconExtension(string ext) =>
         ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
         ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
@@ -121,12 +89,8 @@ public static class ShellIconHelper
         // nothing at all until the cooldown lifts.
         var hasThumbnailProvider = !isDir && !isVirtualItem && !IsUniqueIconExtension(ext)
             && ThumbnailCallGuard.Run(() => PluginManager.Instance.ThumbnailProviders.Any(p => PluginPerformanceMonitor.Measure(p, () => p.CanProvideThumbnail(path, isDir))), path);
-        // No isDir: a directory keyed itself by path while GetIconForPath keyed it by its "::directory::"
-        // extension, so the folder icon was resolved and stored under a key the read side never asked
-        // for either. Every folder draws the same icon, so the shared key is also the cheaper one.
-        var isUniqueIconType = isVirtualItem || hasThumbnailProvider || IsUniqueIconExtension(ext);
+        var isUniqueIconType = isDir || isVirtualItem || hasThumbnailProvider || IsUniqueIconExtension(ext);
         var cacheKey = isUniqueIconType ? path : ext;
-
 
         if (_iconCache.TryGetValue(cacheKey, out var cachedIcon))
         {
@@ -136,29 +100,6 @@ public static class ShellIconHelper
         if (isUniqueIconType)
         {
             needsLoad = true;
-
-            // A shortcut is the one unique-icon case whose type icon can be asked for without the file
-            // existing, and the generic unknown placeholder used to be what a .lnk showed until its
-            // shell target resolved -- a blank square that read as "still loading". Asking the shell for
-            // the .lnk TYPE icon is a registration lookup (no file touched, cached after the first call),
-            // so the row shows a real shortcut icon immediately and the accurate target icon lands later.
-            if (!isDir && ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
-            {
-                var shortcutKey = "::placeholder:.lnk::";
-                if (_iconCache.TryGetValue(shortcutKey, out var shortcutPlaceholder))
-                    return shortcutPlaceholder;
-
-                var shortcutIcon = ShellImageListInterop.TryGetIcon(
-                    "shortcut.lnk",
-                    (uint)FileAttributes.Normal,
-                    ShellIconNativeMethods.SHGFI_USEFILEATTRIBUTES);
-                if (shortcutIcon != null)
-                {
-                    _iconCache[shortcutKey] = shortcutIcon;
-                    needsLoad = true;
-                    return shortcutIcon;
-                }
-            }
 
             if (!isDir && (hasThumbnailProvider || IsUniqueIconExtension(ext)))
             {
@@ -192,11 +133,8 @@ public static class ShellIconHelper
             return fetchedPlaceholder;
         }
 
-        // Standard document types share one static extension icon resolved via USEFILEATTRIBUTES.
-        // Directories reach here as well, and their "extension" is the ::directory:: token, so the lookup name
-        // has to be the folder sentinel rather than "dummy" + token -- that concatenation produced a name the
-        // shell could not resolve and folders lost their icon entirely.
-        var sharedExtIcon = GetIconForPath(isDir ? "dummy_folder" : "dummy" + ext, isDir);
+        // Standard document types share one static extension icon resolved via USEFILEATTRIBUTES
+        var sharedExtIcon = GetIconForPath("dummy" + ext, false);
         if (sharedExtIcon != null)
         {
             _iconCache[ext] = sharedExtIcon;
@@ -237,12 +175,7 @@ public static class ShellIconHelper
             ? ThumbnailCallGuard.Run(() => PluginManager.Instance.ThumbnailProviders.FirstOrDefault(p => PluginPerformanceMonitor.Measure(p, () => p.CanProvideThumbnail(path, isDir))), path)
             : null;
 
-        // The key must match what GetIconFromCacheOnly looks up, or the icon this returns is stored
-        // under a key nothing ever reads. That was the case: this side keyed every EXISTING file by its
-        // path (isPhysicalPath) while the read side keyed anything without a unique-icon extension by
-        // its extension, so an ordinary row never found the icon it had just resolved and went through
-        // the placeholder path on every single search. Same three conditions as the read side now.
-        var isUniqueIconType = isVirtualItem || thumbnailProvider != null || IsUniqueIconExtension(ext);
+        var isUniqueIconType = isPhysicalPath || isVirtualItem || thumbnailProvider != null;
         var cacheKey = isUniqueIconType ? path : ext;
 
         if (_iconCache.TryGetValue(cacheKey, out var cachedIcon))
@@ -253,12 +186,8 @@ public static class ShellIconHelper
         // Every step answers null on its own failure and the chain moves to the next one. One try/catch used
         // to wrap the whole chain, so a single throwing step answered null for the row and cancelled the
         // fallbacks waiting after it -- which is how a row ended up stuck on its placeholder.
-        //
-        // A .lnk deliberately does NOT get its target resolved here. Resolving one costs an IShellLink COM
-        // call plus a disk read, which is far more than the shell's own icon lookup and was the slowest thing
-        // in a result list that contained a shortcut; the shell already answers SHGetFileInfo for a .lnk with
-        // the shortcut icon (arrow included), which is what a file manager shows and what the row draws fast.
         var icon = Step(() => TryGetProviderThumbnail(thumbnailProvider, path), "thumbnail provider", path)
+                   ?? Step(() => TryGetShortcutIcon(checkPath, ext, isDir, isPhysicalPath), "shortcut target", path)
                    ?? Step(() => TryGetConsoleIcon(checkPath, ext, isDir, isPhysicalPath), "console file", path)
                    ?? Step(() => TryGetShellIconByPath(checkPath, isVirtualItem, isDir, isPhysicalPath), "shell icon by path", path)
                    ?? Step(() => TryGetEmbeddedIcon(checkPath, ext, isDir, isPhysicalPath), "embedded icon", path)
@@ -302,6 +231,10 @@ public static class ShellIconHelper
         }
     }
 
+    private static ImageSource? TryGetShortcutIcon(string path, string ext, bool isDir, bool isPhysicalPath) =>
+        !isDir && ext.Equals(".lnk", StringComparison.OrdinalIgnoreCase) && isPhysicalPath
+            ? ShellIconShortcutResolver.TryGetShortcutTargetIcon(path)
+            : null;
 
     private static ImageSource? TryGetConsoleIcon(string path, string ext, bool isDir, bool isPhysicalPath) =>
         !isDir && ext.Equals(".msc", StringComparison.OrdinalIgnoreCase) && isPhysicalPath
@@ -337,7 +270,7 @@ public static class ShellIconHelper
     private static ImageSource? TryGetGenericIcon(bool isDir, string ext)
     {
         var attributes = isDir ? ShellIconNativeMethods.FILE_ATTRIBUTE_DIRECTORY : ShellIconNativeMethods.FILE_ATTRIBUTE_NORMAL;
-        var lookupPath = isDir ? "dummy_folder" : "dummy" + ext;
+        var lookupPath = isDir ? "dummy_folder" : ext;
 
         var hiRes = ShellImageListInterop.TryGetIcon(lookupPath, attributes, ShellIconNativeMethods.SHGFI_USEFILEATTRIBUTES);
         if (hiRes != null)

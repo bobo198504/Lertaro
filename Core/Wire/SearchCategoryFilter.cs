@@ -24,6 +24,7 @@ public enum SearchCategoryFilter : byte
     Image = 5,
     Audio = 6,
     Video = 7,
+    Archive = 8,
 }
 
 /// <summary>
@@ -70,6 +71,11 @@ public static class SearchCategoryClassifier
         ".ts", ".m2ts", ".mts", ".3gp", ".rmvb", ".rm", ".vob", ".ogv",
     };
 
+
+    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".rar", ".7z", ".gz", ".tar", ".bz2", ".xz", ".tgz", ".cab", ".iso", ".zst", ".lz", ".lzma", ".arj", ".lzh", ".zipx", ".jar", ".war", ".pak", ".nupkg",
+    };
     /// <summary>
     /// Whether a row belongs to <paramref name="filter"/>. <see cref="SearchCategoryFilter.All"/> accepts
     /// everything, including rows no narrower category claims.
@@ -113,6 +119,7 @@ public static class SearchCategoryClassifier
             SearchCategoryFilter.Image => ImageExtensions.Contains(extension),
             SearchCategoryFilter.Audio => AudioExtensions.Contains(extension),
             SearchCategoryFilter.Video => VideoExtensions.Contains(extension),
+            SearchCategoryFilter.Archive => ArchiveExtensions.Contains(extension),
             // A settings entry may also be a plain .lnk pointing at an ms-settings: URI, and only the caller
             // can resolve that. Shortcuts are few next to a query's result set, so admitting them here does
             // not distort the budget this filter exists to protect; the caller files them.

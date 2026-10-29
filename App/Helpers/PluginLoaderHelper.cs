@@ -50,6 +50,12 @@ public static class PluginLoaderHelper
                 && Path.GetFileNameWithoutExtension(a.Location).StartsWith("Lertaro.Plugins.", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        // Temporary diagnostic: one line per build, so an empty settings page can be traced to "no plugin
+        // assemblies were loaded" versus "they loaded but got filtered out here".
+        Lertaro.Core.Logger.Log(
+            $"[PluginList] dir={pluginsDir} total={AppDomain.CurrentDomain.GetAssemblies().Length} matched={loadedAssemblies.Count}",
+            Lertaro.Core.LogLevel.Info);
+
         foreach (var assembly in loadedAssemblies)
         {
             var dllName = Path.GetFileName(assembly.Location);

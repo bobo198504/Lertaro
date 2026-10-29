@@ -23,6 +23,9 @@ public class SearchEngine : IDisposable
     // previous pair of process-wide "latest wins" slots.
     private readonly SearchCancellationRegistry _searchCancellations = new();
     private static readonly string IndexCacheDir = LocalDriveCacheLocator.DefaultCacheDir;
+    // Drives whose saved pages have already been loaded this run, so the restore pass stays idempotent
+    // while the rest are still coming up.
+    private readonly HashSet<string> _restoredSearchPageDrives = new(StringComparer.OrdinalIgnoreCase);
 
     // How long the service must sit idle before it hands its working set back to the OS. The trim
     // drops the index's mapped pages, so the next query re-reads them: measured, a query after a pause
@@ -288,11 +291,99 @@ public class SearchEngine : IDisposable
         });
     }
 
+    // Persisted search pages. A page is only a valid answer for the index revision it was scanned from, so
+    // the file carries that revision and is discarded when it no longer matches. Without this every restart
+    // threw the whole cache away and the first search of each session was a cold scan -- which is the
+    // latency that lands right after the user opens the app, the one they notice most.
+    private static string SearchPageCacheDir
+    {
+        get
+        {
+            var parent = System.IO.Path.GetDirectoryName(IndexCacheDir);
+            return string.IsNullOrEmpty(parent) ? string.Empty : System.IO.Path.Combine(parent, "search-cache");
+        }
+    }
+
+    /// <summary>
+    /// Restores the pages saved by a previous run. Safe to call repeatedly while drives come up: a drive is
+    /// restored once, only after its index reports complete, and a drive whose revision moved since the file
+    /// was written simply finds no cache and scans on first use.
+    /// </summary>
+    public void RestoreSearchPages()
+    {
+        var cacheDir = SearchPageCacheDir;
+        if (cacheDir.Length == 0)
+            return;
+
+        foreach (var index in _indexer._recordIndexes.Values)
+        {
+            // Nothing to restore into while the index is still being loaded or walked.
+            if (!index.IsComplete)
+                continue;
+
+            string sourceKey;
+            long revision;
+            try
+            {
+                sourceKey = index.SourceKey;
+                revision = index.Revision;
+            }
+            catch (ObjectDisposedException)
+            {
+                continue;
+            }
+
+            if (!_restoredSearchPageDrives.Add(sourceKey))
+                continue;
+
+            try
+            {
+                var path = Lertaro.Core.IndexV2.Search.QueryPageCacheDiskStore.PathFor(cacheDir, sourceKey);
+                var pages = Lertaro.Core.IndexV2.Search.QueryPageCacheDiskStore.Load(path, sourceKey, revision);
+                if (pages != null)
+                    index.SearchPages.Import(pages);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[SearchEngine] Could not restore search pages: {ex.Message}", LogLevel.Debug);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Saves the current pages so the next start does not begin cold. Best effort: a failure here only
+    /// means the next session pays for one scan per key.
+    /// </summary>
+    public void PersistSearchPages()
+    {
+        var cacheDir = SearchPageCacheDir;
+        if (cacheDir.Length == 0)
+            return;
+
+        foreach (var index in _indexer._recordIndexes.Values)
+        {
+            try
+            {
+                var pages = index.SearchPages.Snapshot();
+                if (pages.Count == 0)
+                    continue;
+                var path = Lertaro.Core.IndexV2.Search.QueryPageCacheDiskStore.PathFor(cacheDir, index.SourceKey);
+                Lertaro.Core.IndexV2.Search.QueryPageCacheDiskStore.Save(path, index.SourceKey, index.Revision, pages);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[SearchEngine] Could not persist search pages: {ex.Message}", LogLevel.Debug);
+            }
+        }
+    }
+
     public void Dispose()
     {
         VolumeArrivalMonitor.Arrived -= OnVolumeArrived;
         _idleTimer?.Dispose();
         _initializationReady.Set();
+        // Save before tearing the indexes down: the pages are still valid here.
+        PersistSearchPages();
         // Cancel without Dispose (see the restart path above): in-flight loops still reference
         // these tokens while unwinding.
         _cts?.Cancel();

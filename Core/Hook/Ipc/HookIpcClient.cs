@@ -17,7 +17,13 @@ public sealed class HookIpcClient : IDisposable
     private readonly object _lifecycleGate = new();
     private int _stopping;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private const int LaunchRetryDelayFirstMs = 5_000, LaunchRetryDelayMaxMs = 60_000;
+    // 500 ms, not 5 s. On a cold start the Service comes up in one to three seconds, so the very first
+    // request usually loses the race -- and the App then had no hook at all (no double-tap, no global
+    // hotkeys) for a full five seconds before trying again. Nothing needs that first interval to be that
+    // long: a service that is merely still starting answers within a couple of rounds, and the doubling
+    // below still stretches a genuinely broken install out to the minute ceiling so it cannot flood the log.
+    // The ceiling is what bounds the noise, not the floor.
+    private const int LaunchRetryDelayFirstMs = 500, LaunchRetryDelayMaxMs = 60_000;
     private int _launchRetryDelayMs = LaunchRetryDelayFirstMs;
     public int ServiceProcessId { get; private set; }
     // False during cold-start or hook downtime, so IPC-bound calls fail fast instead of waiting for an unreachable reply.

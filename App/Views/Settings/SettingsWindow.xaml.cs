@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Lertaro.App.ViewModels.Settings;
 
 using Lertaro.App.Services.ShellIcons;
@@ -96,10 +97,24 @@ public partial class SettingsWindow : Window
         Loaded += (_, _) =>
         {
             UpdateSidebarLayout(ActualWidth);
-            if (LstSections.SelectedItem == null && LstSectionsBottom.SelectedItem == null) LstSections.SelectedIndex = 0;
+            // Selecting the first section constructs its page (XAML parse + DataContext wiring), and doing
+            // that synchronously here put that work on the very frame that shows the window -- the click
+            // that opened it felt like it stalled. Selecting one idle slot later lets the window itself
+            // appear immediately with an empty content area that fills in on the next frame.
+            //
+            // FocusSearchBox stays synchronous: it only moves keyboard focus, and deferring it would let a
+            // freshly typed character land in whatever had focus before.
+            if (LstSections.SelectedItem == null && LstSectionsBottom.SelectedItem == null)
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (!IsLoaded) return;
+                    if (LstSections.SelectedItem == null && LstSectionsBottom.SelectedItem == null)
+                        LstSections.SelectedIndex = 0;
+                    // Only after the first page exists: started any earlier and the prewarmer's first idle
+                    // slot would go to some other tab while the one the user is looking at is still blank.
+                    _pagePrewarmer.Begin();
+                }));
             FocusSearchBox();
-            // Now that the window and its first page are up, fill in the tabs the user has not visited.
-            _pagePrewarmer.Begin();
         };
         // Closing via OK, window chrome, Alt+F4 or Close() all wait for an in-flight save.
         Closing += async (_, e) =>

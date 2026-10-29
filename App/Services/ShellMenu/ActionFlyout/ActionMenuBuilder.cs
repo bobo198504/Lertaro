@@ -81,10 +81,6 @@ internal static class ActionMenuBuilder
             return uiItems;
 
         var itemHeight = Math.Round(UiMetrics.ListItemHeight * UiMetrics.ActionMenuCompactRowScale);
-        // Unified to the exact same height a normal row gets (was a shorter, independently-derived
-        // value) -- height-sum calculations elsewhere that assume a uniform row size can't drift from
-        // what a header row actually renders at if the two are never allowed to be different numbers
-        // in the first place.
         var headerHeight = itemHeight;
 
         var builtinLabel = TranslationManager.Instance["Action_BuiltinGroup"];
@@ -140,6 +136,7 @@ internal static class ActionMenuBuilder
                 });
             }
         }
+
         return uiItems;
     }
 
@@ -158,14 +155,11 @@ internal static class ActionMenuBuilder
             return uiItems;
 
         var itemHeight = Math.Round(UiMetrics.ListItemHeight * UiMetrics.ActionMenuCompactRowScale);
-        // Same unified header-height rationale as BuildStatic above -- see its comment there.
         var headerHeight = itemHeight;
 
         if (hMenu == IntPtr.Zero)
         {
-            // Root: every dynamic provider (e.g. shell context menu), sorted by Priority ascending
-            // (lower values first, matching IDynamicActionProvider.Priority's own doc comment -- this
-            // was previously OrderByDescending, silently contradicting that doc).
+            // Root providers use ascending Priority (lower values first).
             foreach (var provider in PluginManager.Instance.DynamicActionProviders.OrderBy(p => p.Priority))
             {
                 if (provider.Keywords.Count > 0)

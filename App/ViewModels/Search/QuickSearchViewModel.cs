@@ -87,6 +87,7 @@ public class QuickSearchViewModel : ViewModelBase, IDisposable
         SearchResultCategory.Image,
         SearchResultCategory.Audio,
         SearchResultCategory.Video,
+        SearchResultCategory.Archive,
     };
 
     /// <summary>

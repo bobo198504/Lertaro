@@ -46,8 +46,21 @@ public partial class AboutSettingsPage : System.Windows.Controls.UserControl, IN
         get
         {
             var version = typeof(AboutSettingsPage).Assembly.GetName().Version;
-            return string.Format(TranslationManager.Instance["About_Version"], AboutComponentVersionSupport.FormatVersion(version));
+            // Full version minus a trailing ".0". ToString(3) dropped the fourth component, which is exactly
+            // where this fork's own builds live (5.12.2.3 rendered as 5.12.2); a plain three-part upstream
+            // build would otherwise gain a meaningless ".0" instead.
+            return string.Format(TranslationManager.Instance["About_Version"], FormatVersion(version));
         }
+    }
+
+    private static string FormatVersion(Version? version)
+    {
+        if (version is null)
+            return string.Empty;
+        var text = version.ToString();
+        while (text.EndsWith(".0", StringComparison.Ordinal))
+            text = text[..^2];
+        return text;
     }
 
     public string CoreVersion
@@ -55,7 +68,7 @@ public partial class AboutSettingsPage : System.Windows.Controls.UserControl, IN
         get
         {
             var version = typeof(Logger).Assembly.GetName().Version;
-            return string.Format(TranslationManager.Instance["About_CoreVersion"], AboutComponentVersionSupport.FormatVersion(version));
+            return string.Format(TranslationManager.Instance["About_CoreVersion"], version?.ToString(3));
         }
     }
 

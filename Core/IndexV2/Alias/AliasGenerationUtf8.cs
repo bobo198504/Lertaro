@@ -37,7 +37,7 @@ internal static class AliasGenerationUtf8
 
     // Generates aliases for one name, OR-ing each alias's char mask into `mask`. Returns null when
     // the name yields no aliases (the common pure-ASCII case exits on the vectorized gate).
-    public static Result? Generate(string name, ref ulong mask)
+    public static Result? Generate(string name, ref UInt128 mask)
     {
         if (string.IsNullOrEmpty(name) || AliasProviderRegistry.HasInvalidUtf16(name) || !AliasProviderRegistry.HasNonAscii(name))
             return null;
@@ -92,7 +92,7 @@ internal static class AliasGenerationUtf8
         byte providerId,
         AliasByteSink dest,
         List<byte> providerIds,
-        ref ulong mask)
+        ref UInt128 mask)
     {
         // Without this the scan's char-mask gate would reject every CJK candidate for a pinyin query the
         // live matcher would have answered (a name's own chars carry none of the query's Latin letters).
@@ -119,7 +119,7 @@ internal static class AliasGenerationUtf8
         int from,
         byte providerId,
         List<byte> providerIds,
-        ref ulong mask)
+        ref UInt128 mask)
     {
         for (var s = from; s < dest.SegmentCount; s++)
         {

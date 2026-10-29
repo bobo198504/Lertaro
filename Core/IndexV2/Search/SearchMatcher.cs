@@ -38,8 +38,9 @@ internal static class SearchMatcher
     internal sealed class QueryContext
     {
         public required FzfPattern Pattern;
-        public required ulong RequiredMask;   // union of single-term sets' masks: candidate must contain all
-        public required ulong[][] OrSetMasks; // per multi-term set: candidate must cover at least one term
+        public required ulong RequiredMaskLo;
+        public required ulong RequiredMaskHi;   // union of single-term sets' masks: candidate must contain all
+        public required UInt128[][] OrSetMasks; // per multi-term set: candidate must cover at least one term
         public required bool CanFilter;
         public required int QueryLen;
         public required MixedTerm? MixedTerm; // non-null only for a bare single term mixing an alias provider's own two alphabets
@@ -76,16 +77,17 @@ internal static class SearchMatcher
             return new QueryContext
             {
                 Pattern = pattern,
-                RequiredMask = 0,
-                OrSetMasks = Array.Empty<ulong[]>(),
+                RequiredMaskLo = 0,
+                RequiredMaskHi = 0,
+                OrSetMasks = Array.Empty<UInt128[]>(),
                 CanFilter = false,
                 QueryLen = pattern.GetTotalTermLength(),
                 MixedTerm = null,
             };
         }
 
-        ulong requiredMask = 0;
-        List<ulong[]>? orSets = null;
+        UInt128 requiredMask = 0;
+        List<UInt128[]>? orSets = null;
         foreach (var set in pattern.TermSets)
         {
             // Any inverse term makes its whole set unfilterable (absence can't be mask-tested).
@@ -101,18 +103,19 @@ internal static class SearchMatcher
             }
             else
             {
-                var masks = new ulong[set.Terms.Length];
+                var masks = new UInt128[set.Terms.Length];
                 for (var t = 0; t < set.Terms.Length; t++)
                     masks[t] = FzfAlgorithm.GetCharMask(set.Terms[t].Text);
-                (orSets ??= new List<ulong[]>()).Add(masks);
+                (orSets ??= new List<UInt128[]>()).Add(masks);
             }
         }
 
         return new QueryContext
         {
             Pattern = pattern,
-            RequiredMask = requiredMask,
-            OrSetMasks = orSets?.ToArray() ?? Array.Empty<ulong[]>(),
+            RequiredMaskLo = (ulong)requiredMask,
+            RequiredMaskHi = (ulong)(requiredMask >> 64),
+            OrSetMasks = orSets?.ToArray() ?? Array.Empty<UInt128[]>(),
             CanFilter = requiredMask != 0 || orSets != null,
             QueryLen = pattern.GetTotalTermLength(),
             MixedTerm = MixedQueryMatcher.TrySegmentPattern(pattern),
@@ -120,7 +123,7 @@ internal static class SearchMatcher
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool PassesOrSets(ulong candidateMask, ulong[][] orSets)
+    internal static bool PassesOrSets(UInt128 candidateMask, UInt128[][] orSets)
     {
         foreach (var masks in orSets)
         {
@@ -173,30 +176,38 @@ internal static class SearchMatcher
             {
                 var start = chunk * ChunkSize;
                 var end = Math.Min(start + ChunkSize, snapshot.UniqueCount);
-                var masks = snapshot.UniqueMasks;
+                var masks = snapshot.UniqueMasksLo;
+                var masksHi = snapshot.UniqueMasksHi;
 
-                if (ctx.CanFilter && ctx.RequiredMask != 0 && Avx2.IsSupported && end - start >= 8)
+                // The 128-bit mask is stored as two parallel columns so the prefilter keeps its
+                // four-candidates-per-iteration shape: one Vector256 over each half, ANDed together.
+                if (ctx.CanFilter && (ctx.RequiredMaskLo != 0 || ctx.RequiredMaskHi != 0) && Avx2.IsSupported && end - start >= 8)
                 {
-                    // Vectorized prefilter: 4 masks per iteration; only lanes whose mask covers the
-                    // whole required set fall through to the scalar per-candidate work.
-                    ref var m0 = ref MemoryMarshal.GetReference(masks);
-                    var required = Vector256.Create(ctx.RequiredMask);
+                    ref var lo0 = ref MemoryMarshal.GetReference(masks);
+                    ref var hi0 = ref MemoryMarshal.GetReference(masksHi);
+                    var requiredLo = Vector256.Create(ctx.RequiredMaskLo);
+                    var requiredHi = Vector256.Create(ctx.RequiredMaskHi);
                     var i = start;
                     for (; i + 4 <= end; i += 4)
                     {
-                        var v = Vector256.LoadUnsafe(ref Unsafe.Add(ref m0, i));
-                        var bits = Vector256.Equals(Vector256.BitwiseAnd(v, required), required).ExtractMostSignificantBits();
+                        var vLo = Vector256.LoadUnsafe(ref Unsafe.Add(ref lo0, i));
+                        var vHi = Vector256.LoadUnsafe(ref Unsafe.Add(ref hi0, i));
+                        var bits = Vector256.Equals(Vector256.BitwiseAnd(vLo, requiredLo), requiredLo).ExtractMostSignificantBits()
+                                 & Vector256.Equals(Vector256.BitwiseAnd(vHi, requiredHi), requiredHi).ExtractMostSignificantBits();
                         if (bits == 0)
                             continue;
                         for (var lane = 0; lane < 4; lane++)
                         {
-                            if ((bits & (1u << lane)) != 0 && PassesOrSets(masks[i + lane], ctx.OrSetMasks))
+                            if ((bits & (1u << lane)) != 0
+                                && PassesOrSets(new UInt128(masksHi[i + lane], masks[i + lane]), ctx.OrSetMasks))
                                 MatchOne(snapshot, ctx, i + lane, worker, fileNamePatterns);
                         }
                     }
                     for (; i < end; i++)
                     {
-                        if ((masks[i] & ctx.RequiredMask) == ctx.RequiredMask && PassesOrSets(masks[i], ctx.OrSetMasks))
+                        if ((masks[i] & ctx.RequiredMaskLo) == ctx.RequiredMaskLo
+                            && (masksHi[i] & ctx.RequiredMaskHi) == ctx.RequiredMaskHi
+                            && PassesOrSets(new UInt128(masksHi[i], masks[i]), ctx.OrSetMasks))
                             MatchOne(snapshot, ctx, i, worker, fileNamePatterns);
                     }
                 }
@@ -204,7 +215,10 @@ internal static class SearchMatcher
                 {
                     for (var uid = start; uid < end; uid++)
                     {
-                        if (ctx.CanFilter && ((masks[uid] & ctx.RequiredMask) != ctx.RequiredMask || !PassesOrSets(masks[uid], ctx.OrSetMasks)))
+                        if (ctx.CanFilter
+                            && (((masks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
+                                || ((masksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
+                                || !PassesOrSets(new UInt128(masksHi[uid], masks[uid]), ctx.OrSetMasks)))
                             continue;
                         MatchOne(snapshot, ctx, uid, worker, fileNamePatterns);
                     }

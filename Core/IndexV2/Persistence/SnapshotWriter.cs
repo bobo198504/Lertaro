@@ -58,6 +58,7 @@ public static class SnapshotWriter
         var nameBlob = new MemoryStream();
         var nameOffsets = new List<uint> { 0 };
         var masks = new List<ulong>();
+        var masksHi = new List<ulong>();
         var aliasStarts = new List<int>();
         var aliasEntryOffsets = new List<uint> { 0 };
         var aliasProviderIds = new List<byte>();
@@ -96,7 +97,7 @@ public static class SnapshotWriter
         // volumes, so it runs as a parallel pass (byte-native via GetAliasesUtf8, no alias strings
         // materialized); the blob writes below stay strictly serial in uid order, so the resulting
         // snapshot bytes are identical to what the old inline serial loop produced.
-        var uniqueMasks = new ulong[uniqueCount];
+        var uniqueMasks = new UInt128[uniqueCount];
         var aliasResults = new AliasGenerationUtf8.Result?[uniqueCount];
         Parallel.For(0, uniqueCount, uid =>
         {
@@ -129,7 +130,8 @@ public static class SnapshotWriter
                     aliasProviderIds.Add(res.ProviderIds[s]);
                 }
             }
-            masks.Add(uniqueMasks[uid]);
+            masks.Add((ulong)uniqueMasks[uid]);
+            masksHi.Add((ulong)(uniqueMasks[uid] >> 64));
         }
         aliasStarts.Add(aliasProviderIds.Count);
 
@@ -244,6 +246,7 @@ public static class SnapshotWriter
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.Flags, MemoryMarshal.AsBytes(flags));
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.ParentIndexes, MemoryMarshal.AsBytes(parentIndexes));
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.UniqueMasks, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(masks)));
+            SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.UniqueMasksHi, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(masksHi)));
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.NameOffsets, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(nameOffsets)));
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.NameBlob, nameBlob.GetBuffer().AsSpan(0, (int)nameBlob.Length));
                 SnapshotWriterOps.WriteSection(stream, offsets, SnapshotSection.Ids, MemoryMarshal.AsBytes(ids));
