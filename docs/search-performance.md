@@ -74,25 +74,43 @@ Service/UsnService.cs                             启动后轮询恢复
 
 **问题**：历史记录和"应用优先"的权重上不去——常用项、所选类型都被"匹配位置更靠前"的行压过。
 
-**根因**：`RankKeyComparer.Compare` 的比较顺序是 `Match.Start → Contiguity → Section → Score → HistoryTie → TypeRank`，也就是**匹配位置先于使用权重的比较**。
+第一次的修法是把历史与类型提到匹配位置**之前**。用下来发现方向错了：那样一条只是名字里恰好包含查询的历史项，会压过名字**以查询开头**的结果。用户的原话是"左侧匹配优先"，而代码里 `CompareSectionRank` 的注释本来就是这个意思：
 
-**修复**：把两个使用权重的比较提到匹配质量之前。
+> The left edge leads. A name whose query lands at its first character is what the user meant, and no amount of usage or type preference changes that.
 
-```csharp
-var byHistory = y.HistoryTie.CompareTo(x.HistoryTie);
-if (byHistory != 0) return byHistory;
-var byType = x.TypeRank.CompareTo(y.TypeRank);
-if (byType != 0) return byType;
+所以最终把顺序调回"匹配质量在前"，并让全局比较与段内比较**一致**（之前两处不一致，才是历史能压过匹配的原因）。
+
+**当前完整顺序**（`RankKeyComparer.Compare`）：
+
+```
+① Pinned 特判        置顶段（always-on-top + 强收藏）无条件最前
+② HistoryTail 特判   纯历史段无条件最后
+③ Match.Start        匹配在名称中的起始位置（越小越前）← 左侧匹配
+④ Match.Contiguity   匹配的连续性（越连续越前）
+⑤ HistoryTie         历史分（越高越前）
+⑥ TypeRank           结果类型顺序（用户设置的「应用优先」等）
+⑦ Section            Pinned → Boosted → Low → HistoryTail
+⑧ 段内 tie-break     见下
+⑨ MatchRank.CompareQuality
+⑩ CompareCommonTail  IsDir → Name → Name.Length → 路径长度 → Drive → EngineTie
 ```
 
-这两个键对绝大多数行都是 0 或相等，所以只决定"习惯 vs 巧合"，不会打乱普通结果。
+**段内 tie-break**（`CompareSectionRank`）：
 
-配合把 H5/H3 的分数从 44/22 提到 **60/50**（高于收藏强匹配的 44）。
+- `HistoryTail` 段：`HistoryTie` → `Match.Start` → `Coverage` → `TypeRank`
+- 其它段：`Match.Start` → `Contiguity` → `HistoryTie`（`Low` 段跳过）→ `TypeRank` → `Coverage` → `Score`
 
-**涉及文件**：`Core/SearchIndex/RankPolicy.cs`（`RankKeyComparer.Compare`、`HistoryFiveScore`、`HistoryThreeScore`）。
+**`Score` 取值**（第 ⑧ 层最后才用到）：收藏强匹配 44 / 历史 H5 60 / 历史 H3 50 / 历史尾巴 6 / 其它 `10×强匹配 + 8×优先级`。
 
----
+**已知可调点**（都为以后留的，尚未采用）：
 
+1. `Score` 里 H5/H3（60/50）高于收藏强匹配（44）。它排在第 ⑧ 层最后，实际很少起作用；一旦起作用就是历史压过收藏。若要收藏更稳，把它们降到 44 以下。
+2. `TypeRank` 在 `CompareSectionRank` 里被比较两次（第 390 行与第 408 行），第二次是冗余，不影响结果。
+3. 「应用优先」目前排在历史之后。若要让类型优先级压过历史，把全局顺序的 ⑤ 与 ⑥ 对调。
+
+`RankPolicy.Version` 因此从 2 提到 3（换了键顺序就该换版本号，方便日志区分）。
+
+**涉及文件**：`Core/SearchIndex/RankPolicy.cs`（`RankKeyComparer.Compare`、`CompareSectionRank`、`RankPolicy.Version`）。
 ## 四、快速窗渲染（UI 响应）
 
 三个参数，都影响"按键到看到结果"的体感：
