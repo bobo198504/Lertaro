@@ -225,4 +225,6 @@ dotnet publish Lertaro.Plugins.slnx -o <OUT>\Plugins
 - 容器未生成、或容器已生成但 `ActualWidth <= 0` 时，按 `DispatcherPriority.Loaded` 重新调度（最多 5 次，避免空转）。
 - 订阅 `CategoryBar.SizeChanged`，宽度一变就重新定位。
 
-**已知瑕疵（未修）**：首次显示时能看到下划线从旧位置**滑**到正确位置。原因是 `Loaded` 那次定位已经 snap 到位，随后 `SizeChanged` 又触发一次，而这时 `_indicatorPositioned` 已为 true，于是走了 160ms 的滑动动画。要彻底消除，需要让「布局稳定前的几次定位」都直接跳位，而不是只有第一次。
+**第二次修复（消除残留的滑动）**：上面两条修完之后位置是对的，但首次仍能看到下划线**从旧位置滑到新位置**。原因是窗口打开时宽度还会稳定几帧，每次稳态变化都触发一次重新定位，而每次重新定位都走了 160ms 滑动——那段时间线本身还在淡入，用户看到的就是它在下面移动。
+
+改法：加 `_indicatorSettled` 标志，每次召唤重置为 false，淡入动画 `Completed` 后置 true；未 settled 时一律**直接落位、不动画**。淡入结束后切换标签仍然滑动（那是要保留的）。

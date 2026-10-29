@@ -55,6 +55,12 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         // Nothing between the XAML's declaration of the handle and the surface this window needs it for.
         ApplySurface();
         ApplyCategoryBarPlacement();
+        // The filter row is a UniformGrid, so every label's position is a share of the ListBox's current
+        // width -- and that width is still settling when the window first appears. The one-shot re-aim on
+        // Loaded therefore measured a layout that no longer existed a frame later, which is why the
+        // underline started out in the wrong place and only snapped right after the first filter switch.
+        // Re-aiming whenever the bar is resized keeps it correct without waiting for the user to touch it.
+        CategoryBar.SizeChanged += (_, _) => MoveIndicatorToSelection();
         // No text-formatting override here any more: this window used to put its search box on Ideal, on
         // its own, to "smooth" the input (d7f6cd49) -- which took the one element the user actually reads
         // off the Display metrics every other element in the process renders with. Section 五 of the plan
@@ -395,16 +401,18 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
                 BeginTime = TimeSpan.FromMilliseconds(LabelFadeInDelayMs),
             });
 
-        CategoryIndicator.BeginAnimation(
-            OpacityProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(
-                0, IndicatorOpacity, TimeSpan.FromMilliseconds(IndicatorFadeInMs))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(IndicatorFadeInDelayMs),
-            });
+        _indicatorSettled = false;
+        var indicatorFade = new System.Windows.Media.Animation.DoubleAnimation(
+            0, IndicatorOpacity, TimeSpan.FromMilliseconds(IndicatorFadeInMs))
+        {
+            BeginTime = TimeSpan.FromMilliseconds(IndicatorFadeInDelayMs),
+        };
+        // From here on a move is something the user is meant to watch, so slides are allowed again.
+        indicatorFade.Completed += (_, _) => _indicatorSettled = true;
+        CategoryIndicator.BeginAnimation(OpacityProperty, indicatorFade);
 
         Dispatcher.BeginInvoke(
-            new Action(MoveIndicatorToSelection),
+            new Action(() => MoveIndicatorToSelection()),
             System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
@@ -423,6 +431,12 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
 
     // The underline's slide, and its fade starts the moment that slide ends with no pause between the two.
     private const int IndicatorSlideMs = 160;
+
+    // False while the underline is still fading in for this summon. Every re-aim in that window snaps
+    // instead of sliding: the line is not fully visible yet, so a slide would only show as it arriving
+    // from somewhere wrong -- which is exactly the "starts out offset then travels" that survived the
+    // earlier fixes. Set true when the fade completes; reset on every summon.
+    private bool _indicatorSettled;
     private const int IndicatorFadeInDelayMs = IndicatorSlideMs;
     private const int IndicatorFadeInMs = 180;
 
@@ -449,19 +463,34 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     // value, so detaching alone snaps the property back to whatever it was before the first animation ever
     // ran. Reading the on-screen value first and writing it back right after detaching keeps the base value
     // equal to what the user last saw, so the next slide starts from the real position instead of the origin.
-    private void MoveIndicatorToSelection()
+    private void MoveIndicatorToSelection(int attempt = 0)
     {
         if (CategoryBar.SelectedItem is not ViewModels.Search.SearchResultCategory category)
             return;
 
         if (CategoryBar.ItemContainerGenerator.ContainerFromItem(category) is not ListBoxItem container)
+        {
+            // The container generator builds items on its own schedule, so SelectedItem can already be set
+            // while no container exists yet -- and returning here left the line parked at its starting
+            // position until the user happened to switch filters, which is the "starts out in the wrong
+            // place" report. Ask again on the next loaded slot rather than giving up.
+            Retry();
             return;
+        }
 
         // Measured off the label itself rather than derived from the item's width minus guessed padding. The
         // item is a grid of a separator pipe, padding and a presenter; recovering the glyph run from those
         // numbers left the line a pixel or two off in one direction or the other depending on how the values
         // rounded. Asking the TextBlock for its own bounds removes the guesswork entirely.
         var label = FindTextBlock(container);
+        if (label is null && container.ActualWidth <= 0)
+        {
+            // The container exists but has not been measured, so the fallback below would compute a width
+            // from zeros and land the line somewhere wrong. Same retry as above.
+            Retry();
+            return;
+        }
+
         System.Windows.Rect bounds;
         if (label != null)
         {
@@ -480,6 +509,16 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
                 container.ActualHeight);
         }
 
+        void Retry()
+        {
+            // Bounded: a filter row whose containers never materialize must not spin here forever.
+            if (attempt >= 5)
+                return;
+            Dispatcher.BeginInvoke(
+                new Action(() => MoveIndicatorToSelection(attempt + 1)),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
         var targetX = bounds.X;
         var targetWidth = bounds.Width;
 
@@ -489,6 +528,16 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         CategoryIndicatorTransform.BeginAnimation(
             System.Windows.Media.TranslateTransform.XProperty, null);
         CategoryIndicator.BeginAnimation(FrameworkElement.WidthProperty, null);
+
+        // Still fading in: place it, do not animate. This is the whole reason the first sight of the window
+        // showed the line travelling from a stale position -- the widths settle over the first few frames,
+        // and each settling step was animated even though the user had not yet seen the line at all.
+        if (!_indicatorSettled)
+        {
+            CategoryIndicatorTransform.X = targetX;
+            CategoryIndicator.Width = targetWidth;
+            return;
+        }
 
         if (Math.Abs(fromX - targetX) < 0.5 && Math.Abs(fromWidth - targetWidth) < 0.5)
         {
