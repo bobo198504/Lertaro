@@ -13,8 +13,13 @@
     <RetainVM>false</RetainVM>
     <AssemblyName>Lertaro.App</AssemblyName>
     <RootNamespace>Lertaro.App</RootNamespace>
-    <Version>5.12.4</Version>
+    <Version>5.12.2.2</Version>
     <GenerateDependencyFile>false</GenerateDependencyFile>
+    <!-- Precompile at publish time instead of on first use. The first search of a session walks a long path
+         (parse, per-drive scan, mapping, ranking, row templates) that a freshly started process still has to
+         JIT, and that cost lands on the very first keystroke, which is what the window is judged by. The JIT
+         recompiles hot methods later, so steady state is unchanged. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
 

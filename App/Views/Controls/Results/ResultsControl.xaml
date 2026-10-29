@@ -32,6 +32,7 @@
                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
+                          VirtualizingPanel.ScrollUnit="Pixel"
                           Style="{StaticResource SleekListBoxStyle}"
                           ItemContainerStyle="{StaticResource ResultItemStyle}"
                           ItemTemplate="{StaticResource SearchResultTemplate}"

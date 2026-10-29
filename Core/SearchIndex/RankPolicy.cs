@@ -61,7 +61,8 @@ public readonly record struct RankKey(
     bool IsFavorite = false,
     IndexRuleEffect Priority = IndexRuleEffect.Normal,
     HistoryTier Tier = HistoryTier.None,
-    bool TypeRankApplies = true)
+    bool TypeRankApplies = true,
+    int HistoryRaw = 0)
 {
     public RankTail Tail => new(IsDir, Name, NormalizedPath, Drive, EngineTie);
     // The configured result-type order is a late tie-break, not a group: section, grade, priority,
@@ -81,8 +82,15 @@ public static class RankPolicy
     public const int HistoryFiveMax = 3;
     public const int HistoryThreeMax = 10;
 
+    /// <summary>
+    /// Whether a row's usage may lift it. Every direct filename match qualifies, including the approximate
+    /// grade: a wide query grades most rows approximate, so restricting the lift to the strong grade emptied
+    /// history out exactly where the user notices it most -- the two-letter query typed dozens of times a day.
+    /// </summary>
     public static bool IsPreferenceEligible(MatchEvidenceGrade grade) =>
-        grade is MatchEvidenceGrade.ExactIdentity or MatchEvidenceGrade.DirectStrong;
+        grade is MatchEvidenceGrade.ExactIdentity
+            or MatchEvidenceGrade.DirectStrong
+            or MatchEvidenceGrade.DirectApproximate;
 
     public static int PriorityOrder(IndexRuleEffect priority) => priority switch
     {
@@ -186,7 +194,8 @@ public static class RankPolicy
             s.IsFavorite,
             s.Priority,
             effectiveTier,
-            s.TypeRankApplies);
+            s.TypeRankApplies,
+            s.HistoryScoreX100);
     }
 
     // Directories are containers, not identities: an exact folder name is a strong direct match but never
@@ -292,6 +301,71 @@ public static class RankPolicy
             tiers[path] = tier;
     }
 
+    /// <summary>
+    /// The order inside a section, restored to the sequence the fork shipped before the 5.12 rewrite.
+    /// </summary>
+    /// <remarks>
+    /// Where the query sits in the name leads, then how tightly it sits there, then usage, then the
+    /// configured type order, then coverage. The 5.12 order put the evidence grade and the history tier first
+    /// and placement behind them, which measurably reordered ordinary short queries: a row whose name merely
+    /// contained the typed letters but which the user opened often came out ahead of rows whose names start
+    /// with those letters. Placement is the user's own act of typing the beginning of a name; frequency and
+    /// type are preferences about what to do when several rows match equally well.
+    /// </remarks>
+    public static int CompareSectionRank(RankSection section, in SectionRank x, in SectionRank y)
+    {
+        if (section == RankSection.HistoryTail)
+        {
+            var byHistoryTail = y.HistoryTie.CompareTo(x.HistoryTie);
+            if (byHistoryTail != 0)
+                return byHistoryTail;
+
+            var byStartTail = x.Start.CompareTo(y.Start);
+            if (byStartTail != 0)
+                return byStartTail;
+
+            var byCoverageTail = y.Coverage.CompareTo(x.Coverage);
+            if (byCoverageTail != 0)
+                return byCoverageTail;
+
+            return x.TypeRank.CompareTo(y.TypeRank);
+        }
+
+        var byStart = x.Start.CompareTo(y.Start);
+        if (byStart != 0)
+            return byStart;
+
+        var byContiguity = y.Contiguity.CompareTo(x.Contiguity);
+        if (byContiguity != 0)
+            return byContiguity;
+
+        // Low is exempt: that section exists because the user explicitly demoted the path, and letting
+        // history lead there would silently undo the setting.
+        if (section != RankSection.Low)
+        {
+            var byHistory = y.HistoryTie.CompareTo(x.HistoryTie);
+            if (byHistory != 0)
+                return byHistory;
+        }
+
+        var byType = x.TypeRank.CompareTo(y.TypeRank);
+        if (byType != 0)
+            return byType;
+
+        var byCoverage = y.Coverage.CompareTo(x.Coverage);
+        if (byCoverage != 0)
+            return byCoverage;
+
+        var byScore = y.Score.CompareTo(x.Score);
+        if (byScore != 0)
+            return byScore;
+
+        if (section == RankSection.Low)
+            return 0;
+
+        return x.TypeRank.CompareTo(y.TypeRank);
+    }
+
     public static int CompareCommonTail(in RankTail x, in RankTail y)
     {
         var compare = x.IsDir.CompareTo(y.IsDir);
@@ -379,93 +453,82 @@ public static class RankPolicy
 
 public readonly record struct RankTail(bool IsDir, string Name, string NormalizedPath, int Drive, ulong EngineTie);
 
+/// <summary>The values a section compares on, reduced here so the comparer reads fields instead of the key.</summary>
+public readonly record struct SectionRank(
+    int Score,
+    int HistoryTie,
+    int TypeRank,
+    int Start = 0,
+    double Coverage = 0,
+    double Contiguity = 0);
+
 public sealed class RankKeyComparer : IComparer<RankKey>
 {
     public static readonly RankKeyComparer Instance = new();
 
     public int Compare(RankKey x, RankKey y)
     {
-        var c = x.Section.CompareTo(y.Section);
-        if (c != 0)
-            return c;
+        var xSection = (RankSection)x.Section;
+        var ySection = (RankSection)y.Section;
 
-        switch ((RankSection)x.Section)
+        // Pinned stays on top whatever the match looks like: "always on top" is an explicit instruction and
+        // the only section meant to outrank quality outright.
+        if ((xSection == RankSection.Pinned) != (ySection == RankSection.Pinned))
+            return xSection == RankSection.Pinned ? -1 : 1;
+
+        // HistoryTail is a weak history-only row; it belongs behind anything that matched the query itself.
+        if ((xSection == RankSection.HistoryTail) != (ySection == RankSection.HistoryTail))
+            return xSection == RankSection.HistoryTail ? 1 : -1;
+
+        // History leads, ahead of placement, but only between rows in the ordinary bucket. Low is the user
+        // explicitly demoting a path: an explicit instruction outranks usage, so history must not lift a row
+        // back out of it. Pinned and HistoryTail were settled above.
+        //
+        // Reads HistoryRaw, the path's own decayed score, NOT the H5/H3 band. The band is only handed to rows
+        // whose match counts as "strong", and for a wide query the rows a user actually opens are routinely
+        // graded below that -- so keying off the band left exactly the paths they wanted sitting at their
+        // match position while rarely-used rows took the top.
+        if (xSection == RankSection.Boosted && ySection == RankSection.Boosted)
         {
-            case RankSection.Pinned:
-                c = y.AlwaysTop.CompareTo(x.AlwaysTop);
-                if (c != 0)
-                    return c;
-                c = y.FavoritePin.CompareTo(x.FavoritePin);
-                if (c != 0)
-                    return c;
-                c = x.Grade.CompareTo(y.Grade);
-                if (c != 0)
-                    return c;
-                c = RankPolicy.PriorityOrder(x.Priority).CompareTo(RankPolicy.PriorityOrder(y.Priority));
-                if (c != 0)
-                    return c;
-                c = y.Tier.CompareTo(x.Tier);
-                if (c != 0)
-                    return c;
-                c = y.HistoryTie.CompareTo(x.HistoryTie);
-                if (c != 0)
-                    return c;
-                c = CompareQualityThenType(x, y);
-                return c != 0 ? c : RankPolicy.CompareCommonTail(x.Tail, y.Tail);
-
-            case RankSection.Low:
-                c = x.Grade.CompareTo(y.Grade);
-                if (c != 0)
-                    return c;
-                c = y.Tier.CompareTo(x.Tier);
-                if (c != 0)
-                    return c;
-                c = y.HistoryTie.CompareTo(x.HistoryTie);
-                if (c != 0)
-                    return c;
-                c = CompareQualityThenType(x, y);
-                return c != 0 ? c : RankPolicy.CompareCommonTail(x.Tail, y.Tail);
-
-            case RankSection.HistoryTail:
-                c = y.Tier.CompareTo(x.Tier);
-                if (c != 0)
-                    return c;
-                c = y.HistoryTie.CompareTo(x.HistoryTie);
-                if (c != 0)
-                    return c;
-                c = CompareTypeRank(x, y);
-                return c != 0 ? c : RankPolicy.CompareCommonTail(x.Tail, y.Tail);
-
-            default:
-                c = x.Grade.CompareTo(y.Grade);
-                if (c != 0)
-                    return c;
-                if (x.IsFavorite != y.IsFavorite)
-                    return x.IsFavorite ? -1 : 1;
-                c = RankPolicy.PriorityOrder(x.Priority).CompareTo(RankPolicy.PriorityOrder(y.Priority));
-                if (c != 0)
-                    return c;
-                c = y.Tier.CompareTo(x.Tier);
-                if (c != 0)
-                    return c;
-                c = y.HistoryTie.CompareTo(x.HistoryTie);
-                if (c != 0)
-                    return c;
-                c = CompareQualityThenType(x, y);
-                return c != 0 ? c : RankPolicy.CompareCommonTail(x.Tail, y.Tail);
+            var xHabit = x.HistoryRaw > 0;
+            var yHabit = y.HistoryRaw > 0;
+            if (xHabit != yHabit)
+                return xHabit ? -1 : 1;
+            if (xHabit)
+            {
+                var byHabit = y.HistoryRaw.CompareTo(x.HistoryRaw);
+                if (byHabit != 0)
+                    return byHabit;
+            }
         }
-    }
 
-    // The type order sits inside the quality ladder: after where the query sits in the name, before how much
-    // of the name it covers (see MatchRank.CompareQualityPlacement). A shorter file name must not outvote the
-    // user's "Applications first" just because the same prefix explains more of it.
-    private static int CompareQualityThenType(in RankKey x, in RankKey y)
-    {
-        var c = MatchRank.CompareQualityPlacement(x.Match, y.Match);
-        if (c != 0)
-            return c;
-        c = CompareTypeRank(x, y);
-        return c != 0 ? c : MatchRank.CompareQualityDetail(x.Match, y.Match);
+        // Then match placement: where the query sits in the name and how tightly it sits there.
+        var byStart = x.Match.Start.CompareTo(y.Match.Start);
+        if (byStart != 0)
+            return byStart;
+
+        var byContiguity = y.Match.Contiguity.CompareTo(x.Match.Contiguity);
+        if (byContiguity != 0)
+            return byContiguity;
+
+        // Only now does the section decide: a demoted row still ranks behind an equally good one, so the
+        // setting keeps its meaning without overriding what the user typed.
+        var compare = x.Section.CompareTo(y.Section);
+        if (compare != 0)
+            return compare;
+
+        var rankX = new SectionRank(x.Score, x.HistoryTie, x.TypeRank, x.Match.Start, x.Match.Coverage, x.Match.Contiguity);
+        var rankY = new SectionRank(y.Score, y.HistoryTie, y.TypeRank, y.Match.Start, y.Match.Coverage, y.Match.Contiguity);
+
+        compare = RankPolicy.CompareSectionRank(xSection, in rankX, in rankY);
+        if (compare != 0)
+            return compare;
+
+        compare = MatchRank.CompareQuality(x.Match, y.Match);
+        if (compare != 0)
+            return compare;
+
+        return RankPolicy.CompareCommonTail(x.Tail, y.Tail);
     }
 
     // Only the three built-in buckets (Applications / System settings / Files) are ordered against each other;

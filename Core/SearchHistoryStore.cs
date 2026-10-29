@@ -22,6 +22,13 @@ public static class SearchHistoryStore
     private static Dictionary<string, int>? _priorityCache;
     private static Dictionary<string, int>? _countCache;
 
+    // Derived views of the two loaded tables. Both are rebuilt only when the table object they came from is
+    // replaced, which is what a reload does. Guarded by Gate like every other field here.
+    private static Dictionary<string, List<StoredEntry>>? _scoreBasis;
+    private static IReadOnlyDictionary<string, int>? _scoreCache;
+    private static Dictionary<string, List<StoredAssociationEntry>>? _associationBasis;
+    private static IReadOnlyList<HistoryEntry>? _associationCache;
+
     /// <summary>What <see cref="Snapshot"/> returns before the store has any entries at all.</summary>
     private static readonly IReadOnlyDictionary<string, int> EmptyPriorities =
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -353,7 +360,15 @@ public static class SearchHistoryStore
         lock (Gate)
         {
             EnsureCacheNoLock();
-            return FlattenAssociations(_associations!, MinAssociationOrganicOpens);
+            // Same reason as ScoreSnapshot: this is on the per-keystroke path and rebuilt the flattened,
+            // sorted list on every call -- SelectMany + Where + a fresh HistoryEntry per row + two OrderBys.
+            // The association table is immutable once loaded, so the flattened form is built once and shared.
+            if (ReferenceEquals(_associationBasis, _associations) && _associationCache != null)
+                return _associationCache;
+
+            _associationCache = FlattenAssociations(_associations!, MinAssociationOrganicOpens);
+            _associationBasis = _associations;
+            return _associationCache;
         }
     }
 
@@ -507,7 +522,17 @@ public static class SearchHistoryStore
         lock (Gate)
         {
             EnsureCacheNoLock();
-            return SearchHistoryBucketSupport.BuildScoreCache(_buckets!, now.ToUnixTimeSeconds());
+            // Reused while the loaded bucket table is the same object. This runs on every keystroke and used to
+            // rebuild the whole path->score dictionary each time, for an answer that only changes when an entry
+            // is recorded. Keyed on the reference rather than a version so a reload invalidates it
+            // automatically, and a slightly stale clock is fine: the scores decay over days, so a snapshot a
+            // few seconds old is indistinguishable.
+            if (ReferenceEquals(_scoreBasis, _buckets) && _scoreCache != null)
+                return _scoreCache;
+
+            _scoreCache = SearchHistoryBucketSupport.BuildScoreCache(_buckets!, now.ToUnixTimeSeconds());
+            _scoreBasis = _buckets;
+            return _scoreCache;
         }
     }
 

@@ -64,7 +64,13 @@ internal sealed class SearchExecutionEngine : IDisposable
         // debounces. Otherwise its rows keep repainting ahead of the next keystroke.
         CancelPendingSearch();
 
-        var delay = string.IsNullOrEmpty(query) || query.Length <= 1 ? 0 : (fileLimit > 100 ? 150 : 30);
+        // Coalescing window for a multi-character query. The full-window path keeps the longer one: it fires a
+        // deliberately expensive search, so merging keystrokes there pays for itself. The quick window's search
+        // is cheap by comparison and its whole budget is tens of milliseconds, so the same 30 ms spent waiting for
+        // a next keystroke that ordinary typing rarely produces inside 15 ms was often the largest fixed cost
+        // between a key and its rows.
+        var quickWindowDelay = 15;
+        var delay = string.IsNullOrEmpty(query) || query.Length <= 1 ? 0 : (fileLimit > 100 ? 150 : quickWindowDelay);
         if (delay == 0)
         {
             PerformSearch(query, searchScope, isInlineSearchContext, fileLimit, appLimit, resultMapper, onSearchStateChanged, onResultsUpdated, onLocalServiceUnavailable, shouldEmitInstantResults, bypassExclusions, resultMapperConsumesBatches, onReceivedCountUpdated, scopeDirective, instantQuery, emitInstantResults, beforeSearch, collectInstantResults);
