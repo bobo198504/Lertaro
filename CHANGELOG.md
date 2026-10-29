@@ -21,6 +21,7 @@
 + 热键启动失败后的重试间隔从 5 秒缩短到 0.5 秒
 # 快速切换不再因后台持锁丢掉按键
 # 插件列表不再逐条刷新导致首次进入闪烁
+  # 分类标签的下划线一开始就在正确位置，不再滑进来
 ```
 
 ## What's changed
@@ -37,6 +38,7 @@
 + The hotkey launch retry interval drops from 5 s to 0.5 s
 # Quick Switch no longer drops a keystroke because a background thread holds the lock
 # The plugin list no longer re-lays itself out once per row on first visit
+  # The category underline starts in the right place instead of sliding in from a stale one
 ```
 
 ## v5.11.1.4
