@@ -208,3 +208,21 @@ dotnet publish Lertaro.Plugins.slnx -o <OUT>\Plugins
 当前决策：fork **停在 5.11.1.4 的引擎与排序**（`IndexV2` + 旧排序，不带 V3），其余改动照常跟进。
 
 如果上游之后解决了这块，上面第一到第七节的改动都是可以直接叠加的（它们不依赖具体哪一代引擎）。
+
+---
+
+## 十、分类标签的下划线定位
+
+**表现**：快速窗首次显示时，选中标签的下划线落在错误位置，切换一次标签后才归位。
+
+**两层原因**：
+
+1. `MoveIndicatorToSelection` 在 `ItemContainerGenerator.ContainerFromItem` 返回 null 时直接 `return`，**没有重试**。而容器是异步生成的，首次显示往往还没造出来，指示器于是停在起点，直到用户切换标签才有人再调用它。
+2. 标签栏的 `ItemsPanel` 是 `UniformGrid Rows="1"`，每个标签的位置是 ListBox 当前宽度的均分。首次显示时宽度还在变化，`Loaded` 那一次量到的是**已经过时的布局**。
+
+**修复**：
+
+- 容器未生成、或容器已生成但 `ActualWidth <= 0` 时，按 `DispatcherPriority.Loaded` 重新调度（最多 5 次，避免空转）。
+- 订阅 `CategoryBar.SizeChanged`，宽度一变就重新定位。
+
+**已知瑕疵（未修）**：首次显示时能看到下划线从旧位置**滑**到正确位置。原因是 `Loaded` 那次定位已经 snap 到位，随后 `SizeChanged` 又触发一次，而这时 `_indicatorPositioned` 已为 true，于是走了 160ms 的滑动动画。要彻底消除，需要让「布局稳定前的几次定位」都直接跳位，而不是只有第一次。
