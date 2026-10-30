@@ -5,6 +5,21 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.2.4
+
+## 更新内容
+
+```
+* 历史只在打开过五次以上时参与跨段比较，越常用越靠前；低频历史不再压过匹配质量
+```
+
+## What's changed
+
+```
+* History crosses the match layer only from five opens upward, and the more-used row comes first; a path opened once no longer outranks a name that starts with the query
+```
+
+
 ## v5.12.2.3
 
 ## 更新内容
