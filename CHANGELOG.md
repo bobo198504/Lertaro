@@ -5,6 +5,29 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.2.5
+
+## 更新内容
+
+```
+# 搜索页缓存整体移除，不再出现「刚建好的文件搜不到」
+# 平滑滚动在窗口隐藏后立即断开帧回调，避免后台空转占满一个核心
+# 预览文本支持 UTF-16 与 GBK 编码，不再只认 UTF-8
+# 修复卷句柄被占用导致无法安全移除驱动器
+# 修复行不再是被打开的文件夹时，名字单元格没有归位
+```
+
+## What's changed
+
+```
+# The search page cache is gone, so a file created moments ago is no longer missing from results
+# Smooth scrolling drops its frame callback as soon as the window is hidden, instead of spinning a core in the background
+# Text preview decodes UTF-16 and GBK as well as UTF-8
+# A volume handle held open no longer blocks a safe removal
+# The name cell goes back when a row stops being an opened folder
+```
+
+
 ## v5.12.2.4
 
 ## 更新内容
