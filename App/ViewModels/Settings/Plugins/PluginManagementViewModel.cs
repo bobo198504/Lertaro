@@ -38,14 +38,18 @@ public class PluginManagementViewModel : ViewModelBase
             var selectedDll = SelectedPlugin?.DllFileName;
             var newList = PluginLoaderHelper.BuildPluginList(_userSettings);
             RestoreEnablementEdits(Plugins, newList);
-            Plugins.Clear();
-            foreach (var p in newList)
-                Plugins.Add(p);
+            // Same wholesale swap LoadAsync uses: clearing and re-adding raised one CollectionChanged per
+            // plugin, so switching language re-laid the list out once per row. Assigning the collection
+            // leaves one property change to react to, and the sort below runs before it is announced.
+            Plugins = new ObservableCollection<PluginInfoViewModel>(newList);
             // Rebuild only if the runtime tab has actually been opened (see EnsureRuntimeStatusesBuilt);
             // otherwise the next time it is shown rebuilds from the new list anyway.
             if (_runtimeStatusesBuilt) RebuildRuntimeStatuses();
             ApplyPluginSort();
             SelectedPlugin = Plugins.FirstOrDefault(p => p.DllFileName == selectedDll) ?? Plugins.FirstOrDefault();
+            // Announced only now, and only once: the sort above ran while nobody was bound to the new
+            // collection, so the list lays itself out a single time in its final order.
+            OnPropertyChanged(nameof(Plugins));
             OnPropertyChanged(nameof(IsEmpty));
             OnPropertyChanged(nameof(DevGuideUri));
         };
