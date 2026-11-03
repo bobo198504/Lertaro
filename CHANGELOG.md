@@ -10,8 +10,9 @@
 ## 更新内容
 
 ```
-# 搜索页缓存移除
-# 平滑滚动在窗口隐藏后断开帧回调
+# 一级缓存移除
+# 平滑滚动沿用应用侧模型实现，窗口隐藏后断开帧回调
++ 合并上游 v5.12.5 的引擎外修复
 + 预览文本支持 UTF-16 与 GBK 编码
 # 卷句柄被占用时无法安全移除驱动器
 # 行不再是被打开的文件夹时名字单元格未归位
@@ -21,8 +22,9 @@
 ## What's changed
 
 ```
-# The search page cache is removed
-# Smooth scrolling drops its frame callback once the window is hidden
+# The first-level page cache is removed
+# Smooth scrolling keeps the app-side model, and drops its frame callback once the window is hidden
++ Upstream v5.12.5 fixes outside the engine are merged in
 + Text preview supports UTF-16 and GBK as well as UTF-8
 # A held volume handle no longer blocks a safe removal
 # The name cell returns when a row stops being an opened folder
