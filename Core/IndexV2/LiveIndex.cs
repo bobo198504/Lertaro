@@ -24,9 +24,6 @@ public sealed class LiveIndex : IDisposable
     private DeltaOverlay? _delta;
     private long _revision;
 
-    // Pages this drive has already answered (see QueryPageCache). Lives on the index so a page can only
-    // ever be replayed against the snapshot/delta pair that produced it.
-    internal QueryPageCache SearchPages { get; } = new();
 
     public LiveIndex(Snapshot snapshot)
     {

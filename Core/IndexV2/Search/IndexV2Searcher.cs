@@ -18,21 +18,6 @@ public static class IndexV2Searcher
             return;
 
         var parsed = SearchQueryParser.Parse(query);
-        // Only the plain name-search shape is cached: a path-mode query walks one directory and returns
-        // almost instantly, and its row count is unbounded (the full window asks for int.MaxValue), so a
-        // stored page would either be huge or answer a later listing with a truncated one.
-        var cache = index.SearchPages;
-        var cacheKey = parsed.IsPathMode ? null : QueryPageCache.KeyFor(query, directoryFilter, fileNameFilter, (byte)category);
-        var __cacheLookup = Lertaro.Core.SearchIndex.PerfTrace.Begin();
-        if (cacheKey != null && cache.TryReplay(cacheKey, limit, onResult, token))
-            return;
-
-        var cached = new List<SearchResult>(capacity: 64);
-        void Capture(SearchResult row)
-        {
-            cached.Add(row);
-            onResult(row);
-        }
 
         // ponytail: the whole search, every onResult callback included, runs inside this read lock. The
         // production callback is a blocking write to SearchStreamPump's bounded channel, so one slow pipe
@@ -53,7 +38,7 @@ public static class IndexV2Searcher
 
             if (parsed.IsPathMode)
             {
-                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, Capture, token, directoryFilterLower);
+                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, onResult, token, directoryFilterLower);
                 return null;
             }
 
@@ -61,15 +46,11 @@ public static class IndexV2Searcher
             var pattern = FzfPattern.Parse(query);
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.parse", __parse);
             var __name = Lertaro.Core.SearchIndex.PerfTrace.Begin();
-            NameSearch.SearchStreaming(snapshot, delta, pattern, limit, Capture, token, directoryFilterLower,
+            NameSearch.SearchStreaming(snapshot, delta, pattern, limit, onResult, token, directoryFilterLower,
                 FilterPatternHelper.SplitOrNullIfMatchAll(fileNameFilter), category);
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.nameSearch", __name);
             return null;
         });
-
-        if (cacheKey != null)
-            cache.Store(cacheKey, cached, limit);
-        Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.cacheMiss", __cacheLookup);
     }
 
     // Directory listing rather than search (see DirectoryEnumerator): no query, no ranking, walks the
