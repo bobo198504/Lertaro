@@ -225,6 +225,17 @@ private static void OnMouseWheel(object sender, MouseWheelEventArgs e)
 
         private void OnRendering(object? sender, EventArgs e)
         {
+            // A glide outlives the window that started it: the fast window is hidden and reused rather
+            // than unloaded, so Unloaded may never fire -- and Stop() detaches that handler anyway as soon
+            // as one glide finishes. Without this guard the frame clock kept calling
+            // ScrollToVerticalOffset on a viewer nobody could see, which re-triggers rendering and can
+            // spin a core while the app sits idle. Drop the subscription the moment it is off screen.
+            if (!_scrollViewer.IsVisible)
+            {
+                Stop();
+                return;
+            }
+
             var seconds = _clock.Elapsed.TotalSeconds;
             var dt = seconds - _lastSeconds;
             _lastSeconds = seconds;
