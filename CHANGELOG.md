@@ -10,9 +10,11 @@
 ## 更新内容
 
 ```
-# 一级缓存移除
-# 平滑滚动在窗口隐藏后断开帧回调
+* 一级缓存移除（缓存页与索引不同步，刚建好的文件会搜不到）
++ 保留鼠标平滑滚动
++ 自动更新只检查本仓库的发行
 + 预览文本支持 UTF-16 与 GBK 编码
+# 平滑滚动在窗口隐藏后断开帧回调
 # 卷句柄被占用时无法安全移除驱动器
 # 行不再是被打开的文件夹时名字单元格未归位
 # 切换语言时插件列表整表替换
@@ -21,9 +23,11 @@
 ## What's changed
 
 ```
-# The first-level page cache is removed
-# Smooth scrolling drops its frame callback once the window is hidden
+* The first-level page cache is removed (a cached page could disagree with the index, so a file created moments ago was missing)
++ Keeps the smooth wheel scrolling
++ Auto-update only checks this repository's releases
 + Text preview supports UTF-16 and GBK as well as UTF-8
+# Smooth scrolling drops its frame callback once the window is hidden
 # A held volume handle no longer blocks a safe removal
 # The name cell returns when a row stops being an opened folder
 # The plugin list swaps wholesale on a language change
