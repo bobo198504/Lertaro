@@ -44,8 +44,9 @@ Not lazy about: input validation at trust boundaries, error handling that preven
   只写与上游的差异；`+ 基线：…` 这类非改动行不写）。
 - **`v5.12.6.1` 起的条目结构**（用户 2026-11-05 定，替换此前的单栏列表）：
   `上游：` 与 `本fork：` 两栏，各自一个代码块，条目仍用 `*` `+` `#` 标性质。
-  - `上游：` 只列上游发行说明所体现的**用户可见**改动，不列 `bump: version` 与 `fix(ci)` 这类噪音；
-    上游的日志是 GitLab release 里自动生成的提交列表，需要据提交归纳，不要原样抄。
+  - `上游：` **照抄上游发行说明里列出的条目**，不加也不减。它通常是 GitLab release 里自动生成的
+    提交列表（例如 `bump: version v5.12.6`、`fix(ci): retry to fix`），条目少是正常的 —— 不要据提交
+    自行归纳补全，也不要因为「看起来没内容」而改写。
   - `本fork：` 列**当前与上游存在的全部差异**，只要还在就写，不是只写本版新增。
   - `附：` 一栏写用户额外交代的事，**没有则整段省略**。
   - 中英各一份，结构对应（`Upstream:` / `This fork:`），其后仍由 workflow 追加 `## SHA-256 Checksums`。

@@ -13,11 +13,6 @@
 ```
 * 版本 v5.12.6
 # CI 重试修复
-# 更新检查改为从 GitLab 项目解析发行
-+ 便携包改用发布密钥签名，并信任新的发布密钥
-+ 新增 GitLab 发布流水线，发布限流并去掉 GitHub 的签名步骤
-# 修复内联搜索等窗口的幽灵窗口
-# 设置里能搜索到 UI 字体设置
 ```
 
 本fork：
@@ -33,17 +28,17 @@
 # 切换语言时插件列表整表替换
 ```
 
+附：
+```
+上游临时切换到 GitLab，本仓库仍以 GitHub 为主线，GitLab 作为备用跟进点。
+```
+
 ## What's changed
 
 Upstream:
 ```
 * Version v5.12.6
 # CI retry fix
-# Update checks resolve releases from the GitLab project
-+ Portable archives are signed with the release key, which is now trusted
-+ A GitLab release pipeline is added; releases are throttled and the GitHub signing step is dropped
-# Ghost window fixed for inline search and other windows
-# The UI font setting is findable from settings search
 ```
 
 This fork:
@@ -57,6 +52,11 @@ This fork:
 # A held volume handle no longer blocks a safe removal
 # The name cell returns when a row stops being an opened folder
 # The plugin list swaps wholesale on a language change
+```
+
+Note:
+```
+Upstream temporarily moved to GitLab; this repository still follows GitHub as the main line, with GitLab kept as a backup.
 ```
 
 ## v5.12.2.5
