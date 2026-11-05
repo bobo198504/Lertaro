@@ -18,14 +18,10 @@
 本fork：
 ```
 * 引擎与排序沿用 5.11.1.4（上游 V3 在单键查询上更慢，暂不采用）
-+ 保留鼠标平滑滚动
++ 保留鼠标平滑滚动（应用侧模型实现，上游已移除）
 + 自动更新只检查本仓库的发行
-+ 预览文本支持 UTF-16 与 GBK 编码
-# 一级缓存移除，不再出现刚建好的文件搜不到
 # 平滑滚动在窗口隐藏后断开帧回调
-# 卷句柄被占用时无法安全移除驱动器
-# 行不再是被打开的文件夹时名字单元格未归位
-# 切换语言时插件列表整表替换
+# 切换语言时插件列表整表替换，不再逐条刷新
 ```
 
 附：
@@ -44,14 +40,10 @@ Upstream:
 This fork:
 ```
 * Engine and ranking stay on 5.11.1.4 (upstream V3 is slower on single-key queries, not adopted yet)
-+ Keeps the smooth wheel scrolling
++ Keeps the smooth wheel scrolling, driven by the app-side model that upstream removed
 + Auto-update only checks this repository's releases
-+ Text preview supports UTF-16 and GBK as well as UTF-8
-# The first-level page cache is removed, so a file created moments ago is no longer missing
 # Smooth scrolling drops its frame callback once the window is hidden
-# A held volume handle no longer blocks a safe removal
-# The name cell returns when a row stops being an opened folder
-# The plugin list swaps wholesale on a language change
+# The plugin list swaps wholesale on a language change instead of re-adding row by row
 ```
 
 Note:
