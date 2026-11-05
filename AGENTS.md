@@ -47,6 +47,7 @@ Not lazy about: input validation at trust boundaries, error handling that preven
   - `上游：` **照抄上游发行说明里列出的条目**，不加也不减。它通常是 GitLab release 里自动生成的
     提交列表（例如 `bump: version v5.12.6`、`fix(ci): retry to fix`），条目少是正常的 —— 不要据提交
     自行归纳补全，也不要因为「看起来没内容」而改写。
+    **唯一例外：`bump: version x.y.z` 这类版本号提交不是更新内容，不进这一栏**（2026-11-05 用户指出）。
   - `本fork：` 列**当前与上游存在的全部差异**，只要还在就写，不是只写本版新增。
     两条判据，写每条前都要过一遍：
     1. **上游也有的改动不进这一栏** —— 从上游 cherry-pick 过来的修复属于上游，写进「上游」或不写，
