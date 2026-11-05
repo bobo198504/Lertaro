@@ -128,6 +128,7 @@ public static class SettingsSearchIndex
         new("Appearance_ModeLight", "Appearance", TargetElementName: "RowThemeModeCards", TabLabelKey: "Appearance_ModeGroupTitle"),
         new("Appearance_ModeDark", "Appearance", TargetElementName: "RowThemeModeCards", TabLabelKey: "Appearance_ModeGroupTitle"),
         new("Appearance_ModeFollowSystem", "Appearance", TargetElementName: "RowThemeModeCards", TabLabelKey: "Appearance_ModeGroupTitle"),
+        new("Appearance_FontGroupTitle", "Appearance", TargetElementName: "RowUiFontSettings"),
         new("General_ThemeSelect", "Appearance", TargetElementName: "RowThemeCards",
             IsVisible: vm => vm.Appearance.IsManualThemeEnabled),
         new("General_ThemeLightSelect", "Appearance", TargetElementName: "RowThemeLightCards",
