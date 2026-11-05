@@ -5,6 +5,60 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.6.1
+
+## 更新内容
+
+上游：
+```
+* 版本 v5.12.6
+# CI 重试修复
+# 更新检查改为从 GitLab 项目解析发行
++ 便携包改用发布密钥签名，并信任新的发布密钥
++ 新增 GitLab 发布流水线，发布限流并去掉 GitHub 的签名步骤
+# 修复内联搜索等窗口的幽灵窗口
+# 设置里能搜索到 UI 字体设置
+```
+
+本fork：
+```
+* 引擎与排序沿用 5.11.1.4（上游 V3 在单键查询上更慢，暂不采用）
++ 保留鼠标平滑滚动
++ 自动更新只检查本仓库的发行
++ 预览文本支持 UTF-16 与 GBK 编码
+# 一级缓存移除，不再出现刚建好的文件搜不到
+# 平滑滚动在窗口隐藏后断开帧回调
+# 卷句柄被占用时无法安全移除驱动器
+# 行不再是被打开的文件夹时名字单元格未归位
+# 切换语言时插件列表整表替换
+```
+
+## What's changed
+
+Upstream:
+```
+* Version v5.12.6
+# CI retry fix
+# Update checks resolve releases from the GitLab project
++ Portable archives are signed with the release key, which is now trusted
++ A GitLab release pipeline is added; releases are throttled and the GitHub signing step is dropped
+# Ghost window fixed for inline search and other windows
+# The UI font setting is findable from settings search
+```
+
+This fork:
+```
+* Engine and ranking stay on 5.11.1.4 (upstream V3 is slower on single-key queries, not adopted yet)
++ Keeps the smooth wheel scrolling
++ Auto-update only checks this repository's releases
++ Text preview supports UTF-16 and GBK as well as UTF-8
+# The first-level page cache is removed, so a file created moments ago is no longer missing
+# Smooth scrolling drops its frame callback once the window is hidden
+# A held volume handle no longer blocks a safe removal
+# The name cell returns when a row stops being an opened folder
+# The plugin list swaps wholesale on a language change
+```
+
 ## v5.12.2.5
 
 ## 更新内容
