@@ -5,6 +5,52 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.7.1
+
+## 更新内容
+
+上游：
+```
++ 设置里说明 hook 够不到提权窗口
+# 提权请求不再被普通权限的 hook 应答
+# 文件对话框写入被拒时如实报告，不再静默成功
+# 精简 make 脚本里的注释
+# 补全 GitLab 构建 CI 的文档
+# CI 重试修复
+# CI 构建二次修复
+```
+
+本fork：
+```
+* 引擎与排序沿用 5.11.1.4（上游 V3 在单键查询上更慢，暂不采用）
++ 保留鼠标平滑滚动（应用侧模型实现，上游已移除）
++ 自动更新只检查本仓库的发行
+# 平滑滚动在窗口隐藏后断开帧回调
+# 切换语言时插件列表整表替换，不再逐条刷新
+```
+
+## What's changed
+
+Upstream:
+```
++ Settings now say when the hook cannot reach elevated windows
+# An elevated request is no longer answered by an unelevated hook
+# A declined write in a file dialog is reported instead of silently succeeding
+# Trimmed a comment in the make script
+# Finished the GitLab build CI docs
+# CI retry fix
+# CI build refix
+```
+
+This fork:
+```
+* Engine and ranking stay on 5.11.1.4 (upstream V3 is slower on single-key queries, not adopted yet)
++ Keeps the smooth wheel scrolling, driven by the app-side model that upstream removed
++ Auto-update only checks this repository's releases
+# Smooth scrolling drops its frame callback once the window is hidden
+# The plugin list swaps wholesale on a language change instead of re-adding row by row
+```
+
 ## v5.12.6.1
 
 ## 更新内容
