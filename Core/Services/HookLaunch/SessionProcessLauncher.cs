@@ -125,6 +125,31 @@ public static class SessionProcessLauncher
     }
 
     /// <summary>
+    /// Whether an elevated launch would be granted for this session, asked without starting anything: the
+    /// same <see cref="DecideElevatedToken"/> answer <see cref="TryLaunch"/> would reach. A caller that
+    /// already holds a live child uses this to avoid disturbing it for an elevation the session cannot give.
+    /// </summary>
+    internal static bool CanGrantElevation(int sessionId)
+    {
+        EnableTcbPrivilege();
+        if (!WTSQueryUserToken((uint)sessionId, out var userToken))
+            return false;
+
+        var linkedToken = IntPtr.Zero;
+        try
+        {
+            var hasLinkedToken = TryGetLinkedToken(userToken, out linkedToken);
+            return DecideElevatedToken(hasLinkedToken && IsTokenAdmin(linkedToken), IsTokenAdmin(userToken))
+                != ElevatedToken.Refused;
+        }
+        finally
+        {
+            if (linkedToken != IntPtr.Zero) CloseHandle(linkedToken);
+            CloseHandle(userToken);
+        }
+    }
+
+    /// <summary>
     /// Which token an elevation request may hand the child, given what the session's own token is linked to.
     /// A refusal is not a failure of the launch machinery: it means this session simply has no administrator
     /// to hand over, so only a caller that cannot work unelevated should treat it as fatal.
