@@ -5,6 +5,48 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.9.3
+
+## 更新内容
+
+上游：
+```
+本版无新增上游发行
+```
+
+本fork：
+```
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+# 查询页缓存跟随别名 provider 的查询版本失效
+# 缓存捕获和回放都复制结果对象，调用方修改结果不会污染后续查询
+# 过期缓存条目在下一次缓存操作时移除，并保留 128 × 1024 行的硬上限
+# 相关历史支持当前查询延伸较短旧关键词
+# 相关历史先执行目录、优先级、可达性和去重，再选择最多 2 条候选
+# 相关历史始终保持在弱历史尾部
+```
+
+## What's changed
+
+Upstream:
+```
+No new upstream release in this build
+```
+
+This fork:
+```
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+# Cached pages now follow the alias providers' query revision
+# Cache capture and replay copy result objects, so caller decoration cannot pollute later queries
+# Expired entries are removed on the next cache operation, with a hard 128 × 1024 row ceiling
+# Related history supports a current query extending a shorter stored keyword
+# Related history applies scope, priority, reachability and deduplication before selecting two candidates
+# Related history always remains in the weak history tail
+```
+
 ## v5.12.9.2
 
 ## 更新内容

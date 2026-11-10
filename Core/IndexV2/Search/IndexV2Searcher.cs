@@ -31,7 +31,7 @@ public static class IndexV2Searcher
         {
             emitted++;
             if (captured != null && captured.Count < QueryPageCache.MaxRows)
-                captured.Add(row);
+                captured.Add(QueryPageCache.Clone(row));
             onResult(row);
         }
 
