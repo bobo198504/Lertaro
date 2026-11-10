@@ -316,6 +316,7 @@
     "Service_ClearLogFailed":  "No se pudo borrar el registro. La aplicación que lo escribe lo sigue teniendo abierto.",
     "Service_LogTab_Service":  "Servicio",
     "Service_LogTab_App":  "Aplicación Principal",
+    "Service_HookUnelevated":  "El Hook se ejecuta con integridad {0}; las ventanas elevadas no recibirán los atajos.",
     "Service_LogTab_Hook":  "Hook",
     "Service_LogFilter_All":  "Todos",
     "Service_LogSearchPlaceholder":  " Buscar en los registros...",

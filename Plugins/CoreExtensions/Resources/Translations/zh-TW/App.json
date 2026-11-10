@@ -316,6 +316,7 @@
     "Service_ClearLogFailed":  "無法清空日誌：寫入該日誌的程序仍佔用著它。",
     "Service_LogTab_Service":  "服務",
     "Service_LogTab_App":  "主程式",
+    "Service_HookUnelevated":  "鉤子目前為 {0} 完整性，無法在提權視窗中回應快速鍵。",
     "Service_LogTab_Hook":  "鉤子",
     "Service_LogFilter_All":  "全部",
     "Service_LogSearchPlaceholder":  " 搜尋日誌...",

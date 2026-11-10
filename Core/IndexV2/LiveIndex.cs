@@ -23,6 +23,8 @@ public sealed class LiveIndex : IDisposable
     private Snapshot? _snapshot;
     private DeltaOverlay? _delta;
     private long _revision;
+    internal QueryPageCache SearchPages { get; } = new();
+    internal QueryFrontierCache SearchFrontiers { get; } = new();
 
 
     public LiveIndex(Snapshot snapshot)

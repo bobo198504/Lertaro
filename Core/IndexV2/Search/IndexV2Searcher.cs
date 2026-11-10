@@ -19,6 +19,22 @@ public static class IndexV2Searcher
             return;
 
         var parsed = SearchQueryParser.Parse(query);
+        var frontierSequence = fileNameFilter == null
+            ? index.SearchFrontiers.NextSearchSequence()
+            : 0;
+        var cacheKey = parsed.IsPathMode
+            ? null
+            : QueryPageCache.KeyFor(query, directoryFilter, fileNameFilter, category);
+        if (cacheKey != null && index.SearchPages.TryReplay(cacheKey, limit, onResult, token, index.Revision))
+            return;
+
+        var captured = cacheKey == null ? null : new List<SearchResult>(Math.Min(limit, QueryPageCache.MaxRows));
+        void Capture(SearchResult row)
+        {
+            if (captured != null && captured.Count < QueryPageCache.MaxRows)
+                captured.Add(row);
+            onResult(row);
+        }
 
         // ponytail: the whole search, every onResult callback included, runs inside this read lock. The
         // production callback is a blocking write to SearchStreamPump's bounded channel, so one slow pipe
@@ -31,8 +47,10 @@ public static class IndexV2Searcher
         // inline window already searches against a bounded limit. Reopen on an observed stall.
         var perfStart = SearchPerf.Start();
         var __t = Lertaro.Core.SearchIndex.PerfTrace.Begin();
+        long searchRevision = 0;
         index.Read<object?>((snapshot, delta) =>
         {
+            searchRevision = index.Revision;
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.readLock", __t);
             var directoryFilterLower = DirectoryFilterResolver.NormalizeFilter(directoryFilter);
             if (directoryFilterLower != null && directoryFilterLower.Equals(snapshot.SourceRoot.ToLowerInvariant(), StringComparison.Ordinal))
@@ -40,7 +58,7 @@ public static class IndexV2Searcher
 
             if (parsed.IsPathMode)
             {
-                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, onResult, token, directoryFilterLower);
+                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, CacheOrOriginal(), token, directoryFilterLower);
                 return null;
             }
 
@@ -48,12 +66,23 @@ public static class IndexV2Searcher
             var pattern = FzfPattern.Parse(query);
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.parse", __parse);
             var __name = Lertaro.Core.SearchIndex.PerfTrace.Begin();
-            NameSearch.SearchStreaming(snapshot, delta, pattern, limit, onResult, token, directoryFilterLower,
-                FilterPatternHelper.SplitOrNullIfMatchAll(fileNameFilter), category);
+            var filePatterns = FilterPatternHelper.SplitOrNullIfMatchAll(fileNameFilter);
+            var frontier = filePatterns == null
+                ? index.SearchFrontiers.TryGetSuperset(query, searchRevision)
+                : null;
+            NameSearch.SearchStreaming(snapshot, delta, pattern, limit, CacheOrOriginal(), token, directoryFilterLower,
+                filePatterns, category, frontier,
+                filePatterns == null
+                    ? hits => index.SearchFrontiers.Store(query, searchRevision, frontierSequence, hits)
+                    : null);
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.nameSearch", __name);
             return null;
         });
+        if (cacheKey != null)
+            index.SearchPages.Store(cacheKey, captured!, limit, searchRevision);
         SearchPerf.Log($"[search] q='{query}' limit={limit} dir='{directoryFilter}' pathMode={parsed.IsPathMode} build={SearchPerf.BuildFlavor} total={SearchPerf.Ms(perfStart):F0}ms");
+
+        Action<SearchResult> CacheOrOriginal() => cacheKey == null ? onResult : Capture;
     }
 
     // Directory listing rather than search (see DirectoryEnumerator): no query, no ranking, walks the

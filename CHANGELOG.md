@@ -5,6 +5,56 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.9.1
+
+## 更新内容
+
+上游：
+```
++ 同步上游 v5.12.9
+```
+
+本fork：
+```
+* 单字符匹配改为一次扫描，低延迟路径不再填充整段中间数组
+* 连续前缀匹配直接复用精确前缀计分
+* `a -> ap -> ape` 连续输入复用上一轮候选前沿
+* 已完成查询页按索引版本、目录、文件过滤和分类缓存
+* 分类过滤按 unique name 只判断一次
+* 高频历史路径在全局候选截断前补入，Apex 等便携应用可直接出现在单字结果
+* H3/H5 历史在匹配位置相同时优先于结果类型，快速窗口保留 8 个 H5、20 个 H3 名额
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
+* 启动预热补上 z、n 两个高频问题字母
+* 保留鼠标平滑滚动和自定义应用搜索目录
+# 修复引擎未就绪状态误拦普通关键字查询
+# 插件 DLL 重复扫描导致 Assembly 已加载错误
+# FileSystemWatcher 正常启动被误报为黄色 Warn
+```
+
+## What's changed
+
+Upstream:
+```
++ Sync upstream v5.12.9
+```
+
+This fork:
+```
+* Single-character matching now uses one pass instead of filling intermediate arrays
+* Contiguous prefix matches reuse exact-prefix scoring
+* Typing chains (`a -> ap -> ape`) reuse the previous complete candidate frontier
+* Completed pages are cached by index revision, directory, file filter and category
+* Category filtering classifies each unique name once
+* High-use history paths are injected before the global candidate cut, so portable apps such as Apex appear from one-letter queries
+* H3/H5 history outranks result type at equal match placement, with 8 H5 and 20 H3 slots in the quick window
+* Confirmed query associations add at most two weak related recalls, always after direct matches
+* Startup warm-up now includes z and n
+* Keeps smooth wheel scrolling and custom app search folders
+# Fixed the index-not-ready gate blocking ordinary keyword searches
+# Fixed duplicate plugin loading reporting an Assembly-already-loaded error
+# Fixed normal FileSystemWatcher starts being logged as warnings
+```
+
 ## v5.12.7.1
 
 ## 更新内容

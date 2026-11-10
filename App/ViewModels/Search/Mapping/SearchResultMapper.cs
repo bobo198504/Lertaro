@@ -292,6 +292,8 @@ public static class SearchResultMapper
                 historyCandidates = historyCandidates.Where(c => InFileFilterScope(c.NormalizedPath)).ToList();
             }
             candidates.AddRange(historyCandidates);
+            candidates.AddRange(RelatedHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank));
+            candidates.AddRange(FrequentHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank));
 
             // Windows' Recent Items: what was opened in any app, ranked right below the user's own picks.
             var recentCandidates = WindowsRecentCandidateMapper.Collect(fuzzy, scope, filesTypeRank);
@@ -511,8 +513,8 @@ public static class SearchResultMapper
         // Inline ordering is not traced because it uses a different history budget.
         var rankingPass = RankingPassTrace.Empty;
         var ordered = rankingTrace != null
-            ? RankedCandidateOrdering.OrderWithTrace(candidates, rankContext, out rankingPass)
-            : RankedCandidateOrdering.Order(candidates, rankContext);
+            ? RankedCandidateOrdering.OrderWithTrace(candidates, rankContext, isInlineWindow ? null : query, typeOrder, out rankingPass)
+            : RankedCandidateOrdering.Order(candidates, rankContext, isInlineWindow ? null : query, typeOrder);
 
         // The filter runs HERE, before any cap. Filtering afterwards meant the cap had already thrown those
         // rows away under the whole-result ordering: a short query ranks applications and folders first, so

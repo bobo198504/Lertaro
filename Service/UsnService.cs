@@ -135,7 +135,10 @@ public class UsnService : ServiceBase
                     // once the app has been up long enough that nobody is looking at the first rows any
                     // more. Warming all 36 up front took ~7 s, and every search that landed inside that
                     // window paid the scan that had not been cached yet.
-                    var firstWave = new[] { "a", "b", "c", "d", "e", "f", "g", "m", "p", "s", "t", "w" };
+                    var firstWave = new[]
+                    {
+                        "a", "z", "n", "b", "c", "d", "e", "f", "g", "m", "p", "s", "t", "w",
+                    };
                     var letters = new List<string>(36);
                     for (var c = '0'; c <= '9'; c++)
                         letters.Add(c.ToString());

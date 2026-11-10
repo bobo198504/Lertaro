@@ -157,8 +157,6 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
                 return;
             _selectedCategory = value;
             OnPropertyChanged(nameof(SelectedCategory));
-            if (!IsActionsMode && !string.IsNullOrWhiteSpace(_lastQuery))
-                _dispatcher.DispatchSearch(_lastQuery);
         }
     }
 
@@ -195,10 +193,7 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
         _categories = rebuilt;
         OnPropertyChanged(nameof(Categories));
         if (keep != _selectedCategory)
-        {
-            _selectedCategory = keep;
-            OnPropertyChanged(nameof(SelectedCategory));
-        }
+            SelectedCategory = keep;
     }
 
     private static IReadOnlyList<SidebarFilterItem> BuildCategoryTabs()

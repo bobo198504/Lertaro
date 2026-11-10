@@ -94,6 +94,7 @@ Not lazy about: input validation at trust boundaries, error handling that preven
   改到任何插件时必须：① 逐个 `dotnet build Plugins\**\*.csproj -c Release`；② 把 `App\bin\Release\net10.0-windows\Plugins\*.dll` 复制进 `publish\x64\Lertaro\Plugins\`；③ 再跑部署。
   否则安装里仍是旧 DLL（已踩过，用哈希对比才发现）。
 - 启动 App 一律 `Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $exe + '"')`（脱离工具进程树、普通完整性级别）。
+- **App 启动后会自己确保服务启动**：`AppStartupServiceBootstrapper.EnsureServiceStarted()` 会 ping、启动已注册服务或静默安装。部署后只启动 App，不要先手动 `Start-Service`；等 App 拉起服务后再核对状态。
 - 停进程**只能按可执行文件完整路径**判定，禁止按名字或命令行子串批量终止。
 - 改完直接部署，不必请示；部署后必须核对：安装 ProductVersion、服务 Status、install 与 publish 哈希、app.log 有无异常。
 

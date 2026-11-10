@@ -10,11 +10,11 @@ namespace Lertaro.App.Tests.ViewModels.Search.Mapping;
 [TestClass]
 public sealed class RankedCandidateOrderingTests
 {
-    private static SearchResultMapper.RankedCandidate Candidate(string path, int typeRank = 0, int start = 0, double coverage = 1.0) =>
+    private static SearchResultMapper.RankedCandidate Candidate(string path, int typeRank = 0, int start = 0, double coverage = 1.0, int historyCount = 0) =>
         new(
             new AppSearchResult { FullPath = path, Name = Path.GetFileName(path), ResultKind = string.Empty },
             false,
-            0,
+            historyCount,
             typeRank,
             new MatchRank(MatchRank.TierName, start, coverage, 1.0),
             path);
@@ -73,6 +73,18 @@ public sealed class RankedCandidateOrderingTests
         }, new RankContext(Priorities()));
 
         Assert.AreEqual(@"C:\z-app.lnk", ranked[0].Result.FullPath);
+    }
+
+    [TestMethod]
+    public void FrequentlyUsedPortableExecutable_OutranksAnUnusedSystemApplication()
+    {
+        var ranked = RankedCandidateOrdering.Order(
+        [
+            Candidate(@"C:\Program Files\Apex\Apex.exe", typeRank: 2, historyCount: 3),
+            Candidate(@"C:\Program Files\System App\Apex Helper.exe", typeRank: 0),
+        ], new RankContext(Priorities()));
+
+        Assert.AreEqual(@"C:\Program Files\Apex\Apex.exe", ranked[0].Result.FullPath);
     }
 
     [TestMethod]

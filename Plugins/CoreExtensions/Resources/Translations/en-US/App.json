@@ -316,6 +316,7 @@
     "Service_ClearLogFailed":  "The log could not be cleared. The process writing it still holds it open.",
     "Service_LogTab_Service":  "Service",
     "Service_LogTab_App":  "Main App",
+    "Service_HookUnelevated":  "Hook is running at {0} integrity; elevated windows will not receive hotkeys.",
     "Service_LogTab_Hook":  "Hook",
     "Service_LogFilter_All":  "All",
     "Service_LogSearchPlaceholder":  " Search logs...",

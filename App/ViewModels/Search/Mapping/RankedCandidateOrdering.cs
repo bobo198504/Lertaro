@@ -12,19 +12,31 @@ internal static class RankedCandidateOrdering
 
     public static List<SearchResultMapper.RankedCandidate> Order(
         List<SearchResultMapper.RankedCandidate> candidates,
-        RankContext? context = null) =>
-        OrderCore(candidates, context, captureTrace: false, out _);
+        RankContext? context = null,
+        string? query = null,
+        IReadOnlyList<string>? typeOrder = null) =>
+        OrderCore(candidates, context, query, typeOrder, captureTrace: false, out _);
 
     /// <summary>Orders normally and retains the computed keys for final-page diagnostics.</summary>
     internal static List<SearchResultMapper.RankedCandidate> OrderWithTrace(
         List<SearchResultMapper.RankedCandidate> candidates,
         RankContext? context,
         out RankingPassTrace trace) =>
-        OrderCore(candidates, context, captureTrace: true, out trace);
+        OrderCore(candidates, context, query: null, typeOrder: null, captureTrace: true, out trace);
+
+    internal static List<SearchResultMapper.RankedCandidate> OrderWithTrace(
+        List<SearchResultMapper.RankedCandidate> candidates,
+        RankContext? context,
+        string? query,
+        IReadOnlyList<string>? typeOrder,
+        out RankingPassTrace trace) =>
+        OrderCore(candidates, context, query, typeOrder, captureTrace: true, out trace);
 
     private static List<SearchResultMapper.RankedCandidate> OrderCore(
         List<SearchResultMapper.RankedCandidate> candidates,
         RankContext? context,
+        string? query,
+        IReadOnlyList<string>? typeOrder,
         bool captureTrace,
         out RankingPassTrace trace)
     {
@@ -57,7 +69,10 @@ internal static class RankedCandidateOrdering
         for (var i = 0; i < rows.Length; i++)
         {
             var tier = budget.GetValueOrDefault(signals[i].NormalizedPath, HistoryTier.None);
-            keys[i] = RankPolicy.BuildKey(signals[i], tier, rows[i].Evidence);
+            keys[i] = RankPolicy.BuildKey(signals[i], tier, rows[i].Evidence) with
+            {
+                Score = RankPolicy.QuickScore(signals[i], tier),
+            };
             // The "frequent" badge: only the two lifted history tiers are a habit. A history-tail row
             // (fewer than three effective opens) is merely known, so it gets no badge.
             rows[i].Result.IsFrequent = tier >= HistoryTier.H3;

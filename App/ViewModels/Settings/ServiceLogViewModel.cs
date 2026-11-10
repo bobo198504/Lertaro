@@ -104,10 +104,11 @@ public class ServiceLogViewModel : ViewModelBase, IDisposable
         IsHookReady = App.HookClient?.IsConnected ?? false;
 
         var pid = App.HookClient?.ServiceProcessId ?? 0;
+        var wantsElevatedHook = UserSettings.Load().RequestElevatedHook;
         // Silent when the label could not be read. A hook is always this user's own process, so the read works
         // from any level and a failure here says nothing about the hook -- and a red line built on nothing
         // would train the reader to dismiss the ones that are measured.
-        if (IsHookReady && pid != 0
+        if (wantsElevatedHook && IsHookReady && pid != 0
             && ElevationManager.TryGetIntegrityRid(pid) is { } rid && !ElevationManager.IsHighRid(rid))
         {
             IsHookUnelevated = true;

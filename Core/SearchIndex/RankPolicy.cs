@@ -78,7 +78,7 @@ public static class RankPolicy
     /// policies can be told apart afterwards. Bump it with any change to the score, the sections or the key
     /// order. It is a code constant, not a setting: a policy version that a user could edit measures nothing.
     /// </summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     public const int StrongWeight = 10;
     public const int PriorityWeight = 8;
@@ -99,6 +99,10 @@ public static class RankPolicy
     public const int HistoryThreeThresholdX100 = 300;
     public const int HistoryFiveMax = 3;
     public const int HistoryThreeMax = 10;
+    // The quick window shows about fifty rows; three habitual slots were too easy to exhaust when several
+    // frequently used portable programs share a leading letter. The inline card keeps its smaller 1/3 budget.
+    public const int QuickHistoryFiveMax = 8;
+    public const int QuickHistoryThreeMax = 20;
 
     public static bool IsPreferenceEligible(MatchEvidenceGrade grade) =>
         grade is MatchEvidenceGrade.ExactIdentity or MatchEvidenceGrade.DirectStrong;
@@ -109,6 +113,63 @@ public static class RankPolicy
         IndexRuleEffect.Normal => 1,
         _ => 2,
     };
+
+    public static int Score(
+        bool isStrong,
+        bool isFavorite,
+        bool isHistoryOnly,
+        IndexRuleEffect priority,
+        HistoryTier tier)
+    {
+        if (isFavorite && isStrong)
+            return FavoriteStrongScore;
+        if (tier == HistoryTier.H5)
+            return HistoryFiveScore;
+        if (tier == HistoryTier.H3)
+            return HistoryThreeScore;
+        if (isHistoryOnly && tier == HistoryTier.Tail)
+            return HistoryTailScore;
+
+        var priorityWeight = priority switch
+        {
+            IndexRuleEffect.High => 2,
+            IndexRuleEffect.Normal => 1,
+            _ => 0,
+        };
+        return StrongWeight * (isStrong ? 1 : 0) + PriorityWeight * priorityWeight;
+    }
+
+    public static int Score(in RankSignals s, HistoryTier tier) =>
+        Score(s.Match.IsStrong, s.IsFavorite, s.IsHistoryOnly, s.Priority, tier);
+
+    public const int TypeBonusMax = 16;
+
+    public static int QuickScore(in RankSignals s, HistoryTier tier) =>
+        UsesBaseScore(s.Match.IsStrong, s.IsFavorite, s.IsHistoryOnly, tier)
+            ? Score(s, tier) + TypeBonus(s.TypeRank, s.Match)
+            : Score(s, tier);
+
+    public static bool UsesBaseScore(bool isStrong, bool isFavorite, bool isHistoryOnly, HistoryTier tier) =>
+        !(isFavorite && isStrong)
+        && tier is not (HistoryTier.H5 or HistoryTier.H3)
+        && !(isHistoryOnly && tier == HistoryTier.Tail);
+
+    public static int TypeBonus(int typeRank, in MatchRank match)
+    {
+        var max = typeRank switch
+        {
+            0 => TypeBonusMax,
+            1 => TypeBonusMax / 2,
+            2 => TypeBonusMax / 4,
+            3 => TypeBonusMax / 16,
+            _ => 0,
+        };
+        if (max == 0 || !match.IsMatch)
+            return 0;
+        return match.IsStrong
+            ? max
+            : (int)Math.Round(max * Math.Clamp(match.Weight, 0, 1), MidpointRounding.AwayFromZero);
+    }
 
     public static RankSection Section(
         IndexRuleEffect priority,
@@ -200,12 +261,12 @@ public static class RankPolicy
         var section = Section(s.Priority, explicitAlwaysTop, favoritePin, s.IsHistoryOnly, grade);
         var effectiveTier = EffectiveHistoryTier(tier, grade, s.IsHistoryOnly);
         var historyTie = HistoryTie(s.IsHistoryOnly, effectiveTier, s.HistoryScoreX100, grade);
-        var diagScore = DiagnosticScore(section, explicitAlwaysTop, favoritePin, grade, s.Priority, effectiveTier);
+        var score = Score(s, effectiveTier);
 
         return new RankKey(
             explicitAlwaysTop ? (byte)1 : (byte)0,
             (byte)section,
-            diagScore,
+            score,
             historyTie,
             s.TypeRank,
             s.IsHistoryOnly ? MatchRank.NoMatch : s.Match,
@@ -540,18 +601,18 @@ public sealed class RankKeyComparer : IComparer<RankKey>
         if (byContiguity != 0)
             return byContiguity;
 
-        // Only a genuine habit crosses the match layer, and among habits the more-used one comes first.
+        // A genuine habit crosses the type layer, and among habits the more-used one comes first.
         //
-        // "Habit" is the H5 threshold (five opens). Below it, history does not get to overrule how well the
-        // text matched: a folder the user passed through once should not beat a name that begins with the
-        // query. That is what keeps the whole of history light while still letting what they reach for daily
-        // -- a chat app, a project folder -- surface on a single letter.
+        // H3 and H5 both mean at least three effective opens. A path opened once or twice still does not
+        // overrule how well the text matched, but a frequently used portable .exe must not lose merely
+        // because the application provider gave an installed app a better type rank.
         //
         // Both sides are tested: if either row is habitual the comparison runs, so a habitual row known to
         // this key wins over a non-habitual one, and two habitual rows order by score. Two ordinary rows
         // fall through unchanged.
-        var xHabitual = x.HistoryTie >= RankPolicy.HistoryFiveThresholdX100;
-        var yHabitual = y.HistoryTie >= RankPolicy.HistoryFiveThresholdX100;
+        // Low is an explicit user instruction, so history never crosses the type/section decision there.
+        var xHabitual = xSection != RankSection.Low && x.Tier >= HistoryTier.H3;
+        var yHabitual = ySection != RankSection.Low && y.Tier >= HistoryTier.H3;
         if (xHabitual || yHabitual)
         {
             var byHistory = y.HistoryTie.CompareTo(x.HistoryTie);

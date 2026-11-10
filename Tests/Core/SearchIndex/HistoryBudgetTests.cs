@@ -81,6 +81,24 @@ public sealed class HistoryBudgetTests
     }
 
     [TestMethod]
+    public void QuickWindow_AllowsEightH5AndTwentyH3Rows()
+    {
+        var candidates = new List<RankSignals>();
+        for (var i = 0; i < 10; i++)
+            candidates.Add(Signals($@"D:\h\five{i}.txt", 600));
+        for (var i = 0; i < 25; i++)
+            candidates.Add(Signals($@"D:\h\three{i}.txt", 400));
+
+        var budget = RankPolicy.BuildHistoryBudget(
+            candidates,
+            fiveMax: RankPolicy.QuickHistoryFiveMax,
+            threeMax: RankPolicy.QuickHistoryThreeMax);
+
+        Assert.AreEqual(RankPolicy.QuickHistoryFiveMax, budget.Count(kv => kv.Value == HistoryTier.H5));
+        Assert.AreEqual(RankPolicy.QuickHistoryThreeMax, budget.Count(kv => kv.Value == HistoryTier.H3));
+    }
+
+    [TestMethod]
     public void IneligiblePath_DoesNotSpendASlot()
     {
         // A Grade 2/3 row can never read an H5/H3 tier, so the budget must not hand it one: the second

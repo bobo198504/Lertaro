@@ -183,7 +183,7 @@
                          SelectionChanged="CategoryBar_SelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding Converter={StaticResource CategoryName}}" Opacity="0.85"/>
+                            <TextBlock Text="{Binding DisplayName}" Opacity="0.85"/>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>

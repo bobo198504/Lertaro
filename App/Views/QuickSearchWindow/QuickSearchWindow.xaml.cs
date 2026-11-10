@@ -352,6 +352,22 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     // while a handler raised during the selection change can still see a zero-width container.
     private void CategoryBar_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // The binding normally writes this first, but relying on its ordering made a click move the
+        // underline while leaving the result set untouched. Assigning the same item here is a no-op when
+        // the binding won; when it has not run yet, this is what starts the new category query.
+        if (CategoryBar.SelectedItem is PluginSdk.Abstractions.Plugins.SidebarFilterItem selected &&
+            !ReferenceEquals(_viewModel.SelectedCategory, selected))
+        {
+            _viewModel.SelectedCategory = selected;
+        }
+
+        // Use the box's current text rather than the ViewModel's last dispatched query. The latter can lag
+        // the TextBox by one binding turn, which made a filter click leave the old result set untouched.
+        if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
+        {
+            _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
+        }
+
         Dispatcher.BeginInvoke(
             new Action(() =>
             {
@@ -465,7 +481,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     // equal to what the user last saw, so the next slide starts from the real position instead of the origin.
     private void MoveIndicatorToSelection(int attempt = 0)
     {
-        if (CategoryBar.SelectedItem is not ViewModels.Search.SearchResultCategory category)
+        if (CategoryBar.SelectedItem is not PluginSdk.Abstractions.Plugins.SidebarFilterItem category)
             return;
 
         if (CategoryBar.ItemContainerGenerator.ContainerFromItem(category) is not ListBoxItem container)

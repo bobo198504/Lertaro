@@ -254,6 +254,19 @@ public sealed class RankPolicyTests
     }
 
     [TestMethod]
+    public void Compare_HistoryDoesNotUndoLexplicitLowPriority()
+    {
+        var explicitLow = KeyOf(
+            Signals(IndexRuleEffect.Low, historyScoreX100: 1800, name: "apex", path: @"D:\tools\Apex.exe"),
+            HistoryTier.H5);
+        var ordinary = KeyOf(
+            Signals(historyScoreX100: 300, name: "another", path: @"D:\normal\another.exe"),
+            HistoryTier.H3);
+
+        Assert.IsLessThan(0, RankKeyComparer.Instance.Compare(ordinary, explicitLow));
+    }
+
+    [TestMethod]
     public void Compare_HistoryTailComesAfterLowEvenAtH5()
     {
         var weakLow = KeyOf(Signals(IndexRuleEffect.Low, strong: false));

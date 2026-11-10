@@ -225,8 +225,8 @@ internal sealed class SearchDispatchController
         var rankContext = new RankContext(
             rankRules.GetPriorityVerdict,
             SearchHistoryStore.ScoreSnapshot(DateTimeOffset.UtcNow),
-            historyFiveMax: isInlineContext ? 1 : RankPolicy.HistoryFiveMax,
-            historyThreeMax: isInlineContext ? 3 : RankPolicy.HistoryThreeMax,
+            historyFiveMax: isInlineContext ? 1 : RankPolicy.QuickHistoryFiveMax,
+            historyThreeMax: isInlineContext ? 3 : RankPolicy.QuickHistoryThreeMax,
             demoteDirectoryIdentity: demoteDirectoryIdentity);
         // The engine truncates before the App can rank, so a high-priority row that matches weakly could
         // never arrive at all. Only high rules pay for the wider window; the default rule set has none.

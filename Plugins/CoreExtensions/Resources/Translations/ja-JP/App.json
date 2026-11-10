@@ -316,6 +316,7 @@
     "Service_ClearLogFailed":  "ログをクリアできませんでした。ログを書き込んでいるプロセスが引き続きファイルを占有しています。",
     "Service_LogTab_Service":  "サービス",
     "Service_LogTab_App":  "メインアプリ",
+    "Service_HookUnelevated":  "フックは {0} 整合性で実行中のため、昇格したウィンドウではホットキーに応答できません。",
     "Service_LogTab_Hook":  "フック",
     "Service_LogFilter_All":  "すべて",
     "Service_LogSearchPlaceholder":  " ログを検索...",
