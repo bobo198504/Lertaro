@@ -154,7 +154,7 @@ internal static class HistorySearchCandidateMapper
                 IsFavorite: false,
                 HistoryCount: entry.Count,
                 TypeRank: typeRank,
-                Match: nameMatched ? byName : match,
+                Match: nameMatched ? byName : matched.Rank,
                 NormalizedPath: normalizedPath,
                 IsHistoryOnly: !nameMatched));
         }

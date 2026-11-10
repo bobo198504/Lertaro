@@ -610,6 +610,26 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         base.OnClosed(e);
     }
 
+    /// <summary>Whether the search box holds anything: filters have nothing to act on until it does.</summary>
+    internal bool HasSearchText => !string.IsNullOrWhiteSpace(_viewModel.SearchQuery);
+
+    /// <summary>Moves the active filter and brings the chosen row into view when the bar is wider than the card.</summary>
+    internal void CycleCategory(int delta)
+    {
+        _viewModel.CycleCategory(delta);
+        CategoryBar.ScrollIntoView(CategoryBar.SelectedItem);
+    }
+
+    private void CategoryBar_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Delta == 0)
+            return;
+
+        _viewModel.CycleCategory(e.Delta < 0 ? 1 : -1);
+        e.Handled = true;
+    }
+}
+
 /// <summary>Where the quick window's category filter row sits.</summary>
 internal enum CategoryBarPlacement
 {
@@ -618,4 +638,4 @@ internal enum CategoryBarPlacement
 
     /// <summary>Under the result list, just above the status bar.</summary>
     BelowList = 1,
-}}
+}

@@ -4,6 +4,7 @@ using Lertaro.App.ViewModels.Search.Mapping;
 using Lertaro.Core;
 using Lertaro.Core.Services.Plugin.DirectoryIndex;
 using Lertaro.Core.Services.Search;
+using Lertaro.PluginSdk.Helpers;
 using System.Windows.Threading;
 
 namespace Lertaro.App.ViewModels.Search;
@@ -111,10 +112,27 @@ internal sealed class SearchStreamRenderer
                 token.ThrowIfCancellationRequested();
                 if (!SearchReachabilityGate.IsResultReachable(result))
                     return;
-                if (runShortcutSupplement && ScopedSearchRunner.IsSupplementShortcutPath(result.Path))
-                    Volatile.Write(ref shortcutSurfaced, 1);
-                streamedResponse.Add(result);
-                streamedCount++;
+
+                if (foldersOnly && !result.IsDir)
+                    return;
+
+                if (scopePatterns != null && !result.IsDir && !FilterPatternHelper.Matches(result.Name, scopePatterns))
+                    return;
+
+                lock (responseLock)
+                {
+                    if (dedupePaths != null && !dedupePaths.Add(result.Path))
+                        return;
+                    if (runShortcutSupplement && ScopedSearchRunner.IsSupplementShortcutPath(result.Path))
+                        Volatile.Write(ref shortcutSurfaced, 1);
+                    streamedResponse.Add(result);
+                    streamedCount++;
+                    Volatile.Write(ref lastArrivalMs, (long)SearchPerf.Ms(perfStart));
+                }
+            }
+            finally
+            {
+                Interlocked.Add(ref consumeTicks, SearchPerf.ElapsedTicks(consumeStart));
             }
         }
 
@@ -152,6 +170,8 @@ internal sealed class SearchStreamRenderer
             // could sit in that queue well after the data was in hand, which reads as "it hangs". Input still
             // wins: it arrives at Input priority, above Normal. The version token above is what actually
             // discards a stale frame, so arriving sooner cannot show a superseded result.
+            var dispatchStart = SearchPerf.Start();
+            var enteredAt = 0L;
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 enteredAt = SearchPerf.Start();
@@ -161,6 +181,8 @@ internal sealed class SearchStreamRenderer
                 if (!final)
                     onReceivedCountUpdated?.Invoke(received);
             }, DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
+            var finishedAt = SearchPerf.Start();
+            SearchPerf.Log($"[render] dispatch final={final} queue={SearchPerf.MsBetween(dispatchStart, enteredAt):F0}ms run={SearchPerf.MsBetween(enteredAt, finishedAt):F0}ms");
         }
 
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(token);

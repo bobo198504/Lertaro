@@ -1,4 +1,5 @@
 using Lertaro.Core.Wire;
+using Lertaro.PluginSdk.Helpers;
 using System.Runtime.InteropServices;
 using Lertaro.Core.SearchIndex;
 using Lertaro.Core.SearchIndex.Fzf;

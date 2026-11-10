@@ -147,13 +147,13 @@ public static class SearchableItemMapper
         // from every file row beside it.
         var byTitle = query.Rank(entry.Item.Title);
         if (byTitle.IsMatch)
-            return byTitle;
+            return (new MatchEvidenceResult(byTitle, MatchEvidence.LegacyUnknown), null);
 
         // Reachable only through an alias or a reading: still a hit, but the alias offset says nothing about
         // the displayed name, so it enters at the left edge rather than inheriting a meaningless position.
         var byAlternate = query.BestMatch(entry.Item.Title, entry.Aliases);
         if (byAlternate.IsMatch)
-            return byAlternate with { Start = 0 };
+            return (new MatchEvidenceResult(byAlternate with { Start = 0 }, MatchEvidence.LegacyUnknown), null);
 
         // Match Windows Control Panel task links: every query token prefixes a title/keyword word.
         if (queryWords.Length > 0 && queryWords.All(token => entry.KeywordWords.Any(

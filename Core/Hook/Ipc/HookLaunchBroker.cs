@@ -53,32 +53,6 @@ internal sealed class HookLaunchBroker : IDisposable
     internal static bool[] RequestPlan(bool requestElevatedHook) =>
         requestElevatedHook ? [true, false] : [false];
 
-    // Never throws: RunLoop's backoff only runs on the null result, so an exception escaping here would
-    // retry the launch on a hot loop instead.
-    private async Task<(Process? Hook, string? Error)> RequestAsync(bool requestElevation, CancellationToken token)
-    {
-        var primary = await RequestAsync(requestElevation, token).ConfigureAwait(false);
-        if (primary.Hook != null)
-            return primary.Hook;
-
-        // The elevated hook is asked for first because it is the only one that sees keystrokes typed into
-        // elevated windows. The Service grants it only when this session's user is genuinely an
-        // administrator and refuses otherwise (see SessionProcessLauncher) -- which is exactly what a
-        // standard user's session looks like from here. An unelevated hook still registers the global
-        // hotkeys, so retry one level down rather than leaving the App with no hook at all.
-        //
-        // This is what made the first double-tap after launch do nothing: a declined elevated request
-        // returned null, and the App only got a hook after HookIpcClient's backoff loop came around again.
-        // One extra round trip replaces that wait.
-        Logger.Log($"[HookIpcClient] Hook launch declined ({primary.Error}); retrying at the other privilege level.", LogLevel.Debug);
-        var fallback = await RequestAsync(!requestElevation, token).ConfigureAwait(false);
-        if (fallback.Hook == null)
-            return null;
-
-        Logger.Log($"[HookIpcClient] Hook launched at the fallback privilege level (PID {fallback.Hook.Id}) -- hotkeys over elevated windows stay out of reach.", LogLevel.Info);
-        return fallback.Hook;
-    }
-
     // Never throws: RunLoop's backoff only runs on a null result, so an exception escaping here would retry
     // the launch on a hot loop instead.
     private async Task<(Process? Hook, string? Error)> RequestAsync(bool requestElevation, CancellationToken token)

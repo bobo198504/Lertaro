@@ -6,35 +6,27 @@ using System.Text.Json.Serialization;
 
 namespace Lertaro.App.Services.Update;
 
-// Polls both release lines for the newest version. Kept separate from UpdateInstaller: checking for an
-// update has a different trigger (startup or a manual request from the About page) and failure domain
-// (network/JSON parsing) than installing one (crypto/filesystem/service IPC) -- a caller wanting just the
-// version check has no reason to pull in signature verification or elevated-process launching, and vice
-// versa.
+// Polls this fork's release line. Kept separate from UpdateInstaller: checking for an update has a
+// different trigger (startup or a manual request from the About page) and failure domain (network/JSON
+// parsing) than installing one (crypto/filesystem/service IPC) -- a caller wanting just the version
+// check has no reason to pull in signature verification or elevated-process launching, and vice versa.
 public class UpdateChecker
 {
     private static readonly Lazy<UpdateChecker> _instance = new Lazy<UpdateChecker>(() => new UpdateChecker());
     public static UpdateChecker Instance => _instance.Value;
 
-    // Asked in this order, and both are asked even once the first answers: the two pipelines throttle
-    // independently (36h each, and GitLab's additionally needs a self-hosted runner that may be offline),
-    // so either line can be the one holding the newer tag. A tie keeps the earlier entry, i.e. GitHub.
+    // This fork's releases, deliberately not upstream's. Upstream ships fixes to main without publishing
+    // them, and an auto-update pointed there would hand such a build to a portable install that cannot
+    // roll back. The fork builds the same asset names and signatures, so everything downstream is
+    // unchanged.
     private static readonly ReleaseSource[] Sources =
     [
-        new ReleaseSource("https://api.github.com/repos/Lertaro/Lertaro/releases/latest", true),
-        // The project path has to be percent-encoded to address it through the API. `permalink/latest` is
-        // the release published most recently, which is what the GitHub endpoint answers with.
-        new ReleaseSource("https://gitlab.com/api/v4/projects/Mikachu2333%2Flertaro/releases/permalink/latest", false),
+        new ReleaseSource("https://api.github.com/repos/bobo198504/Lertaro/releases/latest", true),
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
     private readonly HttpClient _httpClient;
-    // This fork's own releases, deliberately not upstream's. Upstream ships fixes to main without
-    // publishing them (the permission check that slowed every search down was one of those), and an
-    // auto-update pointed at upstream would hand such a build to a portable install that cannot roll back.
-    // The fork builds the same asset names and signatures, so everything downstream is unchanged.
-    private const string GITHUB_API_URL = "https://api.github.com/repos/bobo198504/Lertaro/releases/latest";
 
     private UpdateChecker()
     {

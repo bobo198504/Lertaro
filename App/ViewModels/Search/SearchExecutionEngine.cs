@@ -4,6 +4,7 @@ using Lertaro.Core.SearchIndex;
 using Lertaro.App.Services;
 using Lertaro.Core.Services.Search;
 using Lertaro.App.ViewModels.Search.Dispatch;
+using Lertaro.PluginSdk.Helpers;
 
 using Lertaro.App.ViewModels.Search.Mapping;
 using System.Windows.Threading;
@@ -22,17 +23,11 @@ internal sealed class SearchExecutionEngine : IDisposable
     private CancellationTokenSource? _debounceCts;
     private int _searchVersion;
 
-    // Which kind of entry to ask the engine for. Supplied as a callback rather than a value because the
-    // filter changes between searches while this engine lives as long as the window does; the full window
-    // passes nothing and keeps the historical "every kind" behaviour.
-    private readonly Func<SearchCategoryFilter> _getCategory;
-
     public SearchExecutionEngine(SearchService searchService, Func<SearchCategoryFilter>? getCategory = null)
     {
         _searchService = searchService;
         _getCategory = getCategory ?? (() => SearchCategoryFilter.All);
         _streamRenderer = new SearchStreamRenderer(searchService, () => Volatile.Read(ref _searchVersion));
-        _getCategory = getCategory ?? (() => SearchCategoryFilter.All);
     }
 
     public void QueueSearch(

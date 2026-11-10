@@ -42,7 +42,7 @@ public static class PerfTrace
     /// service-side stages would be unreachable no matter what the user switched on. Touching
     /// <c>perf-on.marker</c> in a process's own data directory turns tracing on for that process only.
     /// </summary>
-    public static bool IsEnabled => EnabledOverride ?? (RankingEventLog.IsEnabled || MarkerPresent());
+    public static bool IsEnabled => EnabledOverride ?? MarkerPresent();
 
     private static bool MarkerPresent()
     {

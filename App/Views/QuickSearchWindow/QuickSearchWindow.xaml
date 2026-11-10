@@ -8,7 +8,6 @@
         xmlns:helpers="clr-namespace:Lertaro.App.Helpers.Visuals"
         xmlns:ctrl="clr-namespace:Lertaro.App.Views.Controls"
         xmlns:quick="clr-namespace:Lertaro.App.Views.QuickSearchWindow"
-        xmlns:conv="clr-namespace:Lertaro.App.Converters"
         Title="Lertaro"
         SizeToContent="WidthAndHeight"
         WindowStyle="None"
@@ -24,8 +23,6 @@
         PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
-        <conv:CategoryDisplayNameConverter x:Key="CategoryName"/>
-
         <!-- One filter. At rest it is only its label, with a hairline pipe after it doing the separating. The
              selected one is marked by a line under the row that slides between filters (see
              UpdateCategoryIndicator) instead of by a fill, so the row itself stays quiet. -->

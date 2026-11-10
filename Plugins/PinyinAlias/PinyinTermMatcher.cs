@@ -81,11 +81,9 @@ internal sealed class PinyinTermMatcher : IAliasTermMatcher
             var j = begin;
             while (j < text.Length)
             {
-                var (whole, prefix) = Step(Decode(text, ref j), states);
-                // A term may complete on a half-typed syllable -- but only HERE, on the character that
-                // finishes it. Earlier characters contribute from `whole`, so their syllable must have been
-                // consumed completely or as its initial: "lany" cannot take "an" out of tian's middle.
-                if ((prefix & done) != 0)
+                var cp = Decode(text, ref j);
+                states = Step(cp, states);
+                if ((states & done) != 0)
                 {
                     start = begin;
                     end = j;
@@ -93,7 +91,6 @@ internal sealed class PinyinTermMatcher : IAliasTermMatcher
                         painted[k] = true;
                     return true;
                 }
-                states = whole;
                 if (states == 0)
                     break;
             }
@@ -102,22 +99,21 @@ internal sealed class PinyinTermMatcher : IAliasTermMatcher
     }
 
     // From the term positions reached so far, those reached after consuming `cp`.
-    private (ulong Whole, ulong AnyPrefix) Step(int cp, ulong states)
+    private ulong Step(int cp, ulong states)
     {
         if (cp < 0x80)
-        {
-            var ascii = (states & _at[Fold((char)cp)]) << 1;
-            return (ascii, ascii);
-        }
+            return (states & _at[Fold((char)cp)]) << 1;
 
         // Anything this table does not read has nothing to consume: the walk dies here, exactly as
         // the reference dies on a character outside its Han range.
         if (cp > 0xFFFF || !PinyinEngine.TryGetPinyins((char)cp, out var readings))
-            return (0, 0);
+            return 0;
 
-        var count = _commonOnly && readings.Length > 1 ? 1 : readings.Length;
-        ulong whole = 0;
-        ulong prefix = 0;
+        // Common-only treats the table's two most frequent readings as common. The table is ordered by
+        // frequency, so this covers zhong/chong, chang/zhang, xing/hang and le/yue without a word
+        // dictionary; rarer readings still belong to the all-readings walk.
+        var count = _commonOnly ? Math.Min(readings.Length, 2) : readings.Length;
+        ulong next = 0;
         for (var k = 0; k < count; k++)
             next |= Consume(states, readings[k]);
         return next;
@@ -131,29 +127,13 @@ internal sealed class PinyinTermMatcher : IAliasTermMatcher
         ulong next = 0;
         foreach (var letter in reading)
         {
-            // Walk the syllable's letters. `t` after every letter is a prefix of it; only the state after the
-            // FINAL letter is the syllable consumed whole. An initial is the first letter, which is a prefix and
-            // therefore also counts as "whole" for a character that is not the one finishing the term.
-            var t = states;
-            var first = true;
-            foreach (var letter in readings[k])
-            {
-                var l = (byte)letter;
-                t = (t & (letter == 'v' ? _at[l] | _at['u'] : _at[l])) << 1;
-                if (t == 0)
-                    break;
-                prefix |= t;
-                if (first)
-                {
-                    whole |= t; // the initial (one letter) is a complete unit of its own
-                    first = false;
-                }
-            }
-
-            if (t != 0)
-                whole |= t; // the syllable consumed to its end
+            var l = (byte)letter;
+            t = (t & (letter == 'v' ? _at[l] | _at['u'] : _at[l])) << 1;
+            if (t == 0)
+                break;
+            next |= t;
         }
-        return (whole, prefix);
+        return next;
     }
 
     // Whether a match may open on this character: an ASCII character must equal the term's first

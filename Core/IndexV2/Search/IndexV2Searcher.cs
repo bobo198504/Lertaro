@@ -1,4 +1,5 @@
 using Lertaro.Core.Wire;
+using Lertaro.PluginSdk.Helpers;
 using Lertaro.Core.SearchIndex.Fzf;
 
 using Lertaro.Core.IndexV2.Search.PathMode;
@@ -28,6 +29,7 @@ public static class IndexV2Searcher
         // ExitReadLock removes progressive streaming for large result sets -- rows arrive all at once --
         // and needs a memory bound the full window cannot state while its limit is int.MaxValue. The
         // inline window already searches against a bounded limit. Reopen on an observed stall.
+        var perfStart = SearchPerf.Start();
         var __t = Lertaro.Core.SearchIndex.PerfTrace.Begin();
         index.Read<object?>((snapshot, delta) =>
         {

@@ -110,6 +110,8 @@ public class SearchService : IDisposable
         {
             try
             {
+                var filterTicks = 0L;
+                var kept = 0;
                 var __pipeStart = Lertaro.Core.SearchIndex.PerfTrace.Begin();
                 await SearchPipeClient.SendSearchPipeCommandAsync(msg, result =>
                 {

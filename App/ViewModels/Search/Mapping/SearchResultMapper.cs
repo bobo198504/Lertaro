@@ -87,7 +87,7 @@ public static class SearchResultMapper
     private static readonly IReadOnlyDictionary<string, int> EmptyUsage =
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, ViewModels.Search.SearchResultCategory category = ViewModels.Search.SearchResultCategory.All)
+    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, QuickSearchRankingTrace? rankingTrace = null, Func<PluginSdk.Abstractions.ISearchResult, bool>? categoryFilter = null)
     {
         var uiResults = new List<AppSearchResult>();
         var engineCandidateCount = fileResults?.Count ?? 0;
@@ -404,7 +404,7 @@ public static class SearchResultMapper
                     SearchResultHelper.NormalizePath(result.FullPath),
                     Source: RankingCandidateSource.SearchableProvider,
                     Evidence: evidence,
-                    TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(typeRank)));
+                    TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(rowTypeRank)));
             }
 
             // Alias hits are a parallel diagnostic stream. They never join candidates, and therefore
@@ -564,11 +564,6 @@ public static class SearchResultMapper
                     : shadowAliasCandidates));
         }
 
-        // The inline window's global tier shares this ranking, but its history caps are 1/3 while the quick
-        // window's are 3/10. Mixed into one log that has no window field, the bucket distribution would tilt
-        // toward Boosted, so the inline window is not sampled.
-        var ordered = RankedCandidateOrdering.Order(candidates, rankContext, isInlineWindow ? null : query, typeOrder);
-
         // One program, one row -- across BOTH sources. The app provider contributes the installed entry while
         // the file index contributes every shortcut the user has to it, and DedupeShortcutRows only ever sees
         // the file side, so the same program arrived twice: once named by the provider and once as a shortcut.
@@ -595,12 +590,6 @@ public static class SearchResultMapper
             }).ToList();
         }
 
-        // The category filter runs HERE, before any cap. Filtering afterwards meant the cap had already
-        // thrown those rows away under the whole-result ordering: a short query ranks applications and
-        // folders first, so an Audio tab received a list with no audio in it. Filtering first also makes the
-        // display cap meaningful again, because it then counts rows of the type the user asked for.
-        if (category != ViewModels.Search.SearchResultCategory.All)
-            ordered = ordered.Where(row => ViewModels.Search.SearchResultCategorizer.Matches(category, row.Result)).ToList();
         // Capped here (not deferred to the caller) because this display cap has to respect whatever
         // header/grouping layout the caller (or InlineListSearchHelper.MergeLocalMatches, downstream)
         // builds around these rows -- e.g. the inline window's "Current Folder"/"Global Search" split
@@ -615,7 +604,7 @@ public static class SearchResultMapper
         // could hide the row the user is actually looking for, however far down the whole-result ordering it
         // sits. Inside one category there is nothing to overflow into -- the user asked for that type, so the
         // list shows that type.
-        if (skipDisplayCap || category != ViewModels.Search.SearchResultCategory.All || uiResults.Count + ordered.Count < 10)
+        if (skipDisplayCap || categoryFilter != null || uiResults.Count + ordered.Count < 10)
         {
             foreach (var candidate in ordered)
             {
@@ -623,20 +612,35 @@ public static class SearchResultMapper
                 uiResults.Add(candidate.Result);
             }
 
+            RegisterTrace(EmptyTracePaths);
             StampWindow(uiResults, isInlineWindow);
             return uiResults;
         }
 
-        // How much the unfiltered list scrolls before the "show more" row takes over. A filtered list never
-        // reaches here (see above), so this number no longer has to be guessed large enough to cover every
-        // category -- which was the wrong shape for a limit: the row being looked for could always sit past
-        // whichever value was picked.
-        const int CandidatePool = 50;
-        var hasMoreAtEnd = ordered.Count > CandidatePool;
+        var hasMoreAtEnd = ordered.Count > 50;
+        HashSet<string>? typeCoveragePaths = null;
         // A type the user bothered to order must not vanish behind the cap: keep its best few rows and let
         // the rest of the slots follow the global order (EnsureTypeCoverage never reorders, only selects).
         if (hasMoreAtEnd)
-            ordered = RankedCandidateOrdering.EnsureTypeCoverage(ordered, CandidatePool);
+        {
+            HashSet<string>? kernelTop = null;
+            if (rankingTrace != null)
+            {
+                kernelTop = new HashSet<string>(
+                    ordered.Take(50).Select(candidate => candidate.NormalizedPath),
+                    StringComparer.OrdinalIgnoreCase);
+                typeCoveragePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+            ordered = RankedCandidateOrdering.EnsureTypeCoverage(ordered, 50);
+            if (kernelTop != null)
+            {
+                foreach (var candidate in ordered)
+                {
+                    if (!kernelTop.Contains(candidate.NormalizedPath))
+                        typeCoveragePaths!.Add(candidate.NormalizedPath);
+                }
+            }
+        }
 
         var firstCount = Math.Min(ordered.Count, Math.Max(0, 8 - uiResults.Count));
         for (var i = 0; i < firstCount; i++)
@@ -656,6 +660,7 @@ public static class SearchResultMapper
             SearchResultHelper.AddShowMoreResult(uiResults, query);
         }
 
+        RegisterTrace((IReadOnlySet<string>?)typeCoveragePaths ?? EmptyTracePaths);
         StampWindow(uiResults, isInlineWindow);
         return uiResults;
     }

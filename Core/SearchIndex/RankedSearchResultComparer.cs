@@ -45,6 +45,10 @@ public sealed class RankedSearchResultComparer : IComparer<SearchResult>
         var gradeY = SearchResultRanking.GradeOf(y);
         var tierX = (HistoryTier)((x.RankFlags >> 3) & 3);
         var tierY = (HistoryTier)((y.RankFlags >> 3) & 3);
+        var tieX = RankPolicy.HistoryTie(isHistoryOnly: false, tierX, x.HistoryScoreX100);
+        var tieY = RankPolicy.HistoryTie(isHistoryOnly: false, tierY, y.HistoryScoreX100);
+        var prioX = PriorityOrderOf(x);
+        var prioY = PriorityOrderOf(y);
         // Fork: the left edge, contiguity and coverage lead the keys inside a section, so they have to reach
         // the kernel. All three live in the high 32 bits the engine packed (start << 24, coverage at 13..21,
         // contiguity at 5..12); unpack them here instead of widening the signal fields, so the packed key

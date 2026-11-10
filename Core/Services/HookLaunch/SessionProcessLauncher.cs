@@ -139,6 +139,10 @@ public static class SessionProcessLauncher
         }
     }
 
+    /// <summary>An elevated request that lands below High is a warning; an intentional lower launch is info.</summary>
+    internal static LogLevel LaunchVerdict(bool requestElevation, bool childIsHighIntegrity) =>
+        requestElevation && !childIsHighIntegrity ? LogLevel.Warn : LogLevel.Info;
+
     /// <summary>
     /// Whether an elevated launch would be granted for this session, asked without starting anything: the
     /// same <see cref="DecideElevatedToken"/> answer <see cref="TryLaunch"/> would reach. A caller that

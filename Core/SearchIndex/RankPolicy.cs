@@ -134,6 +134,22 @@ public static class RankPolicy
         return Section(s.Priority, explicitAlwaysTop, favoritePin, s.IsHistoryOnly, grade);
     }
 
+    /// <summary>Diagnostic ordinal score for trace compatibility; ordering uses the structured keys.</summary>
+    public static int DiagnosticScore(
+        RankSection section,
+        bool explicitAlwaysTop,
+        bool favoritePin,
+        MatchEvidenceGrade grade,
+        IndexRuleEffect priority,
+        HistoryTier tier) => section switch
+    {
+        RankSection.Pinned when explicitAlwaysTop => 500 - (int)grade * 10,
+        RankSection.Pinned when favoritePin => 400 - (int)grade * 10,
+        RankSection.Boosted => 300 - (int)grade * 20 + (priority == IndexRuleEffect.High ? 2 : 0) + (int)tier,
+        RankSection.Low => 100 - (int)grade * 10 + (int)tier,
+        _ => 10 + (int)tier,
+    };
+
     /// <summary>
     /// The history key, on a 0..1000 scale: how much the user actually uses this row, as the store already
     /// decayed it.
