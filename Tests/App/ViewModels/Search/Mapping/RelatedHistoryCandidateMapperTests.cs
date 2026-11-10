@@ -81,4 +81,44 @@ public sealed class RelatedHistoryCandidateMapperTests
         Assert.IsFalse(candidates.Any(candidate => candidate.NormalizedPath.Contains("Low")));
         Assert.IsTrue(candidates.All(candidate => candidate.IsHistoryOnly));
     }
+
+    [TestMethod]
+    public void NameMatchDoesNotTurnRelatedHistoryIntoADirectHit()
+    {
+        var entries = new[]
+        {
+            Entry("cca", @"C:\Docs\cc.txt"),
+        };
+
+        var candidates = RelatedHistoryCandidateMapper.Collect(
+            FuzzyQuery.Parse("cc"),
+            scope: null,
+            entries,
+            _ => true,
+            _ => false);
+
+        Assert.HasCount(1, candidates);
+        Assert.IsTrue(candidates[0].IsHistoryOnly);
+    }
+
+    [TestMethod]
+    public void FileFilterScopeExcludesRelatedHistoryOutsideItsFolders()
+    {
+        var entries = new[]
+        {
+            Entry("cca", @"C:\Allowed\cc.txt"),
+            Entry("ccb", @"C:\Outside\cc.txt"),
+        };
+
+        var candidates = RelatedHistoryCandidateMapper.Collect(
+            FuzzyQuery.Parse("cc"),
+            scope: null,
+            entries,
+            _ => true,
+            _ => false,
+            pathFilter: path => path.StartsWith(@"C:\Allowed\", StringComparison.OrdinalIgnoreCase));
+
+        Assert.HasCount(1, candidates);
+        Assert.AreEqual(@"C:\Allowed\cc.txt", candidates[0].Result.FullPath);
+    }
 }

@@ -24,7 +24,6 @@ public sealed class LiveIndex : IDisposable
     private DeltaOverlay? _delta;
     private long _revision;
     internal QueryPageCache SearchPages { get; } = new();
-    internal QueryFrontierCache SearchFrontiers { get; } = new();
 
 
     public LiveIndex(Snapshot snapshot)

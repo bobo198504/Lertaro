@@ -19,9 +19,6 @@ public static class IndexV2Searcher
             return;
 
         var parsed = SearchQueryParser.Parse(query);
-        var frontierSequence = fileNameFilter == null
-            ? index.SearchFrontiers.NextSearchSequence()
-            : 0;
         var cacheKey = parsed.IsPathMode
             ? null
             : QueryPageCache.KeyFor(query, directoryFilter, fileNameFilter, category);
@@ -29,8 +26,10 @@ public static class IndexV2Searcher
             return;
 
         var captured = cacheKey == null ? null : new List<SearchResult>(Math.Min(limit, QueryPageCache.MaxRows));
+        var emitted = 0;
         void Capture(SearchResult row)
         {
+            emitted++;
             if (captured != null && captured.Count < QueryPageCache.MaxRows)
                 captured.Add(row);
             onResult(row);
@@ -67,19 +66,13 @@ public static class IndexV2Searcher
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.parse", __parse);
             var __name = Lertaro.Core.SearchIndex.PerfTrace.Begin();
             var filePatterns = FilterPatternHelper.SplitOrNullIfMatchAll(fileNameFilter);
-            var frontier = filePatterns == null
-                ? index.SearchFrontiers.TryGetSuperset(query, searchRevision)
-                : null;
             NameSearch.SearchStreaming(snapshot, delta, pattern, limit, CacheOrOriginal(), token, directoryFilterLower,
-                filePatterns, category, frontier,
-                filePatterns == null
-                    ? hits => index.SearchFrontiers.Store(query, searchRevision, frontierSequence, hits)
-                    : null);
+                filePatterns, category);
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.nameSearch", __name);
             return null;
         });
         if (cacheKey != null)
-            index.SearchPages.Store(cacheKey, captured!, limit, searchRevision);
+            index.SearchPages.Store(cacheKey, captured!, limit, searchRevision, emitted);
         SearchPerf.Log($"[search] q='{query}' limit={limit} dir='{directoryFilter}' pathMode={parsed.IsPathMode} build={SearchPerf.BuildFlavor} total={SearchPerf.Ms(perfStart):F0}ms");
 
         Action<SearchResult> CacheOrOriginal() => cacheKey == null ? onResult : Capture;

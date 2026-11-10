@@ -44,7 +44,7 @@ public sealed class FrequentHistoryCandidateMapperTests
         var entries = new[]
         {
             Entry("ape", @"C:\Portable\Apex\Apex.exe", count: 2),
-            Entry("beta", @"C:\Portable\Beta\Beta.exe", count: 20),
+            Entry("zed", @"C:\Portable\Zed\Zed.exe", count: 20),
         };
 
         var candidates = FrequentHistoryCandidateMapper.Collect(

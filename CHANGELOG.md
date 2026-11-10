@@ -5,6 +5,58 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.9.2
+
+## 更新内容
+
+上游：
+```
+本版无新增上游发行
+```
+
+本fork：
+```
+* 引擎沿用单字符一次扫描、连续前缀计分和 128 位字符掩码
+* 已完成查询页按索引版本、分类、目录、文件过滤和完整请求语义缓存
+* H3/H5 历史在匹配位置相同时优先于结果类型，快速窗口保留 8 个 H5、20 个 H3 名额
+* 高频历史路径在全局候选截断前补入，便携应用可直接出现在单字结果
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+# 查询页缓存正确回放空页和未满完成页，并区分截断页与完整页
+# 缓存键区分精确/模糊、运算符优先级和禁用别名插件
+# 大小写不敏感匹配同时归一化查询与候选文本
+# 撤销不成立的连续输入候选前沿，避免拼音别名导致漏结果
+# 相关历史召回遵守文件过滤目录并始终进入弱历史尾部
+# 修复插件架构不一致导致部分插件无法加载
+```
+
+## What's changed
+
+Upstream:
+```
+No new upstream release in this build
+```
+
+This fork:
+```
+* Keeps single-pass single-character matching, contiguous-prefix scoring and the 128-bit character mask
+* Completed pages are cached by index revision, category, directory, file filter and full request semantics
+* H3/H5 history outranks result type at equal match placement, with 8 H5 and 20 H3 slots in the quick window
+* High-use history paths are injected before the global candidate cut, so portable apps can appear from one-letter queries
+* Confirmed query associations add at most two weak related recalls, always after direct matches
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+# Cached query pages safely replay empty and underfull completed pages, and distinguish truncated captures
+# Cache keys separate exact/fuzzy mode, operator precedence and disabled alias providers
+# Case-insensitive matching normalizes both the query and candidate text
+# Removed the unsound typed-query candidate frontier, which could miss results through pinyin aliases
+# Related-history recall now honours file-filter folders and always stays in the weak history tail
+# Fixed plugin architecture mismatches that prevented some plugins from loading
+```
+
 ## v5.12.9.1
 
 ## 更新内容

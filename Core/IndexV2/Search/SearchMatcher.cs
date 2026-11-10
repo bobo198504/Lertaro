@@ -195,13 +195,14 @@ internal static class SearchMatcher
                     var candidateEnd = Math.Min(start + ChunkSize, candidateUids.Count);
                     var candidateMasks = snapshot.UniqueMasksLo;
                     var candidateMasksHi = snapshot.UniqueMasksHi;
+                    var needsOrSets = ctx.OrSetMasks.Length != 0;
                     for (var index = start; index < candidateEnd; index++)
                     {
                         var uid = candidateUids[index];
                         if (ctx.CanFilter
-                            && (((candidateMasks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
-                                || ((candidateMasksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
-                                || !PassesOrSets(new UInt128(candidateMasksHi[uid], candidateMasks[uid]), ctx.OrSetMasks)))
+                            && ((ctx.RequiredMaskLo != 0 && (candidateMasks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
+                                || (ctx.RequiredMaskHi != 0 && (candidateMasksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
+                                || (needsOrSets && !PassesOrSets(new UInt128(candidateMasksHi[uid], candidateMasks[uid]), ctx.OrSetMasks))))
                             continue;
                         MatchOne(snapshot, ctx, uid, worker, fileNamePatterns);
                     }
@@ -218,40 +219,95 @@ internal static class SearchMatcher
                 {
                     ref var lo0 = ref MemoryMarshal.GetReference(masks);
                     ref var hi0 = ref MemoryMarshal.GetReference(masksHi);
-                    var requiredLo = Vector256.Create(ctx.RequiredMaskLo);
-                    var requiredHi = Vector256.Create(ctx.RequiredMaskHi);
-                    var i = start;
-                    for (; i + 4 <= end; i += 4)
+                    var needsOrSets = ctx.OrSetMasks.Length != 0;
+                    if (ctx.RequiredMaskLo != 0 && ctx.RequiredMaskHi != 0)
                     {
-                        var vLo = Vector256.LoadUnsafe(ref Unsafe.Add(ref lo0, i));
-                        var vHi = Vector256.LoadUnsafe(ref Unsafe.Add(ref hi0, i));
-                        var bits = Vector256.Equals(Vector256.BitwiseAnd(vLo, requiredLo), requiredLo).ExtractMostSignificantBits()
-                                 & Vector256.Equals(Vector256.BitwiseAnd(vHi, requiredHi), requiredHi).ExtractMostSignificantBits();
-                        if (bits == 0)
-                            continue;
-                        for (var lane = 0; lane < 4; lane++)
+                        var requiredLo = Vector256.Create(ctx.RequiredMaskLo);
+                        var requiredHi = Vector256.Create(ctx.RequiredMaskHi);
+                        var i = start;
+                        for (; i + 4 <= end; i += 4)
                         {
-                            if ((bits & (1u << lane)) != 0
-                                && PassesOrSets(new UInt128(masksHi[i + lane], masks[i + lane]), ctx.OrSetMasks))
-                                MatchOne(snapshot, ctx, i + lane, worker, fileNamePatterns);
+                            var vLo = Vector256.LoadUnsafe(ref Unsafe.Add(ref lo0, i));
+                            var vHi = Vector256.LoadUnsafe(ref Unsafe.Add(ref hi0, i));
+                            var bits = Vector256.Equals(Vector256.BitwiseAnd(vLo, requiredLo), requiredLo).ExtractMostSignificantBits()
+                                     & Vector256.Equals(Vector256.BitwiseAnd(vHi, requiredHi), requiredHi).ExtractMostSignificantBits();
+                            if (bits == 0)
+                                continue;
+                            for (var lane = 0; lane < 4; lane++)
+                            {
+                                if ((bits & (1u << lane)) != 0
+                                    && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i + lane], masks[i + lane]), ctx.OrSetMasks)))
+                                    MatchOne(snapshot, ctx, i + lane, worker, fileNamePatterns);
+                            }
+                        }
+                        for (; i < end; i++)
+                        {
+                            if ((masks[i] & ctx.RequiredMaskLo) == ctx.RequiredMaskLo
+                                && (masksHi[i] & ctx.RequiredMaskHi) == ctx.RequiredMaskHi
+                                && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i], masks[i]), ctx.OrSetMasks)))
+                                MatchOne(snapshot, ctx, i, worker, fileNamePatterns);
                         }
                     }
-                    for (; i < end; i++)
+                    else if (ctx.RequiredMaskLo != 0)
                     {
-                        if ((masks[i] & ctx.RequiredMaskLo) == ctx.RequiredMaskLo
-                            && (masksHi[i] & ctx.RequiredMaskHi) == ctx.RequiredMaskHi
-                            && PassesOrSets(new UInt128(masksHi[i], masks[i]), ctx.OrSetMasks))
-                            MatchOne(snapshot, ctx, i, worker, fileNamePatterns);
+                        var requiredLo = Vector256.Create(ctx.RequiredMaskLo);
+                        var i = start;
+                        for (; i + 4 <= end; i += 4)
+                        {
+                            var bits = Vector256.Equals(
+                                Vector256.BitwiseAnd(Vector256.LoadUnsafe(ref Unsafe.Add(ref lo0, i)), requiredLo),
+                                requiredLo).ExtractMostSignificantBits();
+                            if (bits == 0)
+                                continue;
+                            for (var lane = 0; lane < 4; lane++)
+                            {
+                                if ((bits & (1u << lane)) != 0
+                                    && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i + lane], masks[i + lane]), ctx.OrSetMasks)))
+                                    MatchOne(snapshot, ctx, i + lane, worker, fileNamePatterns);
+                            }
+                        }
+                        for (; i < end; i++)
+                        {
+                            if ((masks[i] & ctx.RequiredMaskLo) == ctx.RequiredMaskLo
+                                && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i], masks[i]), ctx.OrSetMasks)))
+                                MatchOne(snapshot, ctx, i, worker, fileNamePatterns);
+                        }
+                    }
+                    else
+                    {
+                        var requiredHi = Vector256.Create(ctx.RequiredMaskHi);
+                        var i = start;
+                        for (; i + 4 <= end; i += 4)
+                        {
+                            var bits = Vector256.Equals(
+                                Vector256.BitwiseAnd(Vector256.LoadUnsafe(ref Unsafe.Add(ref hi0, i)), requiredHi),
+                                requiredHi).ExtractMostSignificantBits();
+                            if (bits == 0)
+                                continue;
+                            for (var lane = 0; lane < 4; lane++)
+                            {
+                                if ((bits & (1u << lane)) != 0
+                                    && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i + lane], masks[i + lane]), ctx.OrSetMasks)))
+                                    MatchOne(snapshot, ctx, i + lane, worker, fileNamePatterns);
+                            }
+                        }
+                        for (; i < end; i++)
+                        {
+                            if ((masksHi[i] & ctx.RequiredMaskHi) == ctx.RequiredMaskHi
+                                && (!needsOrSets || PassesOrSets(new UInt128(masksHi[i], masks[i]), ctx.OrSetMasks)))
+                                MatchOne(snapshot, ctx, i, worker, fileNamePatterns);
+                        }
                     }
                 }
                 else
                 {
+                    var needsOrSets = ctx.OrSetMasks.Length != 0;
                     for (var uid = start; uid < end; uid++)
                     {
                         if (ctx.CanFilter
-                            && (((masks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
-                                || ((masksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
-                                || !PassesOrSets(new UInt128(masksHi[uid], masks[uid]), ctx.OrSetMasks)))
+                            && ((ctx.RequiredMaskLo != 0 && (masks[uid] & ctx.RequiredMaskLo) != ctx.RequiredMaskLo)
+                                || (ctx.RequiredMaskHi != 0 && (masksHi[uid] & ctx.RequiredMaskHi) != ctx.RequiredMaskHi)
+                                || (needsOrSets && !PassesOrSets(new UInt128(masksHi[uid], masks[uid]), ctx.OrSetMasks))))
                             continue;
                         MatchOne(snapshot, ctx, uid, worker, fileNamePatterns);
                     }
