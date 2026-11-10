@@ -154,7 +154,7 @@ public sealed class FzfSingleCharacterFastPathTests
         var bestPos = -1;
         for (var i = 0; i < scopedLength; i++)
         {
-            if (chars[i] != pattern)
+            if (!FzfCharTables.CharsEqual(chars[i], pattern, caseSensitive))
                 continue;
             var score = FzfAlgorithm.ScoreMatch + bonus[i] * FzfAlgorithm.BonusFirstCharMultiplier;
             if (score <= bestScore)
