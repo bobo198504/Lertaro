@@ -12,6 +12,17 @@ public sealed class SessionProcessLauncherTests
     private static string[] Entries(string block) => block.Split('\0', StringSplitOptions.RemoveEmptyEntries);
 
     [TestMethod]
+    [DataRow(true, true, "LinkedAdminToken")]
+    [DataRow(true, false, "LinkedAdminToken")]
+    [DataRow(false, true, "OwnTokenIsElevated")]
+    [DataRow(false, false, "Refused")]
+    public void ElevatedLaunch_PrefersLinkedTokenThenOwnTokenThenRefuses(bool linkedTokenIsAdmin, bool ownTokenIsAdmin, string expected) =>
+        // Refusing here is what took a standard user's global hotkeys away (issue #466): the hook works
+        // unelevated, so its caller retries one level down on this refusal while the updater keeps treating
+        // it as fatal.
+        Assert.AreEqual(expected, SessionProcessLauncher.DecideElevatedToken(linkedTokenIsAdmin, ownTokenIsAdmin).ToString());
+
+    [TestMethod]
     [DataRow("DOTNET_STARTUP_HOOKS=C:\\Users\\testuser\\hook.dll")]
     [DataRow("dotnet_startup_hooks=C:\\Users\\testuser\\hook.dll")]
     [DataRow("DOTNET_ROOT=C:\\Users\\testuser\\runtime")]
@@ -61,5 +72,16 @@ public sealed class SessionProcessLauncherTests
         Assert.EndsWith("\0\0", filtered);
         Assert.IsFalse(filtered.EndsWith("\0\0\0", StringComparison.Ordinal));
         CollectionAssert.AreEqual(new[] { "=C:=C:\\", "A=1", "b=2" }, Entries(filtered));
+    }
+
+    // The launch reports success whichever token answered, so the level it is logged at is the only signal that
+    // an elevated request quietly handed over a child that still cannot reach an elevated window. Not asking at
+    // all is the configured choice, and a Medium child is exactly what was wanted then.
+    [TestMethod]
+    public void LaunchVerdict_WarnsWhenAnElevatedRequestLandsBelowHigh()
+    {
+        Assert.AreEqual(LogLevel.Warn, SessionProcessLauncher.LaunchVerdict(requestElevation: true, childIsHighIntegrity: false));
+        Assert.AreEqual(LogLevel.Info, SessionProcessLauncher.LaunchVerdict(requestElevation: true, childIsHighIntegrity: true));
+        Assert.AreEqual(LogLevel.Info, SessionProcessLauncher.LaunchVerdict(requestElevation: false, childIsHighIntegrity: false));
     }
 }

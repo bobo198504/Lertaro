@@ -10,6 +10,20 @@ namespace Lertaro.App.Tests.ViewModels.Search;
 public sealed class SearchResultTypePriorityTests
 {
     [TestMethod]
+    public void FilesComesFirst_ReadsTheTopOfTheSavedOrder()
+    {
+        Assert.IsTrue(SearchResultTypePriority.FilesComesFirst(
+            [SearchResultTypePriority.FilesTypeId, "apps", "settings"]));
+        Assert.IsFalse(SearchResultTypePriority.FilesComesFirst(
+            ["apps", SearchResultTypePriority.FilesTypeId, "settings"]));
+        Assert.IsFalse(SearchResultTypePriority.FilesComesFirst(
+            ["apps", "settings", SearchResultTypePriority.FilesTypeId]));
+        // No saved order at all is not "Files first": unlisted types stay neutral and the cap keeps applying.
+        Assert.IsFalse(SearchResultTypePriority.FilesComesFirst([]));
+        Assert.IsFalse(SearchResultTypePriority.FilesComesFirst(["apps", "settings"]));
+    }
+
+    [TestMethod]
     public void BuildRanks_MatchesTheListOverload()
     {
         var orders = new[]
@@ -124,6 +138,38 @@ public sealed class SearchResultTypePriorityTests
         Assert.AreEqual(1, SearchResultTypePriority.RankForResultKind("Settings", providers, appFirst));
         Assert.AreEqual(int.MaxValue, SearchResultTypePriority.RankForResultKind(
             SearchResultTypePriority.ApplicationResultKind, providers, SearchResultTypePriority.BuildRanks([])));
+    }
+
+    [TestMethod]
+    public void RankForApplication_FallsBackToTheBestNonFilesRankWhenNoProviderIsLoaded()
+    {
+        var ranks = SearchResultTypePriority.BuildRanks(
+            [SearchResultTypePriority.FilesTypeId, "settings", "third"]);
+
+        // The Start Menu provider is absent, so no provider declares "Application"; a .lnk must still
+        // borrow the best listed non-Files bucket instead of staying on the Files rank.
+        Assert.AreEqual(1, SearchResultTypePriority.RankForApplication([], ranks));
+    }
+
+    [TestMethod]
+    public void RankForApplication_PrefersTheProviderThatDeclaresApplication()
+    {
+        ISearchableItemProvider[] providers = [new FakeAppProvider(), new FakeSettingsProvider()];
+        var appId = SearchResultTypePriority.GetProviderTypeId(providers[0]);
+        var settingsId = SearchResultTypePriority.GetProviderTypeId(providers[1]);
+        var ranks = SearchResultTypePriority.BuildRanks(
+            [settingsId, appId, SearchResultTypePriority.FilesTypeId]);
+
+        Assert.AreEqual(1, SearchResultTypePriority.RankForApplication(providers, ranks));
+    }
+
+    [TestMethod]
+    public void IsCoreTypeRank_OnlyAcceptsTheThreeBuiltInBuckets()
+    {
+        Assert.IsTrue(SearchResultTypePriority.IsCoreTypeRank(0));
+        Assert.IsTrue(SearchResultTypePriority.IsCoreTypeRank(2));
+        Assert.IsFalse(SearchResultTypePriority.IsCoreTypeRank(3));
+        Assert.IsFalse(SearchResultTypePriority.IsCoreTypeRank(int.MaxValue));
     }
 
     private sealed class FakeAppProvider : ISearchableItemProvider

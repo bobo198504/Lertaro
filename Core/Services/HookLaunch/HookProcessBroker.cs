@@ -6,8 +6,8 @@ namespace Lertaro.Core.Services.HookLaunch;
 // Runs inside the SYSTEM-privileged --service process. Every hook launch -- elevated or not -- goes
 // through here rather than the App spawning its own child process, so the App never has to hold a
 // runas/UAC fallback of its own. The actual cross-session launch is SessionProcessLauncher's; this type
-// adds the one thing specific to hooks: a per-session record of the live process, so repeated requests
-// don't spawn duplicates.
+// adds the two things specific to hooks: a per-session record of the live process, so repeated requests
+// don't spawn duplicates, and the rule that a record only answers a request at the level it actually is.
 public static class HookProcessBroker
 {
     private static readonly ConcurrentDictionary<int, Process> _liveHooks = new();

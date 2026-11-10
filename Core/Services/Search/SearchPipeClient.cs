@@ -52,8 +52,9 @@ internal sealed class SearchPipeClient
 
     // Asks the already-running --service instance to spawn the hook process directly into this caller's
     // own session (see HookProcessBroker) -- the App itself never launches the hook process anymore, so
-    // it never has a "runas" UAC prompt of its own to show. requestElevation is only honored server-side
-    // when that session's user is genuinely an administrator; otherwise it just launches non-elevated.
+    // it never has a "runas" UAC prompt of its own to show. requestElevation is honored server-side only
+    // when that session's user is genuinely an administrator; a session with no administrator refuses the
+    // request outright, and the caller decides whether to ask again without it (see HookLaunchBroker).
     public async Task<(bool Ok, int Pid, string? Error)> RequestHookLaunchAsync(bool requestElevation, CancellationToken token = default)
     {
         var resp = await SendPipeCommandAsync(new SearchRequestMessage { Id = SearchRequestId.LaunchHook, RequestElevation = requestElevation }, token).ConfigureAwait(false);
@@ -136,10 +137,17 @@ internal sealed class SearchPipeClient
         // directions cannot interleave in one buffer.
         await using var buffered = new BufferedStream(pipe, ResponseReadBufferSize);
 
+        var perfStart = SearchPerf.Start();
+        var received = 0;
+        var gcBefore = GC.GetTotalPauseDuration();
+        var gen2Before = GC.CollectionCount(2);
         await SearchResponseBinarySerializer.ReadAsync(buffered, result =>
         {
             token.ThrowIfCancellationRequested();
+            received++;
             onResult(result);
         }, token, onNotIndexed).ConfigureAwait(false);
+        var gcMs = (GC.GetTotalPauseDuration() - gcBefore).TotalMilliseconds;
+        SearchPerf.Log($"[pipe.read] id={msg.Id} results={received} {SearchPerf.Ms(perfStart):F0}ms gc={gcMs:F0}ms gen2=+{GC.CollectionCount(2) - gen2Before}");
     }
 }

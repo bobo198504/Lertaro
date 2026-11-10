@@ -24,6 +24,13 @@ public static class SearchResultTypePriority
     // below and the app provider's own declaration cannot drift apart.
     public const string ApplicationResultKind = "Application";
 
+    // Rank 0..2 are the three built-in buckets the user asked to order explicitly (Applications, System
+    // settings, Files). Anything beyond that -- a third-party provider, or a row whose type is not listed --
+    // is neutral in the rank kernel and must not be moved by the type order.
+    public const int CoreResultTypeCount = 3;
+
+    public static bool IsCoreTypeRank(int rank) => rank >= 0 && rank < CoreResultTypeCount;
+
     public static string GetProviderTypeId(ISearchableItemProvider provider) =>
         PluginLoaderHelper.MakeId(ComponentFilter.GetDllName(provider), PluginComponentType.SearchableItemProvider, provider.GetType().Name);
 
@@ -45,6 +52,13 @@ public static class SearchResultTypePriority
 
     public static int Rank(string typeId, List<string> order) => Rank(typeId, BuildRanks(order));
 
+    // "Files comes first": the file bucket is the top of the user's saved order, so no other type sits
+    // above it for the type tie-break to favour. The quick window uses this to stop capping an exact-named
+    // directory at DirectStrong (RankPolicy.GradeForRanking): with Files first the cap protects nothing and
+    // would only let a keyword-only ExactIdentity on a settings row outrank every folder.
+    public static bool FilesComesFirst(List<string> order) =>
+        order.Count > 0 && string.Equals(order[0], FilesTypeId, StringComparison.Ordinal);
+
     // The type rank of the provider(s) declaring this ResultKind -- the best one when several do.
     // int.MaxValue when none of them declares it or the type is not in the saved order, i.e. the same
     // "unlisted" fallback every other lookup uses.
@@ -59,6 +73,26 @@ public static class SearchResultTypePriority
             if (!string.Equals(provider.ItemResultKind, resultKind, StringComparison.Ordinal))
                 continue;
             rank = Math.Min(rank, Rank(GetProviderTypeId(provider), ranks));
+        }
+        return rank;
+    }
+
+    // A shortcut must still look like an application when the Start Menu provider is not loaded: the live
+    // provider is the only thing that declares ResultKind "Application", so without a fallback a .lnk stays
+    // on the Files rank and cannot be moved by the configured order at all. Use the best listed non-Files
+    // type as that fallback -- normally Applications itself, which is the first bucket in the default order.
+    public static int RankForApplication(
+        IEnumerable<ISearchableItemProvider> providers,
+        IReadOnlyDictionary<string, int> ranks)
+    {
+        var rank = RankForResultKind(ApplicationResultKind, providers, ranks);
+        if (rank != int.MaxValue)
+            return rank;
+
+        foreach (var (typeId, candidate) in ranks)
+        {
+            if (typeId != FilesTypeId)
+                rank = Math.Min(rank, candidate);
         }
         return rank;
     }

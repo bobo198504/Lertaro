@@ -32,12 +32,15 @@ Permite ajustar con precisión las dimensiones geométricas y las prioridades de
 - **Abrir ventana principal al pulsar de nuevo el atajo**: Si la Ventana rápida ya está abierta, pulsar de nuevo su atajo transfiere la búsqueda activa a la Ventana principal.
 - **Bloquear posición**: Evita que la barra se mueva accidentalmente al arrastrarla con el ratón.
 - **Rellenar automáticamente el texto del portapapeles**: Desactivado por defecto. Cuando la Ventana de búsqueda rápida se abre sin texto preintroducido, usa como consulta el texto nuevo y no vacío del portapapeles. El pegado manual y las demás ventanas no se ven afectados.
+- **Mostrar la barra de filtros por tipo**: Activado por defecto. Es la fila de pestañas de tipo bajo el cuadro de búsqueda rápida (Todo, Aplicaciones, Documentos…). Desactívalo para ceder ese espacio a la lista de resultados; al ocultar la barra el filtro vuelve a **Todo**, así que los resultados nunca quedan reducidos por un control que no ves.
+- **Recordar la última pestaña de la barra de filtros por tipo**: Desactivado por defecto, así que al cerrar la ventana rápida la barra vuelve a **Todo**; al activarlo, la siguiente apertura se hace en la pestaña donde la dejaste. Solo dura la sesión actual: al reiniciar la aplicación la barra vuelve a «Todo».
 - **Restablecer diseño**: Restaura todas las propiedades de diseño a sus valores predeterminados.
 
 ### Prioridad de tipos de resultado y activadores
 
-- **Lista de ordenación de prioridades**: Arrastra los controles para cambiar la precedencia de aplicaciones, ajustes, archivos y extensiones de plugins.
+- **Lista de ordenación de prioridades**: Arrastra los controles para decidir qué tipos van primero **entre coincidencias directas con relevancia similar**, sin superar nunca a coincidencias directas exactas.
 - **Carácter activador exclusivo**: Asigna un prefijo de un solo carácter (p. ej. `;` para Filtros de archivos) para aislar las búsquedas a ese tipo concreto.
+- **Exportación de detalles de ordenación**: En la ventana rápida, haz clic derecho en cualquier resultado y elige **Exportar los detalles de ordenación de esta página** para escribir un archivo de texto de toda la página mostrada. El ajuste **Permitir exportar los detalles de ordenación** está activado por defecto.
 
 ## 3. Ventana de búsqueda principal
 
@@ -48,7 +51,7 @@ Configura las dimensiones predeterminadas y la vista de tabla para la ventana pr
 - **Cerrar al repetir el atajo**: Desactivado por defecto, pulsar de nuevo el atajo global con la ventana completa en primer plano vuelve a la ventana de búsqueda rápida manteniendo la consulta actual, alternando entre ambas ventanas hasta pulsar `Esc`. Si se activa, al pulsarlo de nuevo se cierra directamente la ventana completa. En ambos casos, si la ventana completa está visible pero sin foco, el atajo solo la trae de vuelta al frente.
 - **Restablecer configuración de ventana**: Vuelve a los tamaños predeterminados de fábrica.
 - **Orden de columnas en la tabla**: Personaliza el orden de las columnas (Nombre, Ruta, Fecha de modificación, etc.).
-- **Orden de filtros en la barra lateral**: Reordena las categorías laterales; cada una muestra en tiempo real el recuento de coincidencias activas.
+- **Orden de filtros en la barra lateral**: Reordena los filtros de la barra lateral; cada uno muestra en tiempo real el recuento de coincidencias activas.
 - **Orden de grupos del menú de acciones**: Modifica la disposición de los grupos dentro del menú de acciones contextuales (`Ctrl+O`).
 
 ## 4. Ventana de vista previa

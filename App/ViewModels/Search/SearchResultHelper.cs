@@ -18,6 +18,9 @@ internal static class SearchResultHelper
     public static string HistoryKeywordOf(AppSearchResult result, string boxText) =>
         string.IsNullOrWhiteSpace(result.SearchQuery) ? boxText : result.SearchQuery;
 
+    public static bool IsLearnedRecall(AppSearchResult result) =>
+        result.IsLearnedAliasRecall;
+
     public static void AddSectionHeader(List<AppSearchResult> uiResults, string title, string query) => uiResults.Add(new AppSearchResult
     {
         Name = title,

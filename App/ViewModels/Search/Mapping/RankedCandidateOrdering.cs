@@ -4,46 +4,60 @@ using PriorityVerdict = Lertaro.Core.ExclusionRuleSet.PriorityVerdict;
 
 namespace Lertaro.App.ViewModels.Search.Mapping;
 
-// What this window hands the ranking kernel and what it does with the answer. Every ranking rule -- the four
-// sections, the score, the key order inside each section and the shared path tail -- lives in Core
-// (RankPolicy, RankKeyComparer), so the quick window and the full window cannot disagree; see
-// dev-docs/search-ranking-redesign.md 3.2-3.3 for the numbers and their reasons.
-//
-// Only two things are here: which row owns a path when several describe the same one, and where each row's
-// signals come from. Merging happens before the history budget, so a file the index returned and the same
-// file in the history share one row -- that is what lets an indexed row be lifted by its own history.
+// Quick-window adapter for RankPolicy. It merges paths before assigning history tiers so duplicate sources
+// share one row. Scores and comparison order remain in Core/SearchIndex.
 internal static class RankedCandidateOrdering
 {
     private const string ApplicationKind = "Application";
 
     public static List<SearchResultMapper.RankedCandidate> Order(
         List<SearchResultMapper.RankedCandidate> candidates,
-        RankContext? context = null,
-        string? query = null,
-        IReadOnlyList<string>? typeOrder = null)
+        RankContext? context = null) =>
+        OrderCore(candidates, context, captureTrace: false, out _);
+
+    /// <summary>Orders normally and retains the computed keys for final-page diagnostics.</summary>
+    internal static List<SearchResultMapper.RankedCandidate> OrderWithTrace(
+        List<SearchResultMapper.RankedCandidate> candidates,
+        RankContext? context,
+        out RankingPassTrace trace) =>
+        OrderCore(candidates, context, captureTrace: true, out trace);
+
+    private static List<SearchResultMapper.RankedCandidate> OrderCore(
+        List<SearchResultMapper.RankedCandidate> candidates,
+        RankContext? context,
+        bool captureTrace,
+        out RankingPassTrace trace)
     {
         if (candidates.Count == 0)
+        {
+            trace = captureTrace
+                ? new RankingPassTrace(
+                    0,
+                    Array.Empty<SearchResultMapper.RankedCandidate>(),
+                    Array.Empty<RankKey>(),
+                    context,
+                    Array.Empty<SearchResultMapper.RankedCandidate>())
+                : RankingPassTrace.Empty;
             return [];
+        }
 
-        var rows = MergeByPath(candidates);
+        List<SearchResultMapper.RankedCandidate>? mergedAway = captureTrace ? new() : null;
+        var rows = MergeByPath(candidates, mergedAway);
         var signals = new RankSignals[rows.Length];
         for (var i = 0; i < rows.Length; i++)
             signals[i] = ToSignals(rows[i], context);
 
+        var tierEligiblePaths = BuildTierEligiblePaths(rows, signals);
         var budget = RankPolicy.BuildHistoryBudget(
             signals,
+            tierEligiblePaths,
             context?.HistoryFiveMax ?? RankPolicy.HistoryFiveMax,
             context?.HistoryThreeMax ?? RankPolicy.HistoryThreeMax);
         var keys = new RankKey[rows.Length];
         for (var i = 0; i < rows.Length; i++)
         {
             var tier = budget.GetValueOrDefault(signals[i].NormalizedPath, HistoryTier.None);
-            // The quick window is the only consumer with a display-type order: weight the C/P score by the
-            // type's position there (favorites and history tiers are global and keep their own score).
-            keys[i] = RankPolicy.BuildKey(signals[i], tier) with
-            {
-                Score = RankPolicy.QuickScore(signals[i], tier),
-            };
+            keys[i] = RankPolicy.BuildKey(signals[i], tier, rows[i].Evidence);
             // The "frequent" badge: only the two lifted history tiers are a habit. A history-tail row
             // (fewer than three effective opens) is merely known, so it gets no badge.
             rows[i].Result.IsFrequent = tier >= HistoryTier.H3;
@@ -132,48 +146,96 @@ internal static class RankedCandidateOrdering
         return kept;
     }
 
-    // The calibration sample: the leading rows of the page the user is about to see, ranked, with the
-    // decomposition of each key. Nothing is allocated for it while the log is off.
-    private static void RecordPage(
-        string? query,
-        SearchResultMapper.RankedCandidate[] rows,
-        RankKey[] keys,
+    internal static RankingLogRow Describe(
+        SearchResultMapper.RankedCandidate candidate,
+        RankKey key,
+        int kernelRank,
         RankContext? context,
-        IReadOnlyDictionary<string, HistoryTier> budget,
-        IReadOnlyList<string>? typeOrder)
+        RankingProviderState providerState = RankingProviderState.Unknown)
     {
-        if (query is null || !RankingEventLog.IsEnabled)
-            return;
+        var signal = ToSignals(candidate, context);
+        var isApplication = IsApplication(candidate);
+        var identity = CandidateIdentity.Create(
+            candidate.Source,
+            candidate.Result.IsDir,
+            isApplication,
+            candidate.Result.Name,
+            candidate.NormalizedPath);
+        return new RankingLogRow(
+            candidate.NormalizedPath,
+            kernelRank,
+            (RankSection)key.Section,
+            key.Score,
+            key.TypeRank,
+            signal.Priority,
+            // The effective tier, not the raw budget entry: a Grade 2/3 row never reads the tier, so
+            // reporting the budget's label here would explain an order the key did not produce.
+            key.Tier,
+            key.HistoryTie,
+            signal.Match,
+            signal.IsFavorite,
+            signal.IsHistoryOnly,
+            signal.IsDir,
+            isApplication,
+            candidate.Source,
+            candidate.Result.SourceProvider?.GetType().Name,
+            providerState,
+            candidate.Evidence,
+            identity);
+    }
 
-        var taken = Math.Min(rows.Length, RankingEventLog.DisplayRowLimit);
-        var page = new RankingLogRow[taken];
-        for (var i = 0; i < taken; i++)
+    /// <summary>
+    /// Describes an alias-recalled row without admitting it to the production merge, history budget or
+    /// ordering pass. Offline replay can compare the complete signals; the synthetic key is intentionally
+    /// marked kernel rank -1 because no displayed rank was assigned.
+    /// </summary>
+    internal static RankingLogRow DescribeShadow(
+        SearchResultMapper.RankedCandidate candidate,
+        RankContext? context,
+        RankingProviderState providerState)
+    {
+        var signals = ToSignals(candidate, context);
+        const HistoryTier tier = HistoryTier.None;
+        var key = RankPolicy.BuildKey(signals, tier, candidate.Evidence);
+        return Describe(
+            candidate,
+            key,
+            -1,
+            context,
+            providerState);
+    }
+
+    // A lifted history tier only affects ranks it is allowed to lift (see MatchEvidenceGrade). Computing
+    // that before the budget keeps a secondary-field alias from spending an H5 slot a Grade 0/1 row
+    // would have used, since the alias can never read the lift.
+    private static HashSet<string> BuildTierEligiblePaths(
+        SearchResultMapper.RankedCandidate[] rows,
+        RankSignals[] signals)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Length; i++)
         {
-            // The pre-sort signal array is not permuted with the sort, so it cannot be indexed in step
-            // with the rows. Rebuilding the row's own signals keeps the logged decomposition attached
-            // to the row it belongs to; only the page's leading rows pay for it.
-            var signal = ToSignals(rows[i], context);
-            page[i] = new RankingLogRow(
-                rows[i].NormalizedPath,
-                i + 1,
-                (RankSection)keys[i].Section,
-                keys[i].Score,
-                keys[i].TypeRank,
-                signal.Priority,
-                budget.GetValueOrDefault(signal.NormalizedPath, HistoryTier.None),
-                keys[i].HistoryTie,
-                signal.Match,
-                signal.IsFavorite,
-                signal.IsHistoryOnly,
-                signal.IsDir,
-                IsApplication(rows[i]));
-        }
+            var signal = signals[i];
+            if (signal.IsHistoryOnly)
+            {
+                paths.Add(signal.NormalizedPath);
+                continue;
+            }
 
-        RankingEventLog.RecordQuery(query, page, typeOrder);
+            var grade = MatchEvidence.ResolveGrade(
+                rows[i].Evidence,
+                signal.Match,
+                isHistoryOnly: false,
+                isStrongMatch: signal.Match.IsStrong);
+            if (RankPolicy.IsPreferenceEligible(grade))
+                paths.Add(signal.NormalizedPath);
+        }
+        return paths;
     }
 
     private static SearchResultMapper.RankedCandidate[] MergeByPath(
-        List<SearchResultMapper.RankedCandidate> candidates)
+        List<SearchResultMapper.RankedCandidate> candidates,
+        List<SearchResultMapper.RankedCandidate>? mergedAway)
     {
         var merged = new List<SearchResultMapper.RankedCandidate>(candidates.Count);
         var slotByPath = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -187,35 +249,81 @@ internal static class RankedCandidateOrdering
                 continue;
             }
 
-            merged[slot] = PreferRow(merged[slot], candidate);
+            var previous = merged[slot];
+            var combined = PreferRow(previous, candidate);
+            mergedAway?.Add(ReferenceEquals(combined.Result, candidate.Result) ? previous : candidate);
+            merged[slot] = combined;
         }
 
         return [.. merged];
     }
 
-    // One path, several views: an indexed shortcut row ("File") and a provider's application row describe the
-    // same on-disk .lnk, and a history row can name a file the index also returned. Only the application row
-    // can launch the app, so it owns its path -- leaving the choice to the text keys used to hand the path to
-    // the plain-file view, which came back named "....lnk" with a file icon.
-    //
-    // Favorite and history are facts to combine, not reasons to pick a row, so PreferRow never looks at
-    // HistoryCount: the two views of one path share one score, and the merge below decides what it is.
+    // Application views own duplicate paths for execution; favorite, history and source signals combine.
     private static SearchResultMapper.RankedCandidate PreferRow(
         SearchResultMapper.RankedCandidate a,
         SearchResultMapper.RankedCandidate b)
     {
         var better = CompareRows(a, b);
         var winner = better <= 0 ? a : b;
+        var textOwner = PreferTextEvidence(a, b);
 
         return winner with
         {
+            // Application views continue to own execution and presentation, while every path-level signal
+            // survives a duplicate file/application merge.
             IsFavorite = a.IsFavorite || b.IsFavorite,
             HistoryCount = Math.Max(a.HistoryCount, b.HistoryCount),
             TypeRank = Math.Min(a.TypeRank, b.TypeRank),
-            // Only a path every view agrees is history-only stays that way: once the index returned the
-            // file, the row is a real name match with history on top.
+            Match = textOwner.Match,
+            // Any direct source makes the merged path a direct result.
             IsHistoryOnly = a.IsHistoryOnly && b.IsHistoryOnly,
+            Source = a.Source | b.Source,
+            Evidence = textOwner.Evidence,
         };
+    }
+
+    private static SearchResultMapper.RankedCandidate PreferTextEvidence(
+        SearchResultMapper.RankedCandidate a,
+        SearchResultMapper.RankedCandidate b)
+    {
+        // A learned history lookup must not lend its alias quality to a path that also has direct text.
+        if (a.IsHistoryOnly != b.IsHistoryOnly)
+            return a.IsHistoryOnly ? b : a;
+
+        var quality = MatchRank.CompareQuality(a.Match, b.Match);
+        if (quality != 0)
+            return quality < 0 ? a : b;
+
+        var evidence = CompareEvidence(a.Evidence, b.Evidence);
+        return evidence <= 0 ? a : b;
+    }
+
+    private static int CompareEvidence(MatchEvidence a, MatchEvidence b)
+    {
+        static int Grade(MatchEvidenceGrade value) =>
+            value == MatchEvidenceGrade.LegacyUnknown ? int.MaxValue : (int)value;
+        static int Known<T>(T value) where T : struct, Enum =>
+            Convert.ToInt32(value) == 0 ? int.MaxValue : Convert.ToInt32(value);
+
+        var compare = Grade(a.Grade).CompareTo(Grade(b.Grade));
+        if (compare != 0)
+            return compare;
+        compare = Known(a.Field).CompareTo(Known(b.Field));
+        if (compare != 0)
+            return compare;
+        compare = Known(a.Mode).CompareTo(Known(b.Mode));
+        if (compare != 0)
+            return compare;
+        compare = Known(a.QueryVariant).CompareTo(Known(b.QueryVariant));
+        if (compare != 0)
+            return compare;
+        compare = string.Compare(a.ProviderId, b.ProviderId, StringComparison.Ordinal);
+        if (compare != 0)
+            return compare;
+        var aStart = a.SpanStart < 0 ? int.MaxValue : a.SpanStart;
+        var bStart = b.SpanStart < 0 ? int.MaxValue : b.SpanStart;
+        compare = aStart.CompareTo(bStart);
+        return compare != 0 ? compare : b.SpanLength.CompareTo(a.SpanLength);
     }
 
     private static int CompareRows(
@@ -276,6 +384,8 @@ internal static class RankedCandidateOrdering
             IsDir: c.Result.IsDir,
             Name: c.Result.Name,
             NormalizedPath: path,
-            Drive: RankPolicy.DriveRank(c.Result.Drive));
+            Drive: RankPolicy.DriveRank(c.Result.Drive),
+            TypeRankApplies: c.TypeRankApplies,
+            DemoteDirectoryIdentity: context?.DemoteDirectoryIdentity ?? true);
     }
 }

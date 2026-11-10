@@ -73,6 +73,60 @@ public readonly struct FuzzyQuery
     public MatchRank BestMatch(string? primaryText, IEnumerable<string>? alternateTexts = null)
         => _pattern is null ? MatchRank.NoMatch : FuzzyMatcher.ComputeBestMatch(_pattern, primaryText, alternateTexts);
 
+    internal MatchEvidenceResult RankWithEvidence(
+        string? text,
+        MatchEvidenceField field,
+        string? providerId = null,
+        MatchQueryVariant variant = MatchQueryVariant.Original,
+        bool isDirectory = false)
+    {
+        var witness = AcceptedMatchWitness.LegacyUnknown;
+        var rank = _pattern is null || string.IsNullOrEmpty(text)
+            ? MatchRank.NoMatch
+            : FuzzyMatcher.ComputeMatchRank(text, _pattern, out witness);
+        if (text is null || _pattern?.HasPositiveTerms != true)
+            return new MatchEvidenceResult(rank, MatchEvidence.LegacyUnknown);
+
+        var acceptedVariant = witness.QueryVariant == MatchQueryVariant.LegacyUnknown
+            ? variant
+            : witness.QueryVariant;
+        return new MatchEvidenceResult(
+            rank,
+            MatchEvidence.Accepted(
+                Text,
+                text,
+                field,
+                rank,
+                witness.Mode,
+                acceptedVariant,
+                witness.ProviderId ?? providerId,
+                witness.SpanStart,
+                witness.SpanLength,
+                isDirectory));
+    }
+
+    internal MatchEvidenceResult BestMatchWithEvidence(
+        string? primaryText,
+        MatchEvidenceField primaryField,
+        IEnumerable<(string Text, MatchEvidenceField Field)>? alternateTexts = null,
+        string? providerId = null)
+    {
+        var best = RankWithEvidence(primaryText, primaryField, providerId);
+        if (alternateTexts == null)
+            return best;
+
+        foreach (var alternate in alternateTexts)
+        {
+            var variant = alternate.Field == MatchEvidenceField.ProviderAlias
+                ? MatchQueryVariant.ProviderAlias
+                : MatchQueryVariant.Original;
+            var candidate = RankWithEvidence(alternate.Text, alternate.Field, providerId, variant);
+            if (FuzzyMatcher.IsStronger(candidate.Rank, best.Rank))
+                best = candidate;
+        }
+        return best;
+    }
+
     public bool[] HighlightMask(string? text)
         => _pattern is null || string.IsNullOrEmpty(text) ? Array.Empty<bool>() : FuzzyMatcher.ComputeHighlightMask(text, _pattern);
 }

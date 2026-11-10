@@ -32,12 +32,15 @@ Fine-tunes the dimensions, layout, and priority rankings of the centered floatin
 - **Switch to Full Window on Second Hotkey Press**: When enabled, pressing the global summon hotkey while the Quick Window is already open transitions directly into the Full Window, carrying over your active query.
 - **Lock Position**: Prevents dragging the search bar to avoid accidental displacement.
 - **Automatically Fill Clipboard Text**: Disabled by default. When the Quick Search Window opens without pre-filled text, new non-empty clipboard text is used as the search query. Manual paste and other windows are unaffected.
+- **Show the Type Filter Bar**: Enabled by default. The row of type tabs under the quick search box (All, Applications, Documents, …). Turn it off to give the results list that space; hiding the bar also puts the filter back on **All**, so results are never narrowed by a control you cannot see.
+- **Remember the Type Filter Bar's Last Tab**: Disabled by default, so hiding the Quick Window returns the type filter bar to **All**. When enabled, the next summon reopens on the tab you left it on; this lasts for the current session only -- restarting the app puts the bar back on All.
 - **Reset Layout Settings**: Restores all search bar layout properties to initial defaults.
 
 ### Result Type Priority & Trigger Characters
 
-- **Priority Sorting List**: Drag or move items (Applications, System Settings, Files, Plugin Extensions) to adjust which types rank highest in search results.
+- **Priority Sorting List**: Drag or move items (Applications, System Settings, Files, Plugin Extensions) to decide which types come first **among similarly relevant direct matches** without overriding stronger exact matches.
 - **Exclusive Single-Character Trigger**: Assign a dedicated character prefix (e.g. `;` for File Filters) to restrict searches exclusively to that type when typed at the start of a query.
+- **Ranking Details Export**: In the quick window, right-click any result and choose **Export This Page's Ranking Details** to write one plaintext file for the whole displayed page. Nothing is logged in the background. The action is shown while **Enable ranking details export** is on (default).
 
 ## 3. Full Search Window
 

@@ -34,7 +34,7 @@ internal static class HighlightMask
         var marks = text.Length <= 512 ? stackalloc bool[text.Length] : new bool[text.Length];
         marks.Clear();
         string? materialized = null;
-        Mark(text, pattern, marks, ref materialized, RentSlab(), out _);
+        Mark(text, pattern, marks, ref materialized, RentSlab(), pinyinWitness: null, out _, out _);
 
         for (var i = 0; i < marks.Length; i++)
         {
@@ -75,8 +75,22 @@ internal static class HighlightMask
     // Match tier, shape, start position, coverage and contiguity from ONE mask pass. Every ranking
     // window needs all of them (see MatchRank), and computing them separately would build the same mask
     // several times, the alias path being the expensive one.
-    public static MatchRank ComputeRank(ReadOnlySpan<char> fullText, FzfPattern pattern)
+    public static MatchRank ComputeRank(ReadOnlySpan<char> fullText, FzfPattern pattern) =>
+        ComputeRank(fullText, pattern, out _);
+
+    internal static MatchRank ComputeRank(
+        ReadOnlySpan<char> fullText,
+        FzfPattern pattern,
+        out AcceptedMatchWitness witness) =>
+        ComputeRank(fullText, pattern, null, out witness);
+
+    internal static MatchRank ComputeRank(
+        ReadOnlySpan<char> fullText,
+        FzfPattern pattern,
+        IndexV2.Search.PinyinNameEvaluator.PinyinMatchWitness? pinyinWitness,
+        out AcceptedMatchWitness witness)
     {
+        witness = AcceptedMatchWitness.LegacyUnknown;
         if (fullText.Length == 0)
             return MatchRank.NoMatch;
 
@@ -84,13 +98,35 @@ internal static class HighlightMask
         var marks = text.Length <= 512 ? stackalloc bool[text.Length] : new bool[text.Length];
         marks.Clear();
         string? materialized = null;
-        var tier = Mark(text, pattern, marks, ref materialized, RentSlab(), out var shape);
-        var rank = RankFromMarks(marks);
+        var tier = Mark(
+            text,
+            pattern,
+            marks,
+            ref materialized,
+            RentSlab(),
+            pinyinWitness,
+            out var shape,
+            out witness);
+        var rank = RankFromMarks(marks, CountPositiveTerms(pattern));
         if (!rank.IsMatch)
             return rank;
 
-        if (map != null && rank.Start < map.Length)
-            rank = rank with { Start = map[rank.Start] };
+        if (map != null)
+        {
+            if (rank.Start < map.Length)
+                rank = rank with { Start = map[rank.Start] };
+            if (witness.SpanStart >= 0 && witness.SpanStart < map.Length)
+            {
+                var normalizedEnd = Math.Min(map.Length, witness.SpanStart + witness.SpanLength);
+                var originalStart = map[witness.SpanStart];
+                var originalEnd = normalizedEnd < map.Length ? map[normalizedEnd] : fullText.Length;
+                witness = witness with
+                {
+                    SpanStart = originalStart,
+                    SpanLength = Math.Max(0, originalEnd - originalStart),
+                };
+            }
+        }
 
         // The mask is a union across terms, so it cannot say HOW any one of them matched; Mark reports the
         // strongest tier and the folded shape, which is what decides the ordering.
@@ -108,8 +144,45 @@ internal static class HighlightMask
     // set (an OR group) the best-shaped term counts, and across sets (AND) the worst set decides -- "code
     // atlas" against "code-atlasing" is only as good as its weaker word. A set with nothing marked (the
     // match came through a route the mask cannot paint) is treated as scattered rather than guessed better.
-    private static int Mark(ReadOnlySpan<char> fullText, FzfPattern pattern, Span<bool> highlights, ref string? materialized, FzfSlab slab, out int shape)
+    private static int Mark(
+        ReadOnlySpan<char> fullText,
+        FzfPattern pattern,
+        Span<bool> highlights,
+        ref string? materialized,
+        FzfSlab slab,
+        IndexV2.Search.PinyinNameEvaluator.PinyinMatchWitness? pinyinWitness,
+        out int shape,
+        out AcceptedMatchWitness witness)
     {
+        witness = AcceptedMatchWitness.LegacyUnknown;
+        var joined = pinyinWitness ?? default;
+        // CouldHaveJoinedTerm is a cheap, pattern-only precondition for HasJoinedBranch: when it is false
+        // the evaluator would always answer "no joined branch" anyway, so this skips looking one up at
+        // all for the overwhelmingly common bare single-word query -- every call this function gets for a
+        // plain query like "e" used to pay a PinyinNameEvaluator.ForPattern lookup for nothing.
+        if (pinyinWitness is null && pattern.CouldHaveJoinedTerm)
+        {
+            // No accepted witness from the caller: ask the evaluator which branch won. A caller that already
+            // holds the matcher's answer must not ask twice -- the second TryScore scored the same text a
+            // second time for every multi-term row whose joined branch lost.
+            var live = IndexV2.Search.PinyinNameEvaluator.ForPattern(pattern);
+            if (!live.HasJoinedBranch || !live.TryScore(fullText, null, out _, out joined) || !joined.IsJoined)
+                joined = default;
+        }
+        if (joined.IsJoined)
+        {
+            for (var i = joined.Start; i < joined.End && i < highlights.Length; i++)
+                highlights[i] = true;
+            shape = MatchRank.ShapeWordStart;
+            witness = new AcceptedMatchWitness(
+                PinyinMode(joined.Tier),
+                MatchQueryVariant.PinyinJoined,
+                joined.ProviderName,
+                joined.Start,
+                joined.End - joined.Start);
+            return joined.Tier;
+        }
+
         var tier = MatchRank.TierFullRare;
         shape = MatchRank.ShapeWholeWord;
         foreach (var set in pattern.EffectiveSets)
@@ -250,16 +323,33 @@ internal static class HighlightMask
         return foundAny;
     }
 
+    private static MatchEvidenceMode PinyinMode(int tier) => tier switch
+    {
+        MatchRank.TierInitials => MatchEvidenceMode.PinyinInitials,
+        MatchRank.TierFullRare => MatchEvidenceMode.PinyinRare,
+        _ => MatchEvidenceMode.PinyinFull,
+    };
+
     // The ranking measure for one candidate's mask: how much of the string the match covers, weighted by
     // how contiguous that coverage is (coverage * contiguity). Shape is filled in by ComputeRank, which
     // knows which path produced the mask; the mask alone cannot classify the term.
-    private static MatchRank RankFromMarks(ReadOnlySpan<bool> mask)
+    //
+    // A multi-term query is allowed to have one run per term: "cf wj" against "cf 桌面文件" is two clean
+    // terms, not one broken span. Counting runs (instead of the single-run sum of squares) gives such a
+    // match contiguity 1, so Coverage decides between it and a single-term hit. A term that is itself
+    // scattered still adds extra runs and keeps contiguity below 1.
+    //
+    // ponytail: runs are counted on the union mask, so an OR set whose alternatives both appear adds
+    // extra runs for one typed term. Per-term masks would be exact but would double the matcher work on
+    // the hot path; revisit if an OR-heavy query starts mis-ranking.
+    private static MatchRank RankFromMarks(ReadOnlySpan<bool> mask, int positiveTermCount)
     {
         if (mask.Length == 0)
             return MatchRank.NoMatch;
 
         var matchedLength = 0;
         var leftmost = -1;
+        var runCount = 0;
         var sumOfSquares = 0L;
         var runLength = 0;
         for (var i = 0; i < mask.Length; i++)
@@ -268,6 +358,7 @@ internal static class HighlightMask
             {
                 if (runLength > 0)
                 {
+                    runCount++;
                     sumOfSquares += (long)runLength * runLength;
                     runLength = 0;
                 }
@@ -280,13 +371,36 @@ internal static class HighlightMask
             runLength++;
         }
         if (runLength > 0)
+        {
+            runCount++;
             sumOfSquares += (long)runLength * runLength;
+        }
 
         if (matchedLength == 0)
             return MatchRank.NoMatch;
 
         var coverage = (double)matchedLength / mask.Length;
-        var contiguity = (double)sumOfSquares / ((long)matchedLength * matchedLength);
+        var contiguity = positiveTermCount > 1
+            ? Math.Min(1d, (double)positiveTermCount / runCount)
+            : (double)sumOfSquares / ((long)matchedLength * matchedLength);
         return new MatchRank(MatchRank.TierFull, leftmost, coverage, contiguity);
+    }
+
+    private static int CountPositiveTerms(FzfPattern pattern)
+    {
+        var count = 0;
+        foreach (var set in pattern.EffectiveSets)
+        {
+            foreach (var term in set.Terms)
+            {
+                if (!term.Inverse)
+                {
+                    count++;
+                    break;
+                }
+            }
+        }
+
+        return count;
     }
 }

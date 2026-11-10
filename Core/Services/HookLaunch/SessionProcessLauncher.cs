@@ -52,6 +52,7 @@ public static class SessionProcessLauncher
             }
 
             var launchToken = userToken;
+            var tokenSource = "session";
             if (requestElevation)
             {
                 // The caller needs an elevated child and cannot act without one -- the updater refuses to run
@@ -106,6 +107,20 @@ public static class SessionProcessLauncher
             pid = processInfo.dwProcessId;
             if (processInfo.hProcess != IntPtr.Zero) CloseHandle(processInfo.hProcess);
             if (processInfo.hThread != IntPtr.Zero) CloseHandle(processInfo.hThread);
+
+            // What was asked for, which token answered, and what the child actually came out as. The role and
+            // the label are different facts and only the label decides UIPI: a launch can be granted the linked
+            // administrator token, report itself as elevated, and still land at Medium -- which is exactly the
+            // shape of "the card appears but the path never arrives", and until now the caller only heard
+            // success. Read both before the handles close.
+            var childRid = ElevationManager.TryGetIntegrityRid(pid);
+            var tokenRead = ElevationManager.TryGetTokenIntegrityRid(launchToken, out var tokenRid);
+            Logger.Log(
+                $"[UsnService] Launched PID {pid} ({Path.GetFileName(exePath)} {arguments}) in session {sessionId}: "
+                + $"asked={(requestElevation ? "elevated" : "session level")}, source={tokenSource}, "
+                + $"token={(tokenRead ? ElevationManager.IntegrityName(tokenRid) : "unreadable")}, "
+                + $"child={(childRid is { } level ? $"{ElevationManager.IntegrityName(level)} (0x{level:x})" : "unreadable")}.",
+                LaunchVerdict(requestElevation, childRid is { } child && ElevationManager.IsHighRid(child)));
 
             return true;
         }

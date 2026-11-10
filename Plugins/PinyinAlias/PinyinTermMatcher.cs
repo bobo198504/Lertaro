@@ -119,6 +119,17 @@ internal sealed class PinyinTermMatcher : IAliasTermMatcher
         ulong whole = 0;
         ulong prefix = 0;
         for (var k = 0; k < count; k++)
+            next |= Consume(states, readings[k]);
+        return next;
+    }
+
+    private ulong Consume(ulong states, string reading)
+    {
+        // Every non-empty prefix of the syllable: after k letters, `t` holds the positions
+        // reached. 'v' (ü) also accepts 'u'.
+        var t = states;
+        ulong next = 0;
+        foreach (var letter in reading)
         {
             // Walk the syllable's letters. `t` after every letter is a prefix of it; only the state after the
             // FINAL letter is the syllable consumed whole. An initial is the first letter, which is a prefix and

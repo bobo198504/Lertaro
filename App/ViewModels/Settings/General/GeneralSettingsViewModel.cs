@@ -19,6 +19,7 @@ public class GeneralSettingsViewModel : ViewModelBase
     // Staged per the class-level rule, except PreferredLanguage further down, which writes straight
     // through to _userSettings so the UI retranslates live.
     private bool _startWithWindows;
+    private bool _requestElevatedHook;
     private bool _autoCheckUpdates;
     private bool _autoSilentUpdate;
     private bool _enableHardwareAcceleration;
@@ -55,6 +56,7 @@ public class GeneralSettingsViewModel : ViewModelBase
         PreviewWindow = new PreviewWindowSettingsViewModel(userSettings);
         MainWindow = new MainWindowSettingsViewModel(userSettings);
         FileManager = new DefaultFileManagerSettingsViewModel(userSettings);
+        UpdateMirrors = new UpdateMirrorSettingsViewModel(userSettings);
         QuickNavigationOrder = new QuickNavigationOrderViewModel(userSettings);
         ResultTypeOrder = new ResultTypeOrderViewModel(userSettings);
         SidebarGroupOrder = new SidebarGroupOrderViewModel(userSettings);
@@ -64,6 +66,7 @@ public class GeneralSettingsViewModel : ViewModelBase
         ThumbnailProviderOrder = new ThumbnailProviderOrderViewModel(userSettings);
 
         _startWithWindows = userSettings.StartWithWindows;
+        _requestElevatedHook = userSettings.RequestElevatedHook;
         _autoCheckUpdates = userSettings.AutoCheckUpdates;
         _autoSilentUpdate = userSettings.AutoSilentUpdate;
         _enableHardwareAcceleration = userSettings.EnableHardwareAcceleration;
@@ -151,6 +154,14 @@ public class GeneralSettingsViewModel : ViewModelBase
     {
         get => _startWithWindows;
         set => SetProperty(ref _startWithWindows, value);
+    }
+
+    // Off means the App never asks for an elevated hook; see UserSettings for what that costs. Applied by
+    // relaunching the hook, so this row takes effect without restarting Lertaro.
+    public bool RequestElevatedHook
+    {
+        get => _requestElevatedHook;
+        set => SetProperty(ref _requestElevatedHook, value);
     }
 
     public bool AutoCheckUpdates
@@ -334,6 +345,7 @@ public class GeneralSettingsViewModel : ViewModelBase
         this,
         _userSettings,
         _startWithWindows,
+        _requestElevatedHook,
         _autoCheckUpdates,
         _autoSilentUpdate,
         _enableHardwareAcceleration,
@@ -356,6 +368,7 @@ public class GeneralSettingsViewModel : ViewModelBase
     public PreviewWindowSettingsViewModel PreviewWindow { get; }
     public MainWindowSettingsViewModel MainWindow { get; }
     public DefaultFileManagerSettingsViewModel FileManager { get; }
+    public UpdateMirrorSettingsViewModel UpdateMirrors { get; }
     public QuickNavigationOrderViewModel QuickNavigationOrder { get; }
     public ResultTypeOrderViewModel ResultTypeOrder { get; }
     public SidebarGroupOrderViewModel SidebarGroupOrder { get; }

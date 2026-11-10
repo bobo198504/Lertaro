@@ -1,4 +1,5 @@
 using Lertaro.PluginSdk.Abstractions.Plugins;
+using Lertaro.App.Services;
 using Lertaro.Core;
 
 using Lertaro.App.Services.Plugin;
@@ -8,6 +9,12 @@ namespace Lertaro.App.ViewModels.Search.Mapping;
 
 public static class SearchableItemMapper
 {
+    internal readonly record struct ShadowAliasCandidate(
+        AppSearchResult Result,
+        MatchRank Match,
+        MatchEvidence Evidence,
+        ISearchableItemProvider Provider);
+
     public static void Preload() => SearchableItemCache.Preload();
 
     // A learned Application history entry retains only its launched path. Reuse the cached provider
@@ -51,9 +58,12 @@ public static class SearchableItemMapper
     // the caller (SearchResultMapper.BuildQuickResults) merges these into one globally sorted list
     // alongside favorites/history-matched files/file-search results, rather than always showing every
     // searchable item ahead of every file result regardless of which actually matched better.
-    public static List<(AppSearchResult Result, MatchRank Match)> CollectSearchableItemResults(string query, bool isInlineWindow)
+    internal static List<(AppSearchResult Result, MatchRank Match, MatchEvidence Evidence)> CollectSearchableItemResults(
+        string query,
+        bool isInlineWindow,
+        List<ShadowAliasCandidate>? shadowAliases = null)
     {
-        var candidates = new List<(AppSearchResult Result, MatchRank Match)>();
+        var candidates = new List<(AppSearchResult Result, MatchRank Match, MatchEvidence Evidence)>();
         if (isInlineWindow) return candidates;
 
         var q = query?.Trim() ?? string.Empty;
@@ -69,7 +79,7 @@ public static class SearchableItemMapper
         // match rank the file search hot path uses (FuzzyMatcher.ComputeBestMatch, against the entry's
         // own title -- same text TextHighlighter shows), instead of a fixed match-kind bucket order capped
         // PER PROVIDER.
-        var matched = new List<(SearchableItemCache.CacheEntry Entry, MatchRank Match, ISearchableItemProvider Provider, string ActiveQuery)>();
+        var matched = new List<(SearchableItemCache.CacheEntry Entry, MatchRank Match, MatchEvidence Evidence, string? MatchedSecondaryText, ISearchableItemProvider Provider, string ActiveQuery)>();
 
         foreach (var provider in PluginManager.Instance.SearchableItemProviders)
         {
@@ -80,30 +90,54 @@ public static class SearchableItemMapper
 
             foreach (var entry in entries)
             {
-                // The standard match contract (FuzzyMatcher.ComputeBestMatch): title first,
-                // then each curated alias, via the same FzfPattern Parse Core's real file search uses
-                // -- a multi-word query like "gsh ypfq" correctly requires BOTH words to match
-                // somewhere. (Keyword-scoped directory search used to live here as a FileFilter_
-                // ResultKind routing over materialized files; it is now a real scoped engine search --
-                // see FileFilterScopeResolver.)
-                var match = MatchCatalogEntry(fuzzy, queryWords, entry);
-                if (match.IsMatch)
-                    matched.Add((entry, match, provider, q));
+                var providerId = provider.GetType().Name;
+                var match = MatchCatalogEntryWithProvenance(fuzzy, queryWords, entry, providerId);
+                if (match.Result.Rank.IsMatch)
+                {
+                    matched.Add((entry, match.Result.Rank, match.Result.Evidence, match.MatchedSecondaryText, provider, q));
+                    continue;
+                }
+
+                // Scattered secondary-alias matches stay excluded from the active candidate set (#440),
+                // while still observable on the shadow diagnostic channel when tracing is enabled.
+                if (shadowAliases != null)
+                {
+                    var shadow = MatchShadowAliases(fuzzy, entry, providerId);
+                    if (shadow.Rank.IsMatch)
+                    {
+                        var built = BuildCandidate(entry, provider, q, shadow.Rank);
+                        shadowAliases.Add(new ShadowAliasCandidate(
+                            built.Result, built.Match, shadow.Evidence, provider));
+                    }
+                }
             }
         }
 
-        // The final merge/order applies the shared quality ladder; there is no separate 50-item cut here,
-        // because a cut by a different key can drop a row the real ladder would have kept.
         var matches = matched.OrderBy(m => m.Match, MatchRankQualityComparer.Instance);
-        foreach (var (entry, match, provider, activeQuery) in matches)
+        foreach (var (entry, match, evidence, matchedSecondaryText, provider, activeQuery) in matches)
         {
-            candidates.Add(BuildCandidate(entry, provider, activeQuery, match));
+            var built = BuildCandidate(entry, provider, activeQuery, match, evidence.Field, matchedSecondaryText);
+            candidates.Add((built.Result, built.Match, evidence));
         }
 
         return candidates;
     }
 
-    internal static MatchRank MatchCatalogEntry(FuzzyQuery query, string[] queryWords, SearchableItemCache.CacheEntry entry)
+    internal static MatchRank MatchCatalogEntry(FuzzyQuery query, string[] queryWords, SearchableItemCache.CacheEntry entry) =>
+        MatchCatalogEntryWithEvidence(query, queryWords, entry, null).Rank;
+
+    internal static MatchEvidenceResult MatchCatalogEntryWithEvidence(
+        FuzzyQuery query,
+        string[] queryWords,
+        SearchableItemCache.CacheEntry entry,
+        string? providerId) =>
+        MatchCatalogEntryWithProvenance(query, queryWords, entry, providerId).Result;
+
+    internal static (MatchEvidenceResult Result, string? MatchedSecondaryText) MatchCatalogEntryWithProvenance(
+        FuzzyQuery query,
+        string[] queryWords,
+        SearchableItemCache.CacheEntry entry,
+        string? providerId)
     {
         // The title's own match comes first. Its Start is the position inside the name the user reads on
         // screen, and that is the position the ranking ladder orders by -- file rows get theirs the same way
@@ -122,16 +156,104 @@ public static class SearchableItemMapper
             return byAlternate with { Start = 0 };
 
         // Match Windows Control Panel task links: every query token prefixes a title/keyword word.
-        // Keyword-only hits have no title highlight evidence, so retain zero weight as a fallback.
-        return queryWords.Length > 0 && queryWords.All(token => entry.KeywordWords.Any(
-                word => word.StartsWith(token, StringComparison.OrdinalIgnoreCase)))
-            ? new MatchRank(MatchRank.TierFull, 0, 0, 0, MatchRank.ShapeScattered)
-            : MatchRank.NoMatch;
+        if (queryWords.Length > 0 && queryWords.All(token => entry.KeywordWords.Any(
+                word => word.StartsWith(token, StringComparison.OrdinalIgnoreCase))))
+        {
+            // A declared keyword is a synonym for the settings/application row, not a scattered guess.
+            // Prefer the shortest matching word so "env" scores against "envvar" rather than "environment".
+            var matchedWords = queryWords.Select(token => entry.KeywordWords
+                .Where(word => word.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(word => word.Length)
+                .First()).ToArray();
+            var coverage = matchedWords.Select((word, i) => (double)queryWords[i].Length / word.Length).Average();
+            var wholeWord = matchedWords.Select((word, i) => word.Length == queryWords[i].Length).All(match => match);
+            var rank = new MatchRank(
+                MatchRank.TierFull,
+                0,
+                coverage,
+                1,
+                wholeWord ? MatchRank.ShapeWholeWord : MatchRank.ShapeWordStart);
+            // Owner decision 2026-10-24: a clean keyword-prefix hit on a settings/application row is
+            // ExactIdentity, so the configured type order can place Settings ahead of files. A one- or
+            // two-letter Latin prefix is too ambiguous to be an identity; it still matches, but only as
+            // SecondaryField. Non-ASCII (Chinese) tokens carry enough information at one character.
+            var clean = queryWords.Select((token, i) => token.Length == matchedWords[i].Length
+                || token.Length >= 3
+                || token.Any(character => character > 0x7F)).All(isClean => isClean);
+            var evidence = new MatchEvidence(
+                MatchEvidenceField.Keyword,
+                MatchEvidenceMode.LegacyUnknown,
+                MatchQueryVariant.Original,
+                clean ? MatchEvidenceGrade.ExactIdentity : MatchEvidenceGrade.SecondaryField,
+                AllPositiveTerms: true,
+                DirectText: false,
+                ProviderId: providerId);
+            return (new MatchEvidenceResult(rank, evidence), string.Join(' ', matchedWords));
+        }
+        return (new MatchEvidenceResult(MatchRank.NoMatch, MatchEvidence.LegacyUnknown), null);
     }
 
-    // Split out of the matches loop below purely to keep this file's per-method length down -- no
-    // other caller.
-    private static (AppSearchResult Result, MatchRank Match) BuildCandidate(SearchableItemCache.CacheEntry entry, ISearchableItemProvider provider, string activeQuery, MatchRank match)
+    internal static MatchEvidenceResult MatchShadowAliases(
+        FuzzyQuery query,
+        SearchableItemCache.CacheEntry entry,
+        string? providerId)
+    {
+        var best = new MatchEvidenceResult(MatchRank.NoMatch, MatchEvidence.LegacyUnknown);
+        foreach (var alias in entry.ProviderAliases)
+        {
+            var field = alias.Kind switch
+            {
+                SearchableItemAliasKind.ShortcutTarget => MatchEvidenceField.ShortcutTarget,
+                SearchableItemAliasKind.ProductMetadata => MatchEvidenceField.ProductMetadata,
+                _ => MatchEvidenceField.CuratedAlias,
+            };
+            var candidate = query.RankWithEvidence(
+                alias.Text,
+                field,
+                providerId,
+                MatchQueryVariant.ProviderAlias);
+            if (FuzzyMatcher.IsStronger(candidate.Rank, best.Rank))
+                best = candidate;
+        }
+        return best;
+    }
+
+    internal static string FormatSecondaryProvenance(MatchEvidenceField field, string? matchedText)
+    {
+        if (string.IsNullOrWhiteSpace(matchedText)
+            || field is MatchEvidenceField.LegacyUnknown or MatchEvidenceField.DisplayTitle or MatchEvidenceField.FileName)
+        {
+            return string.Empty;
+        }
+
+        var key = field switch
+        {
+            MatchEvidenceField.ShortcutTarget => "Search_TargetSourceFormat",
+            MatchEvidenceField.ProductMetadata => "Search_MetadataSourceFormat",
+            _ => "Search_AliasSourceFormat",
+        };
+        // The indexer hands back "[key]" for anything it has never loaded, which would advertise a missing
+        // translation instead of the row's provenance, so ask whether the template actually exists.
+        if (!TranslationManager.Instance.TryGet(key, out var template) || string.IsNullOrWhiteSpace(template))
+            return matchedText;
+
+        return string.Format(template, matchedText);
+    }
+
+    // No filesystem path exists for a provider row, so the row carries a synthetic one. Its provider
+    // segment is the CLR type name, not the localized display name: index rules and exported traces must
+    // not depend on the UI language. Nothing parses the segment -- every consumer only checks the
+    // "__SEARCHABLE_ITEM__:" prefix.
+    internal static string SyntheticPath(ISearchableItemProvider provider, string title) =>
+        $"__SEARCHABLE_ITEM__:{provider.GetType().Name}:{title}";
+
+    private static (AppSearchResult Result, MatchRank Match) BuildCandidate(
+        SearchableItemCache.CacheEntry entry,
+        ISearchableItemProvider provider,
+        string activeQuery,
+        MatchRank match,
+        MatchEvidenceField evidenceField = MatchEvidenceField.DisplayTitle,
+        string? matchedSecondaryText = null)
     {
         var item = entry.Item;
         System.Windows.Media.ImageSource? iconOverride = null;
@@ -200,10 +322,14 @@ public static class SearchableItemMapper
         return (new AppSearchResult
         {
             Name = item.Title,
-            FullPath = (isRealFile || isRealDir || isApplication) ? item.ActionArgument : $"__SEARCHABLE_ITEM__:{provider.Name}:{item.Title}",
-            // Applications show name-only: blank the subtitle so the path row collapses (an app's
-            // FullPath is a virtual token anyway). Other item kinds keep their description.
-            ParentDir = item.ResultKind == "Application" ? string.Empty : item.Description,
+            FullPath = (isRealFile || isRealDir || isApplication)
+                ? item.ActionArgument
+                : SyntheticPath(provider, item.Title),
+            // Direct-title applications show name-only; secondary-alias hits surface their matched
+            // provenance ("Alias: ...", "Target: ...") so non-title matches explain themselves visually.
+            ParentDir = item.ResultKind == "Application"
+                ? FormatSecondaryProvenance(evidenceField, matchedSecondaryText)
+                : item.Description,
             IsDir = isRealDir,
             Drive = string.Empty,
             ResultKind = isRealFile ? "File" : (isRealDir ? "Directory" : (isApplication ? "Application" : "InstantResult")),

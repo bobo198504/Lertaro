@@ -1,10 +1,10 @@
-# 搜索排序：两窗共用的四段模型
+# 搜索排序（现行 V3）
 
-## 适用范围与核对基线
+当前生产策略：`RankPolicy.Version = 3`（单调证据分级模型，ranking-event schema 4）。V2 基线冻结在 `Tests/Core/SearchRanking/OfflineRankingPolicies.cs`，V2/V3 对照门槛在 `Tests/Core/SearchRanking/ShadowV3EvaluationTests.cs`，演进记录见 [search-ranking-intuition-plan.md](search-ranking-intuition-plan.md)。
 
-本篇是搜索排序与两窗差异的唯一权威文档，描述的是**已实施**的行为。设计依据、参数理由、阶段进度与性能数字在 [search-ranking-redesign.md](search-ranking-redesign.md)；未被采纳的独立分值方案在 [search-ranking-score-model.md](search-ranking-score-model.md)。
+## 范围
 
-基线：`main` = `fd490885`，排序改进（阶段 1–3）已在该基线上落地。旧文描述的“优先档 → 类型 → 六质量键 → 收藏 → history band → …”梯子已整体删除：`RankedCandidateOrdering` 的 11 层 LINQ 换成了“合并路径 → 装饰 → 历史预算 → `Array.Sort`”，完整窗口换成一次性装饰 + 只读字段的比较器。本文按该状态重写，与旧文冲突时以本文为准。
+GUI 有三条搜索路径共用同一 V3 排序原则：
 
 范围是两个 GUI 窗口（快速、完整）与内联窗口的全局段。CLI（`Cli/Search/…`）与 Everything 提供者的名称排序仍借用旧比较器 `SearchResultRankComparer`，不在本文范围内。
 
@@ -24,95 +24,75 @@
 
 | 来源 | 快速窗口 | 完整窗口 |
 | --- | --- | --- |
-| 索引命中 | 有（候选预算见下，显示约 50 条） | 有（全量，不截断） |
-| 搜索历史 | 加行 | 不加行，只提升索引行的历史档 |
-| Windows Recent | 加行 | 不加行（历史分为 0） |
-| 收藏夹 | 加行 | 不加行；索引行命中收藏时参与 44 分 |
-| 可搜索项（开始菜单/设置） | 加行 | 无 |
-| 插件即时结果 | 加行 | 无 |
-| 内容 provider | 无 | 有，作为列表前缀，不参与排序 |
+| 快速窗口 | 索引（含跨盘与快捷方式补召回）、已确认历史关联、Windows Recent、收藏、可搜索项；插件即时结果/动作作为前缀 | `RankedCandidateOrdering`（预计算 `RankKey[]`）；默认最多 50 个排序候选 |
+| 内联窗口 | 当前文件夹近邻段 + 快速窗口的全局段 | 同层近邻内直接命中优先于学习关联；全局段沿用同一内核（H5=1, H3=3） |
+| 完整窗口 | 索引全量；内容 provider 作为前缀 | 到达时 `SearchResultRanking.Decorate`，`RankedSearchResultComparer` 增量合并 |
 
-完整窗口的**排序域**只有索引返回的行。每行到达时 `SearchResultRanking.Decorate(raw, context)` 写一次分值与段，`StreamingResultAccumulator` 用 `RankedSearchResultComparer` 做增量合并（二分插入 + 反向合并，只重写受影响的后缀）。因为行到达时全集未知，历史档只能按阈值即时判定，不能像快速窗口那样在整页上分配 3/10 个名额——否则每来一批就要重算，已显示的行会跳动，十万行也扛不住。这是两窗唯一一处“同规则、不同分配方式”的地方。
+CLI 与 Everything IPC 的名称排序仍使用 `SearchResultRankComparer`，不在个性化模型内。
 
-完整窗口没有结果类型层：`RankedSearchResultComparer` 的 `TypeRank` 恒为 0。内联窗口的全局段同样传空类型顺序；当前文件夹段由 `InlineListSearchHelper.MergeLocalMatches` 按目录邻近度提到全局段之前，不参与四段竞争。
+## 召回与合并边界
 
-快速窗口的列表顶部还有一块不参与排序的前缀：插件即时结果与插件搜索动作行先放进 `uiResults`（`SearchResultMapper.BuildQuickResults` 的开头），进入排序的候选排在它们之后。下面所有梯子都只描述进入 `RankedCandidateOrdering` 的候选。
+1. **召回与排序解耦**：缺失候选只能在 provider、索引或检索预算层修复，绝不用放大终局排序权重补召回。
+   - 选中类型筛选栏的标签时，凡是带类别身份的行（见 `entry-categories.md`）会把收窄下推到索引遍历本身，预算因此花在所选类别内部；自定义规则行没有类别身份，只能继续按行过滤已返回的页。
+   - 本地多盘有界查询按 `SearchCandidateComparer` 全局合并后再取 `limit`（`SearchCoordinator`）；网络盘/目录索引多源有界查询同样全局排序截断（`NetworkIndexerSearchExtensions.SearchSnapshots`）。
+   - 快速/内联无范围全局查询在主查询流完之后，仅当主结果里一条 `*.lnk`/`*.url` 都没有时才补跑 `ScopedSearchRunner.RunShortcutSupplementAsync`（`fileNameFilter: "*.lnk;*.url"`），避免每次按键都付第二遍索引扫描、第二次设置读取与第二份排除规则；补召回行仍按规范化路径在 `SearchStreamRenderer` 去重。
+2. **单一路径实体合并**（`RankedCandidateOrdering.MergeByPath`）：
+   - 同一规范化路径只保留一行，可执行的 `Application` 表示优先持有 UI 行与执行委托。
+   - 合并后保留更强的直接文本 `Match`/`MatchEvidence`、路径规则输入、收藏并集、最大打开次数、更优类型秩与全部诊断 `RankingCandidateSource` 位；`LearnedAlias` 永不借给直接命中行。
 
-类型触发字符、触发词剥除、scope（文件夹作用域只属于内联窗口）、侧栏筛选与列排序这些“能搜到/搜不到”的差异，与排序模型无关；旧文对应段落的结论仍然成立，只是不再引用旧梯子。
+## V3 单调排序内核
 
-## 排序模型
-
-### 强匹配
-
-`MatchRank.IsStrong`（`Core/SearchIndex/MatchRank.cs`）：`IsMatch && Tier <= TierFull && Shape <= ShapeInsideWord`。whole word、word start、inside word 都算强；scattered、`ShapeNoName`、`TierFullRare`、`NoPositiveTerms` 都算弱。
-
-为什么用 Shape 而不是 `Contiguity >= 1`：多词查询 `code atlas` 命中 `code-atlas` 时两个词各占一段，Contiguity 只有 0.5，但它在用户眼里是正常命中；Scattered 才是“看着不像”的那种。
-
-完整窗口从 `RankSortKey` 的高 32 位反解强弱（`SearchResultRelevance.IsStrongMatch`），不重建 `MatchRank`。`RankSortKey == 0` 的行按弱匹配处理：旧语义里键 0 是最差质量，若把它当成“shape=0/tier=0 的完美匹配”会白白抬到 18 分。
-
-### 分值
+快速窗口（`RankPolicy.BuildKey` + `RankKeyComparer`）与完整窗口（`SearchResultRanking` + `RankedSearchResultComparer`）比较同一组结构化键，不使用手工加减的跨档总分。段内键序并非一条通用链，而是每段各一条，两窗只在“完整窗口没有类型秩”这一点上不同（完整窗口的 `TypeOrder` 比较恒等，也不按类型分组）：
 
 ```text
-C = 强匹配 ? 1 : 0
-P = High ? 2 : Normal ? 1 : 0        // Low 与其它按 0
-S = 10*C + 8*P
+Pinned       AlwaysTop ↑ → FavoritePin ↑ → Grade ↑ → Priority ↑ → Band ↓ → Tie ↓ → Placement ↑ → TypeOrder ↑ → Detail ↑ → Tail ↑
+Boosted      Grade ↑ → IsFavorite ↑ → Priority ↑ → Band ↓ → Tie ↓ → Placement ↑ → TypeOrder ↑ → Detail ↑ → Tail ↑
+Low          Grade ↑ → Band ↓ → Tie ↓ → Placement ↑ → TypeOrder ↑ → Detail ↑ → Tail ↑
+HistoryTail  Band ↓ → Tie ↓ → TypeOrder ↑ → Tail ↑
 ```
 
-| 情形 | 分 |
-| --- | ---: |
-| 高优先 + 强 | 26 |
-| 正常优先 + 强 | 18 |
-| 高优先 + 弱 | 16 |
-| 正常优先 + 弱 | 8 |
-| 低优先 + 强 | 10 |
-| 低优先 + 弱 | 0 |
-| 收藏 + 强 | 44 |
-| 历史 H5 | 34 |
-| 历史 H3 | 22 |
-| 纯历史（有效分 < 3） | 6 |
+`Quality` 在快速窗口被拆成两半：`Placement`（连续性 → 形状 → 左连续 → 起点，`MatchRank.CompareQualityPlacement`）与 `Detail`（覆盖率 → 读音层级，`MatchRank.CompareQualityDetail`），`TypeOrder ↑` 插在两者之间。也就是说，查询落在名字里的**位置**仍压过类型顺序，但名字**长短**（覆盖率）不再压过用户配置的“应用先于文件”——否则搜索 `wand` 时，`wand_gfx` 文件夹（覆盖率 0.5）会压过标题为 `Wand (WeMod)` 的开始菜单应用（0.33）。类型只比较“应用 / 系统设置 / 文件”三个内建桶；第三方 provider 或未列类型共享排在三者之后的同一个秩（不能按对跳过比较，否则排序会成环）。它不跨段、不跨 `Grade`、不压 `Priority`/`Band`/`Tie`/`Placement`。完整窗口没有这一层（恒等，`Placement` 与 `Detail` 直接相连），其余键序一致，并把 `Quality ↑` 换成打包后的 32 位质量键——两者只在量化精度上不同（连续性 1/255、覆盖率 1/511），因此两窗对“差异小于一个量化格”的两行可能给出不同名次。
 
-取值优先级：收藏强 > H5 > H3 > 纯历史尾部 > 基础分。所以收藏强匹配即使同时有 H5 也是 44，不会取 34。收藏弱匹配不加分，按基础分走；H5/H3 只由预算发给合格行（纯历史行或强匹配的索引行），弱匹配的索引行拿不到历史提升。
+质量键里的连续性按**正词**计算，而不是把整个匹配跨度当成一个 run：多词查询允许每个词各自连续（如 `cf wj` 对 `cf 桌面文件`，`Contiguity = 1`），再由覆盖率区分；单个词内部散点仍会降低连续性。这个定义只作用于 `Quality`；`Grade`/历史仍先于质量键，类型只在 `Placement` 相等后、覆盖率之前参与。
 
-### 结果类型加权（仅快速窗口）
+### 四段硬边界（`RankSection`）
 
-用户可以在“设置 → 快速搜索窗口 → 结果类型优先级”里给类型排序。这个顺序不是硬分组，而是一份加在基础 C/P 分上的权重（`RankPolicy.QuickScore` / `RankPolicy.TypeBonus`）：
+| 段 | 编号 | 进入条件 | 语义 |
+| --- | ---: | --- | --- |
+| `Pinned` | 0 | `High && AlwaysTop`，或 `IsFavorite && Direct && Match.IsStrong` | 显式置顶：`AlwaysTop` 排在强匹配收藏之前；段判定先于 `Low`，因此被规则降权的强收藏仍然置顶 |
+| `Boosted` | 1 | 非 `Low` 的直接命中与次要别名命中（`Grade 0..3`） | 主结果区 |
+| `Low` | 2 | `Priority == Low` 的直接/次要命中 | 系统缓存、`AppData\Local/Roaming`（Start Menu 显式豁免回 `Normal`）与用户降权目录；高频打开不跨出 `Low` |
+| `HistoryTail` | 3 | `IsHistoryOnly` 学习关联行（`Grade 4`） | 仅在所有直接与次要文本命中之后补充召回 |
 
-| 类型位次 | 强匹配加成 |
-| --- | ---: |
-| 第 1 | 16 |
-| 第 2 | 8 |
-| 第 3 | 4 |
-| 第 4 | 1 |
-| 未列出 / 第 5 以后 | 0 |
+### 五级单调证据分级（`MatchEvidenceGrade`）
 
-弱匹配只拿 `round(加成 × Match.Weight)`（`Weight = Coverage × Contiguity`），所以第一位里“只是勉强命中”的行仍然输给后面类型的强匹配——加成放大已经排好的偏好，不创造匹配。收藏（44）与历史 H5/H3/Tail 是全局信号，不乘权重：收藏在第五类也压过第一类的强匹配。类型顺序为空（默认）时所有 `TypeRank` 都是 `int.MaxValue`，加成为 0，行为与未加权重时完全一致。
+普通偏好（`High/Normal` 目录优先级、历史打开次数）只能在**同一 `EvidenceGrade`** 内微调，绝不跨级反超；结果类型顺序更窄，只在其他键全部相等后决胜：
 
-第一位类型的强匹配 = 18 + 16 = 34，与 H5 同分；段内 `HistoryTie` 在 `Score` 之后，所以 H5 仍排在前。第二位 26、第三位 22、第四位 19。这样“应用/快捷方式放第一位”能把 `jt` → 截图工具这类命中抬到几个完美匹配的文件之上，却抬不动完全不像的行。
+| 等级 | 名称 | 判定条件 | 普通类型顺序参与度 |
+| ---: | --- | --- | --- |
+| `0` | `ExactIdentity` | 文件或应用的直接名称/显示标题完整命中（`.lnk/.url/.appref-ms` 容器后缀或普通文件扩展名按 stem 归一），且 `IsStrong`；系统设置/应用项声明的 `Keyword` 干净前缀命中（如 `env` → `envvar`）；目录不算身份，精确同名目录降为 `DirectStrong` | 在 `Placement` 平局后、覆盖率之前参与（序数比较，无加分） |
+| `1` | `DirectStrong` | 直接名称/显示标题命中且 `Match.IsStrong`（词首、词中连续、整词、普通全拼/简拼） | 在 `Placement` 平局后、覆盖率之前参与（序数比较，无加分） |
+| `2` | `DirectApproximate` | 跳跃子序列、生僻多音读音等弱直接命中 | 在 `Placement` 平局后、覆盖率之前参与（序数比较，无加分） |
+| `3` | `SecondaryField` | 干净（`IsStrong`）的非标题表示：`ShortcutTarget`、`ProductMetadata`、`CuratedAlias`、`ProviderAlias`；以及引擎无名回退（如仅父路径解释）的命中 | 在 `Placement` 平局后、覆盖率之前参与（序数比较，无加分）；副标题显示本地化来源（如 `别名：…`、`目标：…`） |
+| `4` | `LearnedAlias` | `IsHistoryOnly` 查询→路径关联召回 | 固定落入 `HistoryTail` |
 
-快捷方式没有自己的类型。`.lnk`/`.appref-ms` 的索引行仍是文件行（`ResultKind = File`，打字触发符也仍按文件过滤），但它的 `TypeRank` 取“应用类型秩”和“文件类型秩”里更靠前的那个（`SearchResultTypePriority.ShortcutRank`，`SearchResultMapper.ApplyShortcutTypeRank` 在排序前逐行改写，判据是 `TypeRankForRow`）。于是把“文件”拖到“应用”前面时，快捷方式不会被按文件身份静默降级——两个身份里用户排得更靠前的那个说了算，只有两侧都没列入才是 `int.MaxValue`。`.exe` 不算快捷方式：它是用户到处在搜的程序文件本身，若也借用应用加成，`bin\Debug` 里每个产物都会顶掉真正的应用项。`.url` 也不算，它打开的是一个网页，跟装在机器上的程序不是一回事，所以它按文件秩竞争；开始菜单里被 provider 扫到的 `.url` 仍带 provider 自己声明的应用秩，那是 provider 的行身份，不是文件行借来的。应用类型靠 provider 自己声明的 `ISearchableItemProvider.ItemResultKind`（开始菜单 provider 声明 `"Application"`）识别，所以没被“自定义应用搜索文件夹”扫到的 `.lnk`（只有文件行、没有应用行）也能吃到应用位次——这正是“某目录的 `.lnk` 排在文件夹后面”的修复点；这类借用应用秩的行在 50 行截断时计入应用组保留的 3 个名额。段位仍压在类型之上：一个被收藏/H5/H3 抬进 Boosted 的文件夹，照样排在 Low 段里借到应用加成的快捷方式前面；那种情况要靠索引规则把该目录调出 Low（记住默认规则里还有 `%ProgramFiles(x86)%`、`build\` 这类整棵树的降权），而不是改类型顺序。造成本例的 `/^[^.]+$/` 已从默认值退休：它连祖先目录一起命中，把 `D:\tools\**` 全压成 Low，详见 [index-rules.md](index-rules.md) 的默认规则一节。
+次要别名（provider 声明的 `ShortcutTarget`、`ProductMetadata`、`CuratedAlias`）要求 `MatchRank.IsStrong`，拒绝零散子序列（防止 `#440` 类误召回）。用户别名功能已彻底移除，不再读取旧 `ResultAliases` 数据，也不提供动作菜单绑定/清除入口。不支持全局同义词表。
 
-显示上限（50 行）另有一条保护：`RankedCandidateOrdering.EnsureTypeCoverage` 在截断前给每个类型保留最好的 3 行，剩下的名额再按全局顺序填。它只决定“谁被截掉”，不改变保留下来的行的相对顺序。
+`Keyword` 是 provider 声明的同义词（当前用于系统设置的 `System.Keywords`），不是零散猜测：只有每个查询词都干净前缀命中一个声明词时才成立，质量按最短匹配词计算（`env` → `envvar` 覆盖 0.5），并按 `ExactIdentity` 参与类型顺序。2026-10-24 决策；若将来其他 provider 也提供 `Keywords`，需确认其同义词质量是否同样可信。
 
-### 四段与段内键序
+同一天的第二条裁决给这类命中加了降级边界：默认规则里的 `__SEARCHABLE_ITEM__:SystemSettingsItemProvider:*`（`IndexRuleDefaults.SystemSettingsLowPattern`）把整组系统设置行放进 `TextualLow`。`Keyword` 仍负责跨语言召回（英文查询能找到中文设置项），但不再越过任何 `Boosted` 行：Windows 会给多个控制面板任务挂同一个关键词——`vpn` 同时在「查看网络连接」和「设置虚拟专用网络(VPN)连接」的 `System.Keywords` 里——关键词身份不足以压过可见名称的直接命中。早先「让 `env` 排在 `env.h` 前面」的写法由此作废；设置项现在整体排在直接命中之后，`ExactIdentity` 只在 Low 段内部生效。合成路径的 provider 段用 CLR 类型名而不是本地化显示名（`SearchableItemMapper.SyntheticPath`），所以这条默认规则在 7 种界面语言下都成立。
 
-| 段 | 谁进 | 段内顺序 |
-| --- | --- | --- |
-| Pinned | `AlwaysTop && Priority == High` | Score↓ → TypeRank↑ → 质量 → 公共尾 |
-| Boosted | 收藏强匹配、H5/H3、正常或高优先且未被上面两条提升 | Score↓ → HistoryTie↓ → TypeRank↑ → 质量 → 公共尾 |
-| Low | 低优先且未被提升 | Score↓ → 质量 → TypeRank↑ → 公共尾 |
-| HistoryTail | 纯历史行、历史档 Tail | HistoryTie↓ → TypeRank↑ → 质量 → 公共尾 |
+同一候选的标题强命中优先于任何别名；别名只在标题未强命中时参与最佳证据选择。否则较长的别名可能以覆盖率优势覆盖标题的拼音直接命中，把 `DirectStrong` 降成 `SecondaryField`。
 
-公共尾（`RankPolicy.CompareCommonTail`）：文件先于文件夹 → 自然名序（`SearchNameOrderComparer`）→ 名字长度 → 路径长度 → 盘（字母序数）→ 路径（忽略大小写）→ 路径（Ordinal，保证全序）→ `EngineTie`（引擎低 32 位，永远最后）。
+common-only 把每个字表内频率最高的两个读音都视为常见（如 `重` 的 `zhong/chong`、`乐` 的 `le/yue`），不查词表，因此 `重复` 和 `重要` 都会接受 `chong`；第三个及以后读音仍只属于 all-readings 分支，才可能落入 `DirectApproximate`。
 
-三个刻意的选择：
+目录是容器而非身份：精确同名目录仍是强直接命中（`DirectStrong`），但不占用 `ExactIdentity`。否则搜索 `powershell` 时，`F:\Documents\PowerShell` 会以 Grade 0 压过标题为 `PowerShell 7 (x64)` 的快捷方式；类型顺序只能在 `Placement` 平局后决胜，不能替目录跨级。
 
-- Boosted 里 TypeRank 在质量之前，而且类型位次还会直接加分（见上一节）：沿用“结果类型优先级”这个显式设置的语义，代价是同档内更好的匹配可能排在后面（日志里能看到，见 redesign §5.5）。Low 段反过来，质量在 TypeRank 之前，给被降级的行一个按相关性翻身的机会。
-- HistoryTail 整段在 Low 之后：只打开过一两次的纯历史行，只有在没有更好的东西可展示时才出现。
-- `HistoryTie` 只给 H5/H3 与纯历史 Tail 行非 0；索引行即使落在 Tail（分值是 18 或 8）也不参与历史 tie-break，否则它会排在同类索引行前面。
+上表的 0..4 是文档语义号；枚举 `MatchEvidenceGrade` 另用 `LegacyUnknown = 0` 表示“未知”，真实等级从 1 开始，未知值永不参与排序。回放夹具因此用名字声明等级（`"expectedV3Grade": "ExactIdentity"`），避免编号口径分歧。
 
-`RankKeyComparer` 是快速窗口的唯一比较器；完整窗口的 `RankedSearchResultComparer` 调同一个 `CompareSectionRank` 与 `CompareCommonTail`，因此同一批 signals 下两边的两两顺序一致（有一条一致性用例钉住，防止两个比较器各自漂移）。
+公共尾（`RankTail`）依次比较：文件优先于目录、自然名序、名称长度、路径长度、盘符、忽略大小写路径、Ordinal 路径、引擎 tie，保证严格反对称与传递全序。
 
-### 历史
+## 历史频率与查询关联分离
 
 存储：`SearchHistoryStore` 的 `StoredEntry` 带 `Count`（打开次数，权重来源）与 `Score`（0–10 的运行总分，仅作存储，不参与排序）。
 
@@ -122,7 +102,10 @@ S = 10*C + 8*P
 
 迁移：旧 JSON 没有 `score` 字段时，`Score = min(Count, 10)`；`SaveEntries` 在锁内保留旧记录的分数，缺分时才用 `Count` 兜底。
 
-读取：`ScoreSnapshot(now)` 在锁内算一次 `path → round(effective*100)`，每次查询取一次（流式重绘不得二次衰减）。`RecordCore` 只由“打开”触发；`GetEntries`/`Flatten` 读原始分，不衰减。
+- 至少两个无操作符 ASCII 拼音正词同时评估多词分支与同 provider 拼接分支（`PinyinNameEvaluator`），返回真实胜出 witness（provider、tier、span）。排序路径把它直接交给画刷，画刷不再重复打分；只有手上没有 witness 的显示路径（`HighlightMask.Compute`）自己求一次。两者对同一 pattern 与同一文本调用同一确定性函数，因此判定、高亮与解释始终涂同一段。
+- 完整窗口只有打包后的质量键，键里没有“胜出分支”这一位，所以 `SearchResultRanking` 一律按 `Original` 变体解等级：带空格的拼音查询在完整窗口最高只到 `DirectStrong`，即使拼接分支真的胜出。单词整词干读音与规范化同名字符串仍判 `ExactIdentity`。残留缺口是已知的：拼接胜出的那一行在快速窗口为 0、在完整窗口为 1，两窗名次可能不同；闭合它需要把该位带过引擎/管道边界（见实施计划的未做项）。
+- 应用不写任何排序日志文件。唯一的排序反馈出口是用户在快速窗口右键选择“导出本页排序详情”，一次性导出当前显示页的明文 `.txt`；文本首行自带 `# plaintext:` 声明其中的查询、显示名与路径未做哈希。开关位于“设置 → 通用 → 系统 → 允许导出本页排序详情”，默认开启；关闭后既不构建解释，也不显示该菜单项。离线回放夹具严禁包含真实用户路径（`RankingCaseFixtureLoader` 校验）。
+- 排序反馈只需要“预览、不打开”：搜索出错误顺序后，右键任意结果选“导出本页排序详情”，会一次写出当前显示页所有行的明文 `.txt`；不需要打开任何结果，也没有单行复制入口。提交该 `.txt`，并在 issue 中写明原始查询与期望顺序。导出前请检查文件内容：查询、显示名与路径都是明文。
 
 档位：`Effective >= 5` → H5，`>= 3` → H3；资格是“纯历史行”或“强匹配的索引行”。快速窗口按有效分降序（同分按路径 Ordinal）取前 3 条进 H5、接下来 10 条进 H3；第 4 条 5+ 掉进 H3 而不是掉出提升；3–5 分的行不会补 H5 的空位；没进 H5/H3 的纯历史行落 Tail。内联窗口名额 1/3；完整窗口只看阈值，没有 Tail。
 
@@ -315,56 +298,7 @@ query="atlas !code" name="code-atlas.txt"
 ```powershell
 dotnet test Tests/Core/Core.csproj --filter "FullyQualifiedName!~ExplorerStaInvokerTests&FullyQualifiedName!~UpdaterRollbackTests"
 dotnet test Tests/App/App.csproj
+dotnet test Tests/Plugins/CoreExtensions/CoreExtensions.csproj
 dotnet test Tests/Plugins/PinyinAlias/PinyinAlias.csproj
+npm run site:build
 ```
-
-2026-10 核对的基线：Core 2222（带上面两个过滤）、App 2240、PinyinAlias 238；不带过滤的 Core 会多出那两类共 18 条，已知偶发环境性红。
-
-排序基准（不进 CI）：
-
-```powershell
-dotnet run -c Release --project benchmarks/Lertaro.Benchmarks -- --filter '*'
-```
-
-数字与机器信息只放在 redesign §7.3；本目录不复制基准结果。日志验证：关掉“设置 → 通用 → 系统 → 排序事件日志”后，`%LOCALAPPDATA%\Lertaro\ranking-events.jsonl` 不再增长；测试程序集在 `Tests/App/AppTestAssembly.cs` 里关掉了 `RankingEventLog.EnabledOverride`，跑测试不会写用户目录。
-
-### 校准日志的字段（schema 2）
-
-`ranking-events.jsonl` 每页先写一行 `kind:"page"`，再写至多十行 `kind:"row"`。行里的 `v` 是日志 schema（`RankingEventLog.SchemaVersion`），`policyVersion` 才是排序策略版本，两者不要混。
-
-- `queryHash`/`pathHash` 是 12 位截断 SHA-256；其余字段全是数字或小枚举，任何一个都还原不出查询文字、路径或文件名。
-- 定位“为什么 A 排在 B 前面”要看的字段：`bucket`（段：0 Pinned / 1 Boosted / 2 Low / 3 HistoryTail）、`score`（`QuickScore`，已含类型加成）、`typeRank`（`page.order` 里的下标，`int.MaxValue` 表示该类型未列入）、`prio`（索引规则 2 高 / 1 普通 / 0 低）、`hTier` 与 `histTie`（历史档、名额内次序）、`mTier`/`mShape`/`mStart`/`mCov`/`mCont`（匹配形状与质量，后两个是千分比）、`strong`、`fav`、`histOnly`、`dir`、`app`。
-- `nameLen`/`depth`/`ext`（0 无扩展名或目录、1 `.lnk`、2 `.exe`、3 `.url`、4 `.appref-ms`、5 其它）用来在不看名字的前提下区分“四层深的 `.lnk`”和“同名的文件夹”。
-- `page` 行带 `rows`（合并后的候选数）、`shown`（写了几行）和 `order`（本轮解析出的类型顺序，元素是 provider 类型 id，如 `__builtin::Files`），因此没有设置文件也能把 `typeRank` 映射回类型。
-- 开关、大小轮转、30 天保留、5 秒合并窗口的行为不变；关掉开关后不再写文件。
-
-排序相关的测试类：
-
-- `RankPolicyTests`：分值 26/18/16/8/44/34/22/6、四段归属、段内键序、`HistoryTie` 的 0 值、设计文档 3.7 的十项梯子。
-- `HistoryBudgetTests`：阈值优先于名额、第 4 条 5+ 落 H3、空位不补、纯历史落 Tail、重复路径取强档、名额可配 1/3 与 0。
-- `SearchResultRankingTests` / `RankedSearchResultComparerTests`：完整窗口的装饰、阈值档、无类型层、`RankSortKey == 0` 按弱、与快速窗口比较器的一致性。
-- `RankedCandidateOrderingTests` / `SearchResultMapperTests`：快速窗口的合并、收藏强匹配、H5 压普通强、低优先顺序、AlwaysTop、内联名额。
-- `SearchHistoryStoreTests`：衰减、封顶、迁移幂等、旧 JSON 缺字段、`SaveEntries` 保留分数。
-- `AlwaysTopTests` / `IndexRuleConflictTests`：置顶继承与清除、覆盖提示（含“只排除了正则的一部分就不提示”）。
-- `MatchRankTests` / `SearchResultRelevanceTests`：质量键与 `HighKey` 位布局。
-
-## 关键源码位置
-
-| 主题 | 位置 |
-| --- | --- |
-| 排序内核（分值/分段/键序/历史预算/公共尾） | `Core/SearchIndex/RankPolicy.cs` |
-| 查询级上下文（规则裁决、历史分、收藏、名额） | `Core/SearchIndex/RankContext.cs` |
-| 强匹配与质量键 | `Core/SearchIndex/MatchRank.cs`、`Core/IndexV2/Search/SearchResultRelevance.cs` |
-| 完整窗口装饰与比较器 | `Core/SearchIndex/SearchResultRanking.cs`、`Core/SearchIndex/RankedSearchResultComparer.cs` |
-| 引擎截断比较器 | `Core/SearchIndex/SearchCandidateComparer.cs`、`Core/Indexer/Usn/SearchCoordinator.cs` |
-| 快速窗口合并与排序 | `App/ViewModels/Search/Mapping/RankedCandidateOrdering.cs` |
-| 快速窗口候选/截断 | `App/ViewModels/Search/Mapping/SearchResultMapper.cs`、`App/ViewModels/Search/Dispatch/SearchDispatchController.cs` |
-| 完整窗口流式合并 | `App/ViewModels/Search/Mapping/StreamingResultAccumulator.cs`、`App/ViewModels/Search/Dispatch/SearchQueryDispatchController.cs` |
-| 历史持久化与衰减 | `Core/SearchHistoryStore.cs`、`Core/SearchHistoryBucketSupport.cs` |
-| 历史加行 | `App/ViewModels/Search/Mapping/HistorySearchCandidateMapper.cs` |
-| Recent 加行 | `App/ViewModels/Search/Mapping/WindowsRecentCandidateMapper.cs` |
-| 索引规则与置顶裁决 | `Core/ExclusionRuleSet.cs`、`Core/Settings/IndexRuleSetting.cs` |
-| 排序事件日志 | `Core/SearchIndex/RankingEventLog.cs`、`App/Views/Settings/General/GeneralSettingsSystemTab.xaml` |
-| 候选预算常量 | `App/ViewModels/Search/SearchViewModel.cs`、`Core/Services/Search/SearchService.cs`、`Core/IndexV2/Search/NameSearch.cs` |
-| 名字序比较 | `Core/SearchIndex/SearchNameOrderComparer.cs` |
-| 拼音 NFA 与评分 | `Plugins/PinyinAlias/PinyinTermMatcher.cs`、`Core/SearchIndex/HighlightMask.cs` |

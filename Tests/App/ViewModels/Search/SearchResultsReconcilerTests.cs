@@ -1,5 +1,6 @@
 using Lertaro.App.Helpers;
 using Lertaro.App.ViewModels.Search;
+using Lertaro.Core.SearchIndex;
 
 namespace Lertaro.App.Tests.ViewModels.Search;
 
@@ -178,6 +179,27 @@ public sealed class SearchResultsReconcilerTests
         Assert.AreSame(before, results[0]);
         Assert.IsTrue(results[0].IsFrequent);
         Assert.Contains(nameof(AppSearchResult.IsFrequent), raised);
+    }
+
+    [TestMethod]
+    public void Replace_StreamRepaint_CopiesTheLatestRankingExplanationOntoRetainedRow()
+    {
+        var before = Result(@"C:\a", query: "a");
+        var results = new ObservableRangeCollection<AppSearchResult> { before };
+
+        var after = Result(@"C:\a", query: "a");
+        var page = new RankingPageStamp("session", "page-2", RankingTraceWindow.Quick, 1);
+        var explanation = new RankingExplanation(
+            new RankingLogSession("session", 1, RankingTraceWindow.Quick, "raw", "raw", 0),
+            page,
+            default,
+            default);
+        after.RankingExplanation = explanation;
+
+        SearchResultsReconciler.Replace(results, new[] { after }, before, _ => { });
+
+        Assert.AreSame(before, results[0]);
+        Assert.AreSame(explanation, before.RankingExplanation);
     }
 
     [TestMethod]

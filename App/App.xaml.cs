@@ -111,7 +111,7 @@ public partial class App : Application
             Shutdown(1);
             return;
         }
-        AppTypography.Initialize(Resources, TranslationManager.Instance.CurrentCulture);
+        AppTypography.Initialize(Resources, TranslationManager.Instance.CurrentCulture, settings.UiFontFamilies);
         // The other process-wide rendering decision, and made here because it has to be made before any window
         // exists: this is what the settings page's "enable hardware acceleration (requires restart)" switch has
         // always said it does. Until now it only took the hardware off the quick window's own composition
@@ -126,6 +126,13 @@ public partial class App : Application
         SearchContext.DefaultFuzzyMatchEnabled = settings.EnableFuzzyMatch;
         SearchContext.DefaultAndFirstPrecedence = !settings.OrFirstPrecedence;
         StartupManager.SetEnabled(settings.StartWithWindows);
+        // Asked against the registry rather than the setting, and after the write: SetEnabled swallows a
+        // failed write into a Warn line, so the value actually being there is the only answer to whether
+        // Windows will run this at logon at all. That skip -- a Run entry whose program needs elevation is
+        // neither started, prompted for, nor reported -- is the one autostart failure this app could not
+        // otherwise see.
+        if (StartupManager.IsEnabled())
+            StartupElevationNotice.WarnIfMarkedElevated();
         Logger.Log("=========================================");
         Logger.Log($"Application starting with arguments: {string.Join(" ", e.Args)}");
         Logger.Log($"[App] Running as Administrator: {ElevationManager.IsRunningAsAdmin()}");
@@ -359,7 +366,7 @@ public partial class App : Application
         _dispatcherExceptionHandler.StartupCompleted = true;
     }
 
-    public static void HideInlineSearch() => InlineSearchManager.Instance.CloseInlineSearch();
+    public static void HideInlineSearch(string reason) => InlineSearchManager.Instance.CloseInlineSearch(reason);
 
     public static void ShowSettingsWindow(string? targetSection = null) => AppWindowManager.ShowSettingsWindow(targetSection);
     public static void ShowSearchWindow() => AppWindowManager.ShowSearchWindow();

@@ -1,4 +1,6 @@
+using System.Windows.Media;
 using Lertaro.PluginSdk.Abstractions;
+using Lertaro.PluginSdk.Helpers;
 using Lertaro.PluginSdk.Services;
 using Lertaro.Plugins.CoreExtensions.Models;
 using Lertaro.Plugins.CoreExtensions.Providers.Filters;
@@ -70,10 +72,10 @@ public sealed class TypeFilterProviderTests
     [TestMethod]
     public void GetFilterGroups_CustomFilter_ExpandsRuleAndKeepsIcon()
     {
-        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == TypeFilterProvider.SidebarCustomFiltersKey
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
             ? new List<CustomFilterItem>
             {
-                new() { Keyword = "executables", Rule = "*.ps1; *.exe", Icon = "M1 2" }
+                new() { Keyword = "executables", Rule = "*.ps1; *.exe", Icon = "M1 2", ShowAsRow = true }
             }
             : fallback;
 
@@ -92,13 +94,13 @@ public sealed class TypeFilterProviderTests
     {
         PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key switch
         {
-            TypeFilterProvider.SidebarCustomFiltersKey => new List<CustomFilterItem>
-            {
-                new() { Keyword = "executables", Rule = "@scripts; *.exe" }
-            },
             CustomFilterQueryTokenProvider.SettingKey => new List<CustomFilterItem>
             {
-                new() { Enabled = false, Keyword = "scripts", Rule = "*.ps1" }
+                new() { Keyword = "executables", Rule = "@scripts; *.exe", ShowAsRow = true },
+                // The referenced entry is disabled on purpose: a row may still borrow its rule, which is the
+                // one way the merged list differs from "enabled means reachable" -- the keyword is unreachable,
+                // the reference is not.
+                new() { Enabled = false, Keyword = "scripts", Rule = "*.ps1" },
             },
             _ => fallback
         };
@@ -112,8 +114,8 @@ public sealed class TypeFilterProviderTests
     [TestMethod]
     public void GetFilterGroups_CustomFilterWithMissingRuleReference_IsOmitted()
     {
-        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == TypeFilterProvider.SidebarCustomFiltersKey
-            ? new List<CustomFilterItem> { new() { Keyword = "missing", Rule = "@unknown" } }
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
+            ? new List<CustomFilterItem> { new() { Keyword = "missing", Rule = "@unknown", ShowAsRow = true } }
             : fallback;
 
         var ids = new TypeFilterProvider().GetFilterGroups().Single().Items.Select(i => i.Id).ToList();
@@ -124,8 +126,8 @@ public sealed class TypeFilterProviderTests
     [TestMethod]
     public void GetFilterGroups_CustomFilterWithEmptyName_IsOmitted()
     {
-        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == TypeFilterProvider.SidebarCustomFiltersKey
-            ? new List<CustomFilterItem> { new() { Keyword = "  ", Rule = "*.exe" } }
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
+            ? new List<CustomFilterItem> { new() { Keyword = "  ", Rule = "*.exe", ShowAsRow = true } }
             : fallback;
 
         var ids = new TypeFilterProvider().GetFilterGroups().Single().Items.Select(item => item.Id);
@@ -136,8 +138,8 @@ public sealed class TypeFilterProviderTests
     [TestMethod]
     public void GetFilterGroups_DisabledSidebarFilter_IsHidden()
     {
-        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == TypeFilterProvider.SidebarCustomFiltersKey
-            ? new List<CustomFilterItem> { new() { Enabled = false, Keyword = "scripts", Rule = "*.ps1" } }
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
+            ? new List<CustomFilterItem> { new() { Enabled = false, Keyword = "scripts", Rule = "*.ps1", ShowAsRow = true } }
             : fallback;
 
         var ids = new TypeFilterProvider().GetFilterGroups().Single().Items.Select(item => item.Id);
@@ -146,12 +148,125 @@ public sealed class TypeFilterProviderTests
     }
 
     [TestMethod]
-    public void GetFilterGroups_ReturnsAllFiveTypeCategories()
+    public void GetFilterGroups_AnEnabledEntry_OnlyBecomesARowWhenFlagged()
+    {
+        // One list, two triggers: typing must keep working for an entry nobody wants as a row, and the row
+        // must not appear just because the entry exists.
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
+            ? new List<CustomFilterItem>
+            {
+                new() { Keyword = "typedonly", Rule = "*.ps1" },
+                new() { Keyword = "shown", Rule = "*.ps1", ShowAsRow = true },
+            }
+            : fallback;
+
+        var items = new TypeFilterProvider().GetFilterGroups().Single().Items;
+
+        Assert.AreEqual(1, items.Count(i => i.Id.StartsWith("Type_Custom_", StringComparison.Ordinal)));
+        Assert.AreEqual("shown", items.Single(i => i.Id.StartsWith("Type_Custom_", StringComparison.Ordinal)).DisplayName);
+    }
+
+    [TestMethod]
+    public void GetFilterGroups_ARowWithALabel_ReadsAsItsLabelAndNotItsKeyword()
+    {
+        // The keyword is what the user types and what @ references resolve against; the label is the row's
+        // display name, which is the only way a row can read 文档 while the keyword stays doc.
+        PluginSettingsService.GetSettingFunc = (pluginId, key, fallback) => key == CustomFilterQueryTokenProvider.SettingKey
+            ? new List<CustomFilterItem> { new() { Keyword = "notes", Label = "笔记", Rule = "*.md", ShowAsRow = true } }
+            : fallback;
+
+        var item = new TypeFilterProvider().GetFilterGroups().Single().Items.Single(i => i.Id.StartsWith("Type_Custom_", StringComparison.Ordinal));
+
+        Assert.AreEqual("笔记", item.DisplayName);
+        Assert.IsTrue(item.MatchPredicate(new FakeResult { Name = "a.md" }));
+    }
+
+    [TestMethod]
+    public void GetFilterGroups_ReturnsEveryTypeCategoryInDisplayOrder()
     {
         var provider = new TypeFilterProvider();
 
         var ids = provider.GetFilterGroups().Single().Items.Select(i => i.Id).ToList();
 
-        CollectionAssert.AreEquivalent(new[] { "Type_Folder", "Type_File", "Type_Doc", "Type_Image", "Type_Video" }, ids);
+        // This order IS the quick window's filter bar: the bar reads these rows rather than keeping a list of
+        // its own, so 应用 and 设置 -- which the bar had and the sidebar did not -- are rows here now too.
+        CollectionAssert.AreEqual(new[]
+        {
+            "Type_Folder", "Type_App", "Type_Settings", "Type_File",
+            "Type_Doc", "Type_Image", "Type_Video", "Type_Audio", "Type_Zip",
+        }, ids);
+    }
+
+    [TestMethod]
+    public void EveryBuiltInRow_CarriesAGlyphThatParses()
+    {
+        // The sidebar binds Path.Data straight to this string, so a typo doesn't fail the build and doesn't
+        // even fall back to the default mark -- it draws nothing. Geometry.Parse is the only check that
+        // catches it before a user notices a missing icon.
+        foreach (var item in new TypeFilterProvider().GetFilterGroups().Single().Items)
+        {
+            // A custom row's glyph is whatever the user typed into its Icon field, so an empty one is the
+            // configured answer, not a defect: the sidebar's default mark exists for exactly those rows.
+            if (item.Id.StartsWith("Type_Custom_", StringComparison.Ordinal))
+                continue;
+
+            Assert.IsFalse(string.IsNullOrEmpty(item.IconData), $"{item.Id} has no glyph");
+
+            var geometry = Geometry.Parse(item.IconData!);
+            Assert.IsFalse(geometry.IsEmpty(), $"{item.Id} parses to an empty geometry");
+            Assert.IsFalse(geometry.Bounds.IsEmpty, $"{item.Id} has no bounds to stretch");
+        }
+    }
+
+    [TestMethod]
+    public void EveryBuiltInRow_CarriesTheCategoryItsPredicateTests()
+    {
+        foreach (var item in new TypeFilterProvider().GetFilterGroups().Single().Items)
+        {
+            if (item.Category == null)
+                continue;
+
+            var category = item.Category.Value;
+            foreach (var sample in Samples(category))
+            {
+                Assert.IsTrue(item.MatchPredicate(sample),
+                    $"{category} row must keep the row the classifier files as {category}: {sample.FullPath}");
+                Assert.IsFalse(item.MatchPredicate(new FakeResult { FullPath = @"D:\other.xyz" }),
+                    "and nothing the classifier files nowhere");
+            }
+        }
+    }
+
+    private static IEnumerable<ISearchResult> Samples(SearchCategoryFilter category) => category switch
+    {
+        SearchCategoryFilter.Folder => [new FakeResult { FullPath = @"D:\dir", IsDir = true }],
+        SearchCategoryFilter.Application => [new FakeResult { FullPath = @"D:pp.exe" }],
+        SearchCategoryFilter.Settings => [new FakeResult { FullPath = "__SEARCHABLE_ITEM__:SystemSettingsItemProvider:显示网络设置", IsApplication = true }],
+        SearchCategoryFilter.Document => [new FakeResult { FullPath = @"D:.docx" }],
+        SearchCategoryFilter.Image => [new FakeResult { FullPath = @"D:.png" }],
+        SearchCategoryFilter.Video => [new FakeResult { FullPath = @"D:.mkv" }],
+        SearchCategoryFilter.Audio => [new FakeResult { FullPath = @"D:.flac" }],
+        SearchCategoryFilter.Archive => [new FakeResult { FullPath = @"D:.zip" }],
+        _ => [],
+    };
+
+    [TestMethod]
+    public void TheExtensionRows_AnswerTheSameTableTheFilterTabsDo()
+    {
+        // WPS and OpenDocument formats, and .jxl: each was outside the sidebar's own shorter list while :@doc
+        // and :@img already claimed it. A file the settings page calls a document cannot be anything else
+        // under the 文档 tab.
+        Assert.IsTrue(GetPredicate("Type_Doc")(new FakeResult { FullPath = @"C:\简历.wps" }));
+        Assert.IsTrue(GetPredicate("Type_Doc")(new FakeResult { FullPath = @"C:\paper.ods" }));
+        Assert.IsTrue(GetPredicate("Type_Image")(new FakeResult { FullPath = @"C:\photo.jxl" }));
+        Assert.IsTrue(GetPredicate("Type_Audio")(new FakeResult { FullPath = @"C:\song.opus" }));
+        Assert.IsTrue(GetPredicate("Type_Zip")(new FakeResult { FullPath = @"C:\disk.iso" }));
+        Assert.IsTrue(GetPredicate("Type_App")(new FakeResult { FullPath = @"C:\setup.msi" }));
+
+        // A path's own kind outranks a row's claim to be launchable: the app indexer marks a Start Menu
+        // shortcut's row as an application, so without this a shortcut to a document would sit under 应用
+        // purely because the shell can launch it.
+        Assert.IsTrue(GetPredicate("Type_Doc")(new FakeResult { FullPath = @"C:\report.docx", IsApplication = true }));
+        Assert.IsFalse(GetPredicate("Type_App")(new FakeResult { FullPath = @"C:\report.docx", IsApplication = true }));
     }
 }

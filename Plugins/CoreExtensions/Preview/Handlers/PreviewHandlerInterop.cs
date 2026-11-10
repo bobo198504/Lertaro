@@ -75,6 +75,16 @@ internal static class PreviewHandlerInterop
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    public const uint WM_NULL = 0x0000;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    // The only way to touch a window belonging to another thread without waiting for it indefinitely: WM_NULL with
+    // SMTO_ABORTIFHUNG answers within the timeout or returns zero. SetForegroundWindow has no timeout variant, so a
+    // caller on the UI thread probes here first instead of sending blind.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeoutW")]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+        uint flags, uint timeout, out IntPtr result);
 }
 
 [ComImport, Guid("8895b1c6-b41f-4c1c-a562-0d564250836f"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

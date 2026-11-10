@@ -1,20 +1,24 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Lertaro.PluginSdk.Services;
 
 namespace Lertaro.Core;
 
-// Stored as JSON, grouped by the keyword that was typed when the entry was opened (the top-level
-// object's keys), each mapping to a most-recent-first list of (path, kind, time). Opening something
-// with no query typed (e.g. clicking a Startup Panel tab item directly) isn't recorded at all -- see
-// Record. A path lives under at most one keyword at a time: reopening it under a keyword it's already
-// recorded under just moves it to the front with a fresh time, and reopening it under a DIFFERENT
-// keyword moves it there instead, dropping it from its old one -- whichever keyword most recently led
-// to it wins, so a path is never duplicated across groups.
+// Separates two distinct signals that V1/V2 conflated in one bucket table:
+//   1. Path frecency (search-history.json): decay-weighted open counts per path, used only to break ties
+//      among direct matches inside the same EvidenceGrade.
+//   2. Canonical query -> path associations (search-query-associations.json): organic opens linking a
+//      canonicalized query string to a concrete target path. Cross-name recall ("LearnedAlias") requires at
+//      least MinAssociationOrganicOpens organic opens, never self-reinforces when opened via LearnedAlias
+//      recall alone, and migrates legacy history counts clamped to <= 1 so historical mis-picks fade cleanly.
 public static class SearchHistoryStore
 {
+    public const int MinAssociationOrganicOpens = 3;
+
     private static readonly object Gate = new();
     private static Dictionary<string, List<StoredEntry>>? _buckets;
+    private static Dictionary<string, List<StoredAssociationEntry>>? _associations;
     private static Dictionary<string, int>? _priorityCache;
     private static Dictionary<string, int>? _countCache;
 
@@ -35,8 +39,17 @@ public static class SearchHistoryStore
         [property: JsonPropertyName("count")] int Count = 1,
         [property: JsonPropertyName("score")] double Score = 0);
 
+    internal readonly record struct StoredAssociationEntry(
+        [property: JsonPropertyName("path")] string Path,
+        [property: JsonPropertyName("type")] HistoryEntryKind Kind,
+        [property: JsonPropertyName("time")] long LastOrganicTime,
+        [property: JsonPropertyName("organicOpens")] int OrganicOpens = 1);
+
     public static string HistoryPath => Path.Combine(Logger.UserDataDir, "search-history.json");
     private static string BackupPath => HistoryPath + ".bak";
+
+    public static string AssociationsPath => Path.Combine(Logger.UserDataDir, "search-query-associations.json");
+    private static string AssociationsBackupPath => AssociationsPath + ".bak";
 
     /// <summary>Raised after the store changes, so the settings list can refresh its counts live.</summary>
     public static event Action? Changed;
@@ -44,21 +57,25 @@ public static class SearchHistoryStore
     /// <param name="keyword">The search box text at the time this was opened. Nothing is recorded if
     /// this is empty -- opening something directly from a Startup Panel tab (no query typed) isn't
     /// "search history".</param>
-    public static void Record(string keyword, string path, HistoryEntryKind kind)
+    /// <param name="fromLearnedRecall">True when the user launched a row that was recalled only via
+    /// <c>LearnedAlias</c>; refreshes path recency without incrementing organic query-association evidence.</param>
+    public static void Record(string keyword, string path, HistoryEntryKind kind, bool fromLearnedRecall = false)
     {
         if (string.IsNullOrWhiteSpace(path) || path.StartsWith("__", StringComparison.Ordinal))
             return;
         if (string.IsNullOrWhiteSpace(keyword))
             return;
 
-        // File.Exists/Directory.Exists below have no timeout and can block for seconds on a slow or
-        // heavily-indexed network share -- callers invoke this synchronously right before/after launching
-        // a result, often still on the UI thread, so recording history must not be able to freeze that.
         var enabled = UserSettings.Load().EnableHistory;
-        Task.Run(() => RecordCore(keyword.Trim(), path, kind, enabled));
+        Task.Run(() => RecordCore(keyword.Trim(), path, kind, enabled, fromLearnedRecall));
     }
 
-    private static void RecordCore(string keyword, string path, HistoryEntryKind kind, bool enabled)
+    private static void RecordCore(
+        string keyword,
+        string path,
+        HistoryEntryKind kind,
+        bool enabled,
+        bool fromLearnedRecall)
     {
         var isApp = kind == HistoryEntryKind.Application;
         var normalizedPath = isApp ? path.Trim() : NormalizePath(path);
@@ -69,6 +86,7 @@ public static class SearchHistoryStore
         {
             EnsureCacheNoLock();
             var buckets = _buckets!;
+            var associations = _associations!;
 
             var entryExists = buckets.Values.Any(list => list.Any(e =>
                 e.Path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)));
@@ -94,7 +112,10 @@ public static class SearchHistoryStore
             if (list.Count > SearchHistoryBucketSupport.MaxEntriesPerKeyword)
                 list.RemoveRange(SearchHistoryBucketSupport.MaxEntriesPerKeyword, list.Count - SearchHistoryBucketSupport.MaxEntriesPerKeyword);
 
+            RecordAssociationInMemory(associations, keyword, normalizedPath, kind, now, fromLearnedRecall);
+
             PersistNoLock();
+            PersistAssociationsNoLock();
             _priorityCache = BuildPriorityCache(buckets);
             _countCache = BuildCountCache(buckets);
         }
@@ -102,10 +123,180 @@ public static class SearchHistoryStore
         Changed?.Invoke();
     }
 
-    // Removes any existing record of `path` from every keyword bucket, pruning a bucket entirely once
-    // it's left empty so a keyword that no longer points to anything doesn't linger in the JSON file.
-    // Returns the record that was dropped (null when the path was not recorded before) so Record can
-    // continue its count and decay its score instead of restarting both.
+    internal static void RecordAssociationInMemory(
+        Dictionary<string, List<StoredAssociationEntry>> associations,
+        string rawQuery,
+        string normalizedPath,
+        HistoryEntryKind kind,
+        long nowUnix,
+        bool fromLearnedRecall)
+    {
+        // Learned-alias clicks must not self-reinforce an unconfirmed association or create new ones.
+        if (fromLearnedRecall)
+            return;
+
+        var canonicalQuery = NormalizeAssociationQuery(rawQuery);
+        if (canonicalQuery.Length == 0)
+            return;
+
+        if (!associations.TryGetValue(canonicalQuery, out var list))
+            associations[canonicalQuery] = list = new List<StoredAssociationEntry>();
+
+        var existingIndex = list.FindIndex(entry =>
+            entry.Path.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+        var previousOpens = existingIndex >= 0 ? list[existingIndex].OrganicOpens : 0;
+        if (existingIndex >= 0)
+            list.RemoveAt(existingIndex);
+
+        list.Insert(0, new StoredAssociationEntry(
+            normalizedPath,
+            kind,
+            nowUnix,
+            Math.Max(1, previousOpens + 1)));
+
+        if (list.Count > SearchHistoryBucketSupport.MaxEntriesPerKeyword)
+            list.RemoveRange(SearchHistoryBucketSupport.MaxEntriesPerKeyword, list.Count - SearchHistoryBucketSupport.MaxEntriesPerKeyword);
+    }
+
+    /// <summary>
+    /// Canonical query normalization for learned associations: trims, collapses internal whitespace, and
+    /// case-folds. Then reuses P4's joined-reading qualification: two or more all-letter ASCII terms whose
+    /// concatenation is still a valid term collapse to that joined form, so "sousuo jieguo" and
+    /// "sousuojieguo" are one association key. Anything else keeps its spacing.
+    /// </summary>
+    public static string NormalizeAssociationQuery(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return string.Empty;
+
+        var span = query.AsSpan().Trim();
+        var sb = new StringBuilder(span.Length);
+        var prevSpace = false;
+        foreach (var ch in span)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                if (!prevSpace)
+                {
+                    sb.Append(' ');
+                    prevSpace = true;
+                }
+            }
+            else
+            {
+                sb.Append(char.ToLowerInvariant(ch));
+                prevSpace = false;
+            }
+        }
+
+        return TryJoinAsciiTerms(sb) ?? sb.ToString();
+    }
+
+    // P4's joined branch accepts a query of two or more plain all-letter ASCII terms (2..63 characters
+    // each) and scores the concatenation as an alternative reading. The store must use the same
+    // qualification, or a learned click on one spelling would never be found from the other.
+    private static string? TryJoinAsciiTerms(StringBuilder normalized)
+    {
+        var joined = new StringBuilder(normalized.Length);
+        var tokenLength = 0;
+        var tokenCount = 0;
+        for (var i = 0; i < normalized.Length; i++)
+        {
+            var ch = normalized[i];
+            if (ch == ' ')
+            {
+                if (tokenLength is < 2 or > 63)
+                    return null;
+                tokenCount++;
+                tokenLength = 0;
+                continue;
+            }
+
+            if (ch is < 'a' or > 'z')
+                return null;
+            joined.Append(ch);
+            tokenLength++;
+        }
+
+        if (tokenLength is < 2 or > 63)
+            return null;
+        tokenCount++;
+        return tokenCount >= 2 && joined.Length is >= 2 and <= 63 ? joined.ToString() : null;
+    }
+
+    internal static Dictionary<string, List<StoredAssociationEntry>> MigrateAssociationsFromLegacyBuckets(
+        Dictionary<string, List<StoredEntry>> buckets)
+    {
+        var result = new Dictionary<string, List<StoredAssociationEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (keyword, entries) in buckets)
+        {
+            var canonical = NormalizeAssociationQuery(keyword);
+            if (canonical.Length == 0)
+                continue;
+
+            if (!result.TryGetValue(canonical, out var list))
+                result[canonical] = list = new List<StoredAssociationEntry>();
+
+            foreach (var entry in entries)
+            {
+                // Legacy bucket counts mixed frecency with self-reinforced learned opens: clamp initial
+                // organic count to <= 1 so historical mis-picks drop out until re-confirmed organically.
+                MergeSingleAssociationEntry(
+                    list,
+                    new StoredAssociationEntry(
+                        entry.Path,
+                        entry.Kind,
+                        entry.Time,
+                        OrganicOpens: Math.Clamp(entry.Count, 0, 1)),
+                    sumOpens: false);
+            }
+
+            // Several legacy keywords fold into one canonical query, and the reader keeps the newest
+            // MaxEntriesPerKeyword rows per key. Do the same here, or the surplus is written once and then
+            // silently dropped on the next load -- which rows survive must not depend on how the buckets
+            // happened to be stored.
+            TrimAssociationList(list);
+        }
+        return result;
+    }
+
+    private static void MergeSingleAssociationEntry(
+        List<StoredAssociationEntry> list,
+        StoredAssociationEntry entry,
+        bool sumOpens)
+    {
+        var opens = Math.Max(0, entry.OrganicOpens);
+        var index = list.FindIndex(existing =>
+            existing.Path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            list.Add(entry with { OrganicOpens = opens });
+            return;
+        }
+
+        var current = list[index];
+        var mergedOpens = sumOpens
+            ? (int)Math.Min(int.MaxValue, (long)current.OrganicOpens + opens)
+            : Math.Max(current.OrganicOpens, opens);
+        var newest = entry.LastOrganicTime >= current.LastOrganicTime ? entry : current;
+        list[index] = new StoredAssociationEntry(
+            newest.Path,
+            newest.Kind,
+            Math.Max(current.LastOrganicTime, entry.LastOrganicTime),
+            mergedOpens);
+    }
+
+    private static void TrimAssociationList(List<StoredAssociationEntry> list)
+    {
+        list.Sort(static (x, y) => y.LastOrganicTime.CompareTo(x.LastOrganicTime));
+        if (list.Count > SearchHistoryBucketSupport.MaxEntriesPerKeyword)
+        {
+            list.RemoveRange(
+                SearchHistoryBucketSupport.MaxEntriesPerKeyword,
+                list.Count - SearchHistoryBucketSupport.MaxEntriesPerKeyword);
+        }
+    }
+
     private static StoredEntry? RemovePathFromAllBuckets(Dictionary<string, List<StoredEntry>> buckets, string path)
     {
         StoredEntry? previous = null;
@@ -151,12 +342,42 @@ public static class SearchHistoryStore
         }
     }
 
-    /// <summary>Replaces the whole store with exactly these entries (Settings' edited/removed list).</summary>
+    /// <summary>All stored query -> path associations (including below-threshold ones) for inspection/editing in Settings.</summary>
+    public static IReadOnlyList<HistoryEntry> GetAssociationEntries()
+    {
+        lock (Gate)
+        {
+            EnsureCacheNoLock();
+            return FlattenAssociations(_associations!, minOrganicOpens: 1);
+        }
+    }
+
+    /// <summary>Confirmed query -> path associations eligible for <c>LearnedAlias</c> recall (<c>OrganicOpens &gt;= 3</c>).</summary>
+    public static IReadOnlyList<HistoryEntry> GetLearnedAssociationEntries()
+    {
+        lock (Gate)
+        {
+            EnsureCacheNoLock();
+            return FlattenAssociations(_associations!, MinAssociationOrganicOpens);
+        }
+    }
+
+    internal static List<HistoryEntry> FlattenAssociations(
+        Dictionary<string, List<StoredAssociationEntry>> associations,
+        int minOrganicOpens)
+    {
+        return associations
+            .SelectMany(kv => kv.Value
+                .Where(entry => entry.OrganicOpens >= minOrganicOpens)
+                .Select(entry => new HistoryEntry(kv.Key, entry.Path, entry.Kind, entry.LastOrganicTime, entry.OrganicOpens)))
+            .OrderByDescending(entry => entry.Time)
+            .ThenByDescending(entry => entry.Count)
+            .ToList();
+    }
+
+    /// <summary>Replaces the whole path-frecency store with these entries and prunes removed paths from associations.</summary>
     public static void SaveEntries(IEnumerable<HistoryEntry> entries)
     {
-        // Network-path probes must happen outside Gate (see Record's comment above): File.Exists/
-        // Directory.Exists have no timeout and can block for seconds on a slow share, and Gate is
-        // taken by Snapshot/GetPriority on every keystroke's search. Only the commit holds the lock.
         var validated = new List<(string Keyword, StoredEntry Entry)>();
         foreach (var entry in entries.OrderByDescending(e => e.Time))
         {
@@ -170,10 +391,6 @@ public static class SearchHistoryStore
 
         lock (Gate)
         {
-            // A HistoryEntry carries no score, so an edit or a removal on the settings page must not
-            // silently reset every untouched path's weight to its bare open count. Carry the stored score
-            // over by path before rebuilding; anything the store has never seen falls back to the
-            // count-based migration.
             EnsureCacheNoLock();
             var storedScores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (var list in _buckets!.Values)
@@ -191,7 +408,13 @@ public static class SearchHistoryStore
                 }));
 
             _buckets = BuildBuckets(scored);
+            var survivingPaths = new HashSet<string>(
+                scored.Select(item => item.Entry.Path),
+                StringComparer.OrdinalIgnoreCase);
+            PruneAssociationsToSurvivingPaths(_associations!, survivingPaths);
+
             PersistNoLock();
+            PersistAssociationsNoLock();
             _priorityCache = BuildPriorityCache(_buckets);
             _countCache = BuildCountCache(_buckets);
         }
@@ -199,12 +422,73 @@ public static class SearchHistoryStore
         Changed?.Invoke();
     }
 
-    /// <summary>
-    /// The live path-to-rank map. Handed out by reference: <see cref="_priorityCache"/> is only ever
-    /// replaced with a freshly built dictionary (never mutated in place), so a reader holding the
-    /// reference sees a consistent snapshot, and the callers are per-keystroke -- copying it used to
-    /// allocate and discard the whole dictionary while holding the gate the recorder needs.
-    /// </summary>
+    /// <summary>Replaces stored query -> path associations independently from path frecency.</summary>
+    public static void SaveAssociationEntries(IEnumerable<HistoryEntry> entries)
+    {
+        var rebuilt = new Dictionary<string, List<StoredAssociationEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries.OrderByDescending(e => e.Time))
+        {
+            var canonical = NormalizeAssociationQuery(entry.Keyword);
+            if (canonical.Length == 0)
+                continue;
+
+            var isApp = entry.Kind == HistoryEntryKind.Application;
+            var normalizedPath = isApp ? entry.Path.Trim() : NormalizePath(entry.Path);
+            if (!ExistsForKind(normalizedPath, entry.Kind, File.Exists, Directory.Exists))
+                continue;
+
+            if (!rebuilt.TryGetValue(canonical, out var list))
+                rebuilt[canonical] = list = new List<StoredAssociationEntry>();
+            MergeSingleAssociationEntry(
+                list,
+                new StoredAssociationEntry(normalizedPath, entry.Kind, entry.Time, Math.Max(1, entry.Count)),
+                sumOpens: false);
+        }
+
+        foreach (var list in rebuilt.Values)
+            TrimAssociationList(list);
+
+        lock (Gate)
+        {
+            EnsureCacheNoLock();
+            _associations = rebuilt;
+            PersistAssociationsNoLock();
+        }
+
+        Changed?.Invoke();
+    }
+
+    /// <summary>Clears all learned query -> path associations without resetting path frecency.</summary>
+    public static void ClearQueryAssociations()
+    {
+        lock (Gate)
+        {
+            EnsureCacheNoLock();
+            _associations = new Dictionary<string, List<StoredAssociationEntry>>(StringComparer.OrdinalIgnoreCase);
+            PersistAssociationsNoLock();
+        }
+
+        Changed?.Invoke();
+    }
+
+    private static void PruneAssociationsToSurvivingPaths(
+        Dictionary<string, List<StoredAssociationEntry>> associations,
+        HashSet<string> survivingPaths)
+    {
+        List<string>? emptied = null;
+        foreach (var (query, list) in associations)
+        {
+            list.RemoveAll(entry => !survivingPaths.Contains(entry.Path));
+            if (list.Count == 0)
+                (emptied ??= new List<string>()).Add(query);
+        }
+        if (emptied != null)
+        {
+            foreach (var query in emptied)
+                associations.Remove(query);
+        }
+    }
+
     public static IReadOnlyDictionary<string, int> Snapshot()
     {
         lock (Gate)
@@ -214,11 +498,6 @@ public static class SearchHistoryStore
         }
     }
 
-    /// <summary>
-    /// Path -> how many times it was opened (the stored count, not the bucket position). The ranking
-    /// windows use this to give a path with five or more opens a stronger history band; paths with one to
-    /// four opens only break ties after every match key.
-    /// </summary>
     public static IReadOnlyDictionary<string, int> UsageCounts()
     {
         lock (Gate)
@@ -228,8 +507,6 @@ public static class SearchHistoryStore
         }
     }
 
-    /// <summary>Ranking lookup: path -> effective history score * 100 (0.01 precision), decayed at read time.
-    /// The decay is never persisted here; only a new open rewrites Time/Score. Callers take one snapshot per query.</summary>
     public static IReadOnlyDictionary<string, int> ScoreSnapshot(DateTimeOffset now)
     {
         lock (Gate)
@@ -261,19 +538,75 @@ public static class SearchHistoryStore
 
     private static void EnsureCacheNoLock()
     {
-        if (_buckets != null)
-            return;
+        if (_buckets == null)
+        {
+            _buckets = LoadNoLock();
+            _priorityCache = BuildPriorityCache(_buckets);
+            _countCache = BuildCountCache(_buckets);
+        }
 
-        _buckets = LoadNoLock();
-        _priorityCache = BuildPriorityCache(_buckets);
-        _countCache = BuildCountCache(_buckets);
+        if (_associations == null)
+        {
+            _associations = LoadAssociationsFromFiles(AssociationsPath, AssociationsBackupPath, _buckets);
+        }
     }
 
     private static Dictionary<string, List<StoredEntry>> LoadNoLock() => LoadFromFiles(HistoryPath, BackupPath);
 
+    internal static Dictionary<string, List<StoredAssociationEntry>> LoadAssociationsFromFiles(
+        string mainPath,
+        string backupPath,
+        Dictionary<string, List<StoredEntry>> legacyBuckets)
+    {
+        if (!File.Exists(mainPath))
+            return MigrateAssociationsFromLegacyBuckets(legacyBuckets);
+
+        return TryLoadAssociationsFile(mainPath)
+            ?? TryLoadAssociationsFile(backupPath)
+            // Both unreadable is not "no associations": the buckets still hold every recorded open, and
+            // re-migrating them keeps the learned pairs recoverable instead of ending the feature with a
+            // truncated file. The clamped organic counts mean nothing is recalled until it is re-confirmed.
+            ?? MigrateAssociationsFromLegacyBuckets(legacyBuckets);
+    }
+
+    internal static Dictionary<string, List<StoredAssociationEntry>>? TryLoadAssociationsFile(string path)
+    {
+        if (!File.Exists(path))
+            return null;
+
+        try
+        {
+            var raw = JsonSerializer.Deserialize<Dictionary<string, List<StoredAssociationEntry>>>(File.ReadAllText(path), JsonOptions);
+            if (raw == null)
+                return null;
+
+            var normalized = new Dictionary<string, List<StoredAssociationEntry>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, entries) in raw)
+            {
+                var canonical = NormalizeAssociationQuery(key);
+                if (canonical.Length == 0 || entries.Count == 0)
+                    continue;
+                if (!normalized.TryGetValue(canonical, out var list))
+                    normalized[canonical] = list = new List<StoredAssociationEntry>();
+
+                // Several on-disk spellings can fold into one canonical key ("sousuo jieguo" and
+                // "sousuojieguo"). Keep every path and add the organic opens: those were separate user
+                // confirmations, so dropping one spelling would lose recall evidence.
+                foreach (var entry in entries)
+                    MergeSingleAssociationEntry(list, entry, sumOpens: true);
+                TrimAssociationList(list);
+            }
+            return normalized;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SearchHistoryStore] Failed to read query associations from '{path}': {ex.Message}", LogLevel.Error);
+            return null;
+        }
+    }
+
     internal static Dictionary<string, List<StoredEntry>> LoadFromFiles(string mainPath, string backupPath)
     {
-        // Missing main file = fresh store; a corrupt existing file falls back to backup -- see KeywordHistoryStore.LoadFromFiles.
         if (!File.Exists(mainPath))
             return new Dictionary<string, List<StoredEntry>>(StringComparer.OrdinalIgnoreCase);
 
@@ -282,7 +615,6 @@ public static class SearchHistoryStore
             ?? new Dictionary<string, List<StoredEntry>>(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Parses one history file into re-derived buckets; null when it cannot be read or parsed.</summary>
     internal static Dictionary<string, List<StoredEntry>>? TryLoadFile(string path)
     {
         if (!File.Exists(path))
@@ -294,9 +626,6 @@ public static class SearchHistoryStore
             if (raw == null)
                 return null;
 
-            // Re-derive through the same one-path-one-keyword + per-keyword-cap rule RecordCore/
-            // SaveEntries enforce -- retroactively fixes up a file that predates this rule (or was
-            // hand-edited) instead of just trusting whatever's on disk.
             var flat = raw.SelectMany(kv => kv.Value.Select(e => (Keyword: kv.Key, Entry: e)))
                 .OrderByDescending(x => x.Entry.Time);
             return BuildBuckets(flat);
@@ -308,7 +637,6 @@ public static class SearchHistoryStore
         }
     }
 
-    // Thin forwarder -- see SearchHistoryBucketSupport.BuildBuckets for the bucket-rebuild rules.
     private static Dictionary<string, List<StoredEntry>> BuildBuckets(IEnumerable<(string Keyword, StoredEntry Entry)> mostRecentFirst)
         => SearchHistoryBucketSupport.BuildBuckets(mostRecentFirst);
 
@@ -325,10 +653,22 @@ public static class SearchHistoryStore
         }
     }
 
+    private static void PersistAssociationsNoLock()
+    {
+        try
+        {
+            Directory.CreateDirectory(Logger.UserDataDir);
+            AtomicFileStore.Write(AssociationsPath, JsonSerializer.Serialize(_associations, JsonOptions), AssociationsBackupPath);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[SearchHistoryStore] Failed to write query associations: {ex.Message}", LogLevel.Error);
+        }
+    }
+
     private static List<HistoryEntry> Flatten(Dictionary<string, List<StoredEntry>> buckets)
         => SearchHistoryBucketSupport.Flatten(buckets);
 
-    // Thin forwarder -- see SearchHistoryBucketSupport.BuildPriorityCache for the ranking rules.
     private static Dictionary<string, int> BuildPriorityCache(Dictionary<string, List<StoredEntry>> buckets)
         => SearchHistoryBucketSupport.BuildPriorityCache(buckets);
 

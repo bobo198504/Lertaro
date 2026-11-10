@@ -16,7 +16,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 2. Clean and create the output directory (the per-architecture publish dirs are cleaned in :build_arch)
+:: 2. Clean dist/ (the per-architecture publish dirs are cleaned in :build_arch)
 echo.
 echo [1/3] Cleaning dist directory...
 if exist "%DIST%" (
@@ -29,7 +29,6 @@ if exist "%DIST%" (
 mkdir "%DIST%"
 
 :: 3. Find the 64-bit Inno Setup 7 compiler (hoisted ahead of both passes)
-:: Try System-wide install first, then User-specific install
 set "ISCC="
 
 if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
@@ -66,11 +65,27 @@ for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "([xml](Get-C
 for /f "usebackq tokens=*" %%v in (`powershell -NoProfile -Command "$a = '%APP_VER%.0.0.0' -split '\.'; $a[0..3] -join '.'"`) do set "APP_VER_4=%%v"
 echo App Version: %APP_VER% (PE Version: %APP_VER_4%)
 
+:: 5. Materialize the signing key
+:: LERTARO_SIGNING_KEY is the key file as ONE base64 line, the contract the GitLab job and the GitHub
+:: workflow share. The sweep below clears the leftovers of a run that died halfway.
+echo.
+echo Decoding the signing key...
+if not defined LERTARO_SIGNING_KEY (
+    echo [Error] LERTARO_SIGNING_KEY is not set. It must hold the key file as one base64 line, for example
+    echo         the output of:  openssl base64 -A -in lertaro-release.key
+    exit /b 1
+)
+del /q "%TEMP%\lertaro-release-*.key" >nul 2>&1
+set "SIGN_KEY=%TEMP%\lertaro-release-%RANDOM%.key"
+powershell -NoProfile -Command "[IO.File]::WriteAllBytes($env:SIGN_KEY,[Convert]::FromBase64String(($env:LERTARO_SIGNING_KEY -replace '\s','')))"
+if not exist "%SIGN_KEY%" (
+    echo [Error] LERTARO_SIGNING_KEY is not base64 of a key file; nothing could be decoded.
+    exit /b 1
+)
 
-:: Two architectures, same steps. x64 publishes with no RID exactly as it always has, so its output is
-:: unchanged; arm64 is a cross-publish from whatever machine is building. They are separate artifacts
-:: rather than one combined installer because the BrowserData plugin carries a native library and only
-:: one architecture's copy can sit in its (flat, deps.json-less) load directory -- see that project.
+
+:: Two architectures, same steps, and separate artifacts rather than one combined installer: BrowserData
+:: carries a native library and only one architecture's copy fits its flat, deps.json-less load directory.
 echo.
 echo === Building x64 ===
 set "ARCH=x64"
@@ -82,17 +97,17 @@ if errorlevel 1 exit /b 1
 echo.
 echo === Building arm64 ===
 set "ARCH=arm64"
-:: The new repository is not visible to legacy installs, so use the conventional hyphenated suffix.
-:: Kept in step with UpdateAssetSelector.SuffixFor and installer.iss.
+:: Conventional hyphenated suffix, which legacy installs can see; in step with UpdateAssetSelector.SuffixFor and installer.iss.
 set "ARCHSUFFIX=-arm64"
 set "RIDARGS=-r win-arm64 --self-contained false"
 call :build_arch
 if errorlevel 1 exit /b 1
 
-:: 5. Clean up temporary publish folder
+:: 6. Clean up temporary publish folder and the decoded key
 echo.
 echo Cleaning up temporary publish folder...
 rmdir /s /q "%ROOT%publish" >nul 2>&1
+del /q "%SIGN_KEY%" >nul 2>&1
 
 echo.
 echo ==========================================
@@ -105,10 +120,8 @@ echo ==========================================
 exit /b 0
 
 
-:: ---------------------------------------------------------------------------------------------
-:: Per-architecture build. Driven by ARCH / ARCHSUFFIX / RIDARGS set by the caller rather than by
-:: parameters, because an empty argument (x64 passes no RID) is awkward to quote in batch.
-:: ---------------------------------------------------------------------------------------------
+:: Per-architecture build, driven by ARCH / ARCHSUFFIX / RIDARGS set by the caller rather than by
+:: parameters: an empty argument (x64 passes no RID) is awkward to quote in batch.
 :build_arch
 set "OUT=%ROOT%publish\%ARCH%\Lertaro"
 if exist "%OUT%" (
@@ -120,16 +133,9 @@ if exist "%OUT%" (
 )
 mkdir "%OUT%"
 
-:: Publish App/Service/Cli in Release mode
-::
-:: Solution-level `dotnet publish -o` prints NETSDK1194 ("specifying a solution-level output path...
-:: may result in inconsistent builds") since it's not an officially supported publish mode -- every
-:: project in Lertaro.slnx just publishes into the same -o in whatever order MSBuild picks, rather
-:: than each publish being independently well-defined the way `dotnet publish SomeProject.csproj -o`
-:: is. Used anyway (as Lertaro.Plugins.slnx already does below, without issue) since it's simpler to
-:: maintain than a separate pushd/publish/popd block per exe project, and has been verified to produce
-:: the same merged output (App+Service+Cli+Core+PluginSdk all landing in %OUT%) as the three separate
-:: publishes it replaces.
+:: One publish per project, in the order Lertaro.slnx lists them: -o on a solution is NETSDK1194's
+:: unsupported shape, where every project writes into the same folder in whatever order MSBuild picks.
+:: The list is read from the solution file, so it cannot drift from it.
 echo.
 echo [1/4] Publishing App/Service/Cli in Release mode...
 dotnet publish "%ROOT%Lertaro.slnx" -c Release -o "%OUT%" %RIDARGS% -v quiet
@@ -169,7 +175,6 @@ if errorlevel 1 (
 )
 del /s /q "%OUT%\*.pdb" >nul 2>&1
 
-:: Compile Inno Setup Installer
 echo.
 echo [4/4] Compiling Inno Setup Installer...
 echo Using Inno Setup compiler: "%ISCC%"
@@ -179,12 +184,53 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Create Portable ZIP Archive
 echo.
 echo Creating Portable ZIP Archive (%ARCH%)...
 powershell -Command "if (Test-Path '%DIST%\Lertaro-Portable%ARCHSUFFIX%.zip') { Remove-Item -Force '%DIST%\Lertaro-Portable%ARCHSUFFIX%.zip' }; Compress-Archive -Path '%OUT%' -DestinationPath '%DIST%\Lertaro-Portable%ARCHSUFFIX%.zip' -Force"
 if errorlevel 1 (
     echo [Error] Portable ZIP creation failed.
+    exit /b 1
+)
+
+:: Sign the portable ZIP: the updater verifies an ECDSA P-256 signature over the whole archive and refuses
+:: an unsigned package, so signing belongs here rather than to a separate release step.
+set "SIGN_ZIP=%DIST%\Lertaro-Portable%ARCHSUFFIX%.zip"
+
+echo Signing %SIGN_ZIP%...
+:: OpenSSL is preferred: its output can be checked with the command published in the release notes. It is
+:: not always on PATH, so the two usual Windows install locations are probed too.
+set "OPENSSL="
+where openssl >nul 2>&1
+if not errorlevel 1 set "OPENSSL=openssl"
+if not defined OPENSSL if exist "%ProgramFiles%\OpenSSL-Win64\bin\openssl.exe" set "OPENSSL=%ProgramFiles%\OpenSSL-Win64\bin\openssl.exe"
+if not defined OPENSSL if exist "%ProgramFiles%\Git\usr\bin\openssl.exe" set "OPENSSL=%ProgramFiles%\Git\usr\bin\openssl.exe"
+if defined OPENSSL (
+    "%OPENSSL%" dgst -sha256 -sign "%SIGN_KEY%" -out "%SIGN_ZIP%.sig" "%SIGN_ZIP%"
+    if errorlevel 1 (
+        echo [Error] Signing %SIGN_ZIP% failed.
+        exit /b 1
+    )
+    goto :eof
+)
+
+:: No OpenSSL anywhere: fall back to the same ECDsa code the app verifies with. That needs PowerShell 7,
+:: since Windows PowerShell's .NET Framework has no ImportFromPem.
+set "LERTARO_SIGN_KEY=%SIGN_KEY%"
+set "LERTARO_SIGN_ZIP=%SIGN_ZIP%"
+where pwsh >nul 2>&1
+if errorlevel 1 (
+    echo [Error] Neither OpenSSL nor PowerShell 7 is available to sign %SIGN_ZIP%.
+    exit /b 1
+)
+pwsh -NoProfile -Command "$ErrorActionPreference='Stop'; $k=[System.Security.Cryptography.ECDsa]::Create(); $k.ImportFromPem([System.IO.File]::ReadAllText($env:LERTARO_SIGN_KEY)); $s=$k.SignData([System.IO.File]::ReadAllBytes($env:LERTARO_SIGN_ZIP),[System.Security.Cryptography.HashAlgorithmName]::SHA256,[System.Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence); if (-not $k.VerifyData([System.IO.File]::ReadAllBytes($env:LERTARO_SIGN_ZIP),$s,[System.Security.Cryptography.HashAlgorithmName]::SHA256,[System.Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)) { throw 'self-verification of the new signature failed' }; [System.IO.File]::WriteAllBytes($env:LERTARO_SIGN_ZIP+'.sig',$s)"
+if errorlevel 1 (
+    echo [Error] Signing %SIGN_ZIP% failed.
+    exit /b 1
+)
+:: Without ErrorActionPreference these .NET calls fail as non-terminating errors: pwsh printed the exception,
+:: still wrote the file, exited 0, and left a blob that verifies against nothing -- hence the check below.
+if not exist "%SIGN_ZIP%.sig" (
+    echo [Error] Signing %SIGN_ZIP% produced no signature file.
     exit /b 1
 )
 

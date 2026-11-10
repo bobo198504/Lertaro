@@ -336,4 +336,128 @@ public sealed class SearchHistoryStoreTests
 
         Assert.IsEmpty(cache);
     }
+
+    [TestMethod]
+    public void NormalizeAssociationQuery_JoinsP4EligibleTerms()
+    {
+        Assert.AreEqual("sousuojieguo", SearchHistoryStore.NormalizeAssociationQuery("  Sousuo   Jieguo "));
+        Assert.AreEqual("sousuojieguo", SearchHistoryStore.NormalizeAssociationQuery("sousuojieguo"));
+
+        // Not every spaced query is a pinyin alternative: punctuation, single-letter terms and non-ASCII
+        // text keep their spacing (P4 only joins plain all-letter terms of 2..63 characters).
+        Assert.AreEqual("foo-bar baz", SearchHistoryStore.NormalizeAssociationQuery("Foo-Bar Baz"));
+        Assert.AreEqual("a b", SearchHistoryStore.NormalizeAssociationQuery("A B"));
+        Assert.AreEqual("设置 界面", SearchHistoryStore.NormalizeAssociationQuery("设置 界面"));
+    }
+
+    [TestMethod]
+    public void TryLoadAssociationsFile_MergesEquivalentCanonicalKeys()
+    {
+        var path = Path.Combine(_dir, "search-query-associations.json");
+        var raw = new Dictionary<string, List<SearchHistoryStore.StoredAssociationEntry>>
+        {
+            ["sousuo jieguo"] =
+            [
+                new(@"X:\Fixture\a.txt", HistoryEntryKind.File, LastOrganicTime: 100, OrganicOpens: 1),
+            ],
+            ["sousuojieguo"] =
+            [
+                new(@"X:\Fixture\a.txt", HistoryEntryKind.File, LastOrganicTime: 200, OrganicOpens: 2),
+                new(@"X:\Fixture\b.txt", HistoryEntryKind.File, LastOrganicTime: 150, OrganicOpens: 1),
+            ],
+        };
+        File.WriteAllText(path, JsonSerializer.Serialize(raw, BucketJsonOptions));
+
+        var loaded = SearchHistoryStore.TryLoadAssociationsFile(path);
+        Assert.IsNotNull(loaded);
+
+        var rows = SearchHistoryStore.FlattenAssociations(loaded, minOrganicOpens: 1);
+        Assert.HasCount(2, rows);
+        Assert.IsTrue(rows.All(row => row.Keyword == "sousuojieguo"));
+        var a = rows.Single(row => row.Path == @"X:\Fixture\a.txt");
+        Assert.AreEqual(3, a.Count, "both spellings were separate organic confirmations");
+        Assert.AreEqual(200, a.Time);
+    }
+
+    [TestMethod]
+    public void MigrateAssociationsFromLegacyBuckets_ClampsOrganicOpensToAtMostOne()
+    {
+        var buckets = Buckets(Entry(path: @"X:\Fixture\legacy.txt", time: 500, count: 9, score: 9d));
+
+        var migrated = SearchHistoryStore.MigrateAssociationsFromLegacyBuckets(buckets);
+        var recalled = SearchHistoryStore.FlattenAssociations(migrated, SearchHistoryStore.MinAssociationOrganicOpens);
+        var visible = SearchHistoryStore.FlattenAssociations(migrated, minOrganicOpens: 1);
+
+        Assert.IsEmpty(recalled, "legacy self-reinforced counts must not cross the organic recall threshold on upgrade");
+        Assert.HasCount(1, visible);
+        Assert.AreEqual(1, visible[0].Count);
+    }
+
+    [TestMethod]
+    public void LoadAssociationsFromFiles_BothFilesUnreadable_RebuildsFromLegacyBuckets()
+    {
+        var main = Path.Combine(_dir, "search-query-associations.json");
+        var backup = main + ".bak";
+        File.WriteAllText(main, "{ truncated");
+        File.WriteAllText(backup, "{ also truncated");
+
+        var loaded = SearchHistoryStore.LoadAssociationsFromFiles(
+            main, backup, Buckets(Entry(path: @"X:\Fixture\recovered.txt", time: 500, count: 4)));
+
+        var visible = SearchHistoryStore.FlattenAssociations(loaded, minOrganicOpens: 1);
+        Assert.HasCount(1, visible, "a corrupt associations file must not end the learned-alias feature");
+        Assert.AreEqual(@"X:\Fixture\recovered.txt", visible[0].Path);
+        Assert.AreEqual(
+            1,
+            visible[0].Count,
+            "recovered rows arrive at the clamped organic count, so nothing is recalled until re-confirmed");
+    }
+
+    [TestMethod]
+    public void MigrateAssociationsFromLegacyBuckets_KeepsTheNewestRowsWithinTheReadCap()
+    {
+        // Two legacy keywords that fold into one canonical query, 12 paths each: the reader keeps 20 rows per
+        // key, so a migration that writes all 24 loses four of them the first time the file is read back.
+        var buckets = new Dictionary<string, List<SearchHistoryStore.StoredEntry>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alpha tool"] = [.. Enumerable.Range(0, 12).Select(i => Entry($@"X:\Fixture\old\{i}.txt", time: 100 + i))],
+            ["ALPHA  TOOL"] = [.. Enumerable.Range(0, 12).Select(i => Entry($@"X:\Fixture\new\{i}.txt", time: 900 + i))],
+        };
+
+        var migrated = SearchHistoryStore.MigrateAssociationsFromLegacyBuckets(buckets);
+        var rows = SearchHistoryStore.FlattenAssociations(migrated, minOrganicOpens: 1);
+        var cap = SearchHistoryBucketSupport.MaxEntriesPerKeyword;
+        var kept = rows.Select(row => row.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.HasCount(cap, rows);
+        Assert.IsTrue(
+            Enumerable.Range(0, 12).All(i => kept.Contains($@"X:\Fixture\new\{i}.txt")),
+            "every row of the newest keyword survives the truncation");
+        Assert.HasCount(
+            cap - 12,
+            Enumerable.Range(0, 12).Where(i => kept.Contains($@"X:\Fixture\old\{i}.txt")).ToList(),
+            "the overflow is filled by the oldest rows that still fit");
+        Assert.IsTrue(
+            Enumerable.Range(0, 12 - (cap - 12)).All(i => !kept.Contains($@"X:\Fixture\old\{i}.txt")),
+            "what the cap drops is the oldest of the oldest, never an arbitrary tail");
+    }
+
+    [TestMethod]
+    public void RecordAssociationInMemory_RequiresOrganicOpensAndIgnoresLearnedFeedback()
+    {
+        var associations = new Dictionary<string, List<SearchHistoryStore.StoredAssociationEntry>>(StringComparer.OrdinalIgnoreCase);
+
+        SearchHistoryStore.RecordAssociationInMemory(associations, "  Pix   Pin ", @"X:\Fixture\Target.exe", HistoryEntryKind.File, 100, fromLearnedRecall: false);
+        SearchHistoryStore.RecordAssociationInMemory(associations, "pix pin", @"X:\Fixture\Target.exe", HistoryEntryKind.File, 200, fromLearnedRecall: false);
+        // Self-feedback open from a recalled row must NOT push count from 2 -> 3.
+        SearchHistoryStore.RecordAssociationInMemory(associations, "pix pin", @"X:\Fixture\Target.exe", HistoryEntryKind.File, 300, fromLearnedRecall: true);
+
+        Assert.IsEmpty(SearchHistoryStore.FlattenAssociations(associations, SearchHistoryStore.MinAssociationOrganicOpens));
+
+        SearchHistoryStore.RecordAssociationInMemory(associations, "PIX PIN", @"X:\Fixture\Target.exe", HistoryEntryKind.File, 400, fromLearnedRecall: false);
+        var confirmed = SearchHistoryStore.FlattenAssociations(associations, SearchHistoryStore.MinAssociationOrganicOpens);
+        Assert.HasCount(1, confirmed);
+        Assert.AreEqual("pixpin", confirmed[0].Keyword);
+        Assert.AreEqual(3, confirmed[0].Count);
+    }
 }

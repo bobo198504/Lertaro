@@ -1,3 +1,4 @@
+using Lertaro.PluginSdk.Helpers;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Text;
@@ -33,10 +34,10 @@ public static class SearchRequestBinarySerializer
                 payloadSize += GetStringByteCount(msg.Drive) + 5 + 1;
                 break;
             case SearchRequestId.Search:
-                payloadSize += 8 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 2;
+                payloadSize += 8 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 3;
                 break;
             case SearchRequestId.SearchDir:
-                payloadSize += 8 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 2;
+                payloadSize += 8 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 3;
                 break;
             case SearchRequestId.EnumerateDir:
                 payloadSize += 4 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + 1;

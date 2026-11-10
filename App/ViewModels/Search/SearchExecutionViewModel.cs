@@ -5,6 +5,10 @@ using Lertaro.App.ViewModels.Search.Dispatch;
 
 using Lertaro.Core.Services.Search;
 
+using Lertaro.PluginSdk.Abstractions;
+using Lertaro.PluginSdk.Abstractions.Plugins;
+using Lertaro.PluginSdk.Helpers;
+
 using Lertaro.App.ViewModels.Search.Mapping;
 namespace Lertaro.App.ViewModels.Search;
 
@@ -15,6 +19,9 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
     private readonly SearchDispatchController _dispatcher;
 
     private string _searchQuery = null!;
+    private string _lastQuery = string.Empty;
+    private IReadOnlyList<SidebarFilterItem> _categories = BuildCategoryTabs();
+    private SidebarFilterItem _selectedCategory = null!;
     private bool _isSearching;
     private bool _isResultsListEnabled = true;
     private AppSearchResult? _selectedResult;
@@ -101,7 +108,11 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
         get => _searchQuery;
         set
         {
-            if (SetProperty(ref _searchQuery, value))
+            // Normalised once, here: the property is non-nullable but a binding can hand a null over,
+            // and the calls below take a non-nullable string. Storing the normalised value keeps a null
+            // from reaching the field at all (every reader already treats empty as "no query").
+            var query = value ?? string.Empty;
+            if (SetProperty(ref _searchQuery, query))
             {
                 // Every typed change is recorded here, not only the ones that reach PerformSearch: a non-empty
                 // query goes through DispatchSearch instead, so saving only in PerformSearch left this empty
@@ -112,18 +123,107 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
                 {
                     return;
                 }
-                if (string.IsNullOrWhiteSpace(value))
+                if (string.IsNullOrWhiteSpace(query))
                 {
                     _engine.CancelPendingSearch();
                     _dispatcher.PerformSearch(value ?? string.Empty);
                 }
                 else
                 {
-                    _dispatcher.DispatchSearch(value);
+                    _dispatcher.DispatchSearch(query);
                 }
             }
         }
     }
+
+    /// <summary>
+    /// The filter tabs: 全部 first, then the type rows the Core Extensions plugin's 类型设置 describes. This
+    /// bar has no list of its own -- it reads the same <see cref="SidebarFilterItem"/> rows the full search
+    /// window's sidebar builds, through the same provider list and the same per-row predicates -- so turning
+    /// a row off, renaming a :@keyword or adding one changes this bar in the same step, and the two surfaces
+    /// cannot answer differently for one row.
+    /// </summary>
+    public IReadOnlyList<SidebarFilterItem> Categories => _categories;
+
+    /// <summary>
+    /// The active tab. A change has to re-run the query: the engine narrows the index walk to the tab's
+    /// category where it can, so there is no unfiltered list kept here that could be filtered differently.
+    /// </summary>
+    public SidebarFilterItem SelectedCategory
+    {
+        get => _selectedCategory;
+        set
+        {
+            if (_selectedCategory == value)
+                return;
+            _selectedCategory = value;
+            OnPropertyChanged(nameof(SelectedCategory));
+            if (!IsActionsMode && !string.IsNullOrWhiteSpace(_lastQuery))
+                _dispatcher.DispatchSearch(_lastQuery);
+        }
+    }
+
+    /// <summary>
+    /// The active tab's predicate, or null when the tab is 全部. Null is what the rest of the pipeline reads
+    /// as "no narrowing": the display cap, and the show-more row it feeds, apply to an unfiltered list and
+    /// must not apply to a filtered one -- a tab that keeps every row is not the same thing as no tab, and
+    /// handing <c>_ =&gt; true</c> downstream would silently disable the cap.
+    /// </summary>
+    public Func<ISearchResult, bool>? ActiveCategoryFilter =>
+        ReferenceEquals(_selectedCategory, _categories[0]) ? null : _selectedCategory.MatchPredicate;
+
+    /// <summary>Puts the bar back on 全部, the way a window that was only just opened reads.</summary>
+    public void ResetCategoryFilter() => SelectedCategory = _categories[0];
+
+    /// <summary>
+    /// Re-reads the rows. Cheap, and it is the only way a settings edit while this window is open reaches the
+    /// bar: providers are asked for their groups at construction, so the host asks again.
+    /// </summary>
+    public void RebuildCategories()
+    {
+        var rebuilt = BuildCategoryTabs();
+
+        // Same pass, same reason: the bar's switch is a setting a user can change while this window is open.
+        ShowCategoryBar = Core.UserSettings.Load().SearchWindow.ShowCategoryFilter;
+
+        // Identity is the row's id, not the object: a provider hands back new instances every call, and a
+        // user mid-filter must not be bounced to 全部 because the list was refreshed under them.
+        // A HIDDEN bar is the exception: keeping a filter it applied would leave the user no control to clear
+        // it, so hiding the bar puts it back on 全部.
+        var keep = ShowCategoryBar
+            ? rebuilt.FirstOrDefault(row => row.Id == _selectedCategory.Id) ?? rebuilt[0]
+            : rebuilt[0];
+        _categories = rebuilt;
+        OnPropertyChanged(nameof(Categories));
+        if (keep != _selectedCategory)
+        {
+            _selectedCategory = keep;
+            OnPropertyChanged(nameof(SelectedCategory));
+        }
+    }
+
+    private static IReadOnlyList<SidebarFilterItem> BuildCategoryTabs()
+    {
+        var tabs = new List<SidebarFilterItem> { AllTab() };
+        foreach (var group in PluginManager.Instance.SidebarFilterProviders.SelectMany(provider => provider.GetFilterGroups()))
+        {
+            // Only the type group: the same provider list also carries file size and date rows, which are
+            // ranges rather than kinds and would make a bar of things that are not "what kind of entry".
+            if (group.Id == "Type")
+                tabs.AddRange(group.Items);
+        }
+
+        return tabs;
+    }
+
+    // The unfiltered tab. No category, so the engine walks everything; a predicate that keeps everything, so
+    // the display cap applies to it as it always did.
+    private static SidebarFilterItem AllTab() => new()
+    {
+        Id = string.Empty,
+        DisplayName = TranslationManager.Instance["Search_Category_All"],
+        MatchPredicate = _ => true,
+    };
 
     public bool IsSearching
     {
@@ -147,8 +247,33 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
     public Visibility ResultsPanelVisibility
     {
         get => _resultsPanelVisibility;
-        set => SetProperty(ref _resultsPanelVisibility, value);
+        set
+        {
+            if (SetProperty(ref _resultsPanelVisibility, value))
+                OnPropertyChanged(nameof(CategoryBarVisibility));
+        }
     }
+
+    // Whether the type filter bar is shown at all -- Settings → Quick Search Window. Re-read with the rows
+    // (see RebuildCategories), because that is the pass an edit made while this window is open reaches.
+    private bool _showCategoryBar = true;
+
+    public bool ShowCategoryBar
+    {
+        get => _showCategoryBar;
+        private set
+        {
+            if (SetProperty(ref _showCategoryBar, value))
+                OnPropertyChanged(nameof(CategoryBarVisibility));
+        }
+    }
+
+    /// <summary>
+    /// The bar's own visibility: with the results panel, and only while the user wants the bar. The panel's
+    /// visibility is left alone -- the results, the separator and the launch panel all read it.
+    /// </summary>
+    public Visibility CategoryBarVisibility
+        => _showCategoryBar ? _resultsPanelVisibility : Visibility.Collapsed;
 
     public Visibility ResultsSeparatorVisibility
     {

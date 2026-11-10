@@ -599,6 +599,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         }
         return null;
     }
+
     protected override void OnClosed(EventArgs e)
     {
         if (_scaleChangedHandler != null)

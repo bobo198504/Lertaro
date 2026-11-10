@@ -76,6 +76,8 @@ internal sealed class SearchStreamRenderer
         var streamedResponse = new List<SearchResult>();
         object responseLock = new();
         var streamedCount = 0;
+        var perfStart = SearchPerf.Start();
+        var lastArrivalMs = 0L;
         // Full-window ranking accepts independent batches, so it never needs the already-copied prefix.
         // Quick and inline mappers still receive their complete snapshot on every render.
         var copiedCount = 0;
@@ -99,27 +101,15 @@ internal sealed class SearchStreamRenderer
             ? FilterPatternHelper.SplitOrNullIfMatchAll(scopeDirective.FilterPattern)
             : null;
 
+        var consumeTicks = 0L;
+
         void Accumulate(SearchResult result)
         {
-            token.ThrowIfCancellationRequested();
-            if (!SearchReachabilityGate.IsResultReachable(result))
-                return;
-
-            // The card over a dialog that takes only a folder offers folders, so everything else is dropped
-            // before it can take a row. Filtered here rather than after ranking so the row budget, the
-            // progressive paint sizes and the "N results" count all describe the rows the window may actually
-            // list.
-            if (foldersOnly && !result.IsDir)
-                return;
-
-            // The filter pattern constrains FILE names; a folder always passes (same semantics the
-            // pattern had when the filter plugin enumerated directories itself).
-            if (scopePatterns != null && !result.IsDir && !FilterPatternHelper.Matches(result.Name, scopePatterns))
-                return;
-
-            lock (responseLock)
+            var consumeStart = SearchPerf.Start();
+            try
             {
-                if (dedupePaths != null && !dedupePaths.Add(result.Path))
+                token.ThrowIfCancellationRequested();
+                if (!SearchReachabilityGate.IsResultReachable(result))
                     return;
                 if (runShortcutSupplement && ScopedSearchRunner.IsSupplementShortcutPath(result.Path))
                     Volatile.Write(ref shortcutSurfaced, 1);
@@ -164,6 +154,7 @@ internal sealed class SearchStreamRenderer
             // discards a stale frame, so arriving sooner cannot show a superseded result.
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
+                enteredAt = SearchPerf.Start();
                 if (searchVersion != _getSearchVersion() || token.IsCancellationRequested)
                     return;
                 onResultsUpdated(uiResults, statusText, final);
@@ -334,6 +325,7 @@ internal sealed class SearchStreamRenderer
         }
 
         await RenderSnapshotAsync(final: true, int.MaxValue).ConfigureAwait(false);
+        SearchPerf.Log($"[stream] results={Volatile.Read(ref streamedCount)} lastArrival={Volatile.Read(ref lastArrivalMs)}ms wall={SearchPerf.Ms(perfStart):F0}ms consume={SearchPerf.MsFromTicks(Volatile.Read(ref consumeTicks)):F0}ms");
     }
 
     internal static List<SearchResult> CopySnapshot(

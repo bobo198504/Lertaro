@@ -59,6 +59,54 @@ public sealed class PinyinExactModeTests
         Assert.IsEmpty(Search("ex", fuzzy: true, names), "and fuzzy matching does not license it either");
     }
 
+    // #440's ghost class: query letters that really are in the name, scattered. A same-script alias (the
+    // Simplified spelling) is not a spelling, so it is read with the precision the user typed: exact mode
+    // reaches NEITHER occurrence, while fuzzy mode still sorts the tight one from the wide scatter.
+    [TestMethod]
+    public void Reported440_ExactModeReachesNoAliasScatterAndFuzzyKeepsTheTightOne()
+    {
+        const string loose = "著 z-aaa-b-aaaaa-l.epub";
+        const string tight = "著 z-aa-b-aa-l.epub";
+        using var fixture = new RealIndexFixture(loose, tight);
+        var previous = SearchContext.FuzzyMatchEnabled;
+        try
+        {
+            SearchContext.FuzzyMatchEnabled = false;
+            Assert.IsFalse(FuzzyMatcher.IsMatch("zbl", tight), "exact zbl is no run in that name");
+            CollectionAssert.DoesNotContain(fixture.Search("zbl"), tight, "and the candidate layer must not generate it either");
+            CollectionAssert.DoesNotContain(fixture.Search("zbl"), loose, "the 15-character scatter stays out as always");
+
+            SearchContext.FuzzyMatchEnabled = true;
+            CollectionAssert.Contains(fixture.Search("zbl"), tight, "fuzzy mode asks for the scatter, so the 11-character occurrence is a candidate");
+            CollectionAssert.DoesNotContain(fixture.Search("zbl"), loose, "and the shared tightness gate still refuses the 15-character one");
+        }
+        finally
+        {
+            SearchContext.FuzzyMatchEnabled = previous;
+        }
+    }
+
+    // The reported file: the name's own ASCII island is short, so its scatter is "tight" and the gate alone
+    // never refused it. The alias must be read the user's way instead. 电脑zsbsls.txt rides along as the
+    // control -- the same shape with no Simplified spelling to leak through.
+    [TestMethod]
+    [DataRow("著作zsbsls.txt")]
+    [DataRow("電腦zsbsls.txt")]
+    public void ScatteredAsciiIsland_StaysOutOfExactMode(string name)
+    {
+        using var fixture = new RealIndexFixture(name, "电脑zsbsls.txt");
+        var previous = SearchContext.FuzzyMatchEnabled;
+        try
+        {
+            SearchContext.FuzzyMatchEnabled = false;
+            Assert.IsEmpty(fixture.Search("zbl"), $"'{name}' must not answer an exact zbl");
+        }
+        finally
+        {
+            SearchContext.FuzzyMatchEnabled = previous;
+        }
+    }
+
     [TestMethod]
     public void MidReadingStart_StaysOutOfBothModes()
     {

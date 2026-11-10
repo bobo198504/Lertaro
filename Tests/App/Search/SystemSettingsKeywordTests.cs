@@ -1,5 +1,6 @@
 using Lertaro.App.ViewModels.Search;
 using Lertaro.App.ViewModels.Search.Mapping;
+using Lertaro.Core;
 using Lertaro.Core.SearchIndex;
 using Lertaro.PluginSdk.Abstractions.Plugins;
 using Lertaro.Plugins.SystemSettings;
@@ -44,7 +45,33 @@ public sealed class SystemSettingsKeywordTests
         var entry = Entry("See running processes", ["cpu", "threads"]);
         Assert.IsTrue(Match("CPU run", entry).IsMatch);
         Assert.IsFalse(Match("cpu level", entry).IsMatch);
-        Assert.AreEqual(0d, Match("cpu", entry).Weight);
+        Assert.AreEqual(1d, Match("cpu", entry).Weight);
+    }
+
+    [TestMethod]
+    public void NativeKeywords_CleanPrefixIsExactIdentity()
+    {
+        var entry = Entry("编辑账户的环境变量", ["environment", "variables", "envvar"]);
+
+        var match = SearchableItemMapper.MatchCatalogEntryWithEvidence(
+            FuzzyQuery.Parse("env"), ["env"], entry, "Settings");
+
+        Assert.AreEqual(MatchEvidenceField.Keyword, match.Evidence.Field);
+        Assert.AreEqual(MatchEvidenceGrade.ExactIdentity, match.Evidence.Grade);
+        Assert.IsTrue(match.Rank.IsStrong);
+        Assert.AreEqual(0.5d, match.Rank.Coverage);
+    }
+
+    [TestMethod]
+    public void NativeKeywords_ShortLatinPrefixStaysSecondary()
+    {
+        var entry = Entry("编辑账户的环境变量", ["environment", "envvar"]);
+
+        var match = SearchableItemMapper.MatchCatalogEntryWithEvidence(
+            FuzzyQuery.Parse("e"), ["e"], entry, "Settings");
+
+        Assert.AreEqual(MatchEvidenceField.Keyword, match.Evidence.Field);
+        Assert.AreEqual(MatchEvidenceGrade.SecondaryField, match.Evidence.Grade);
     }
 
     [TestMethod]
@@ -54,6 +81,39 @@ public sealed class SystemSettingsKeywordTests
         Assert.AreEqual(2, entries.Count(entry => Match("env", entry).IsMatch));
         Assert.AreEqual(FuzzyQuery.Parse(entries[0].Item.Title).BestMatch(entries[0].Item.Title),
             Match(entries[0].Item.Title, entries[0]));
+    }
+
+    [TestMethod]
+    public void EvidenceNamesTheRepresentationThatActuallyMatched()
+    {
+        var aliasEntry = new SearchableItemCache.CacheEntry(
+            new SearchableItem { Title = "PixPin" },
+            ["screen capture"],
+            null);
+        var alias = SearchableItemMapper.MatchCatalogEntryWithEvidence(
+            FuzzyQuery.Parse("capture"), ["capture"], aliasEntry, "StartMenu");
+        var keyword = SearchableItemMapper.MatchCatalogEntryWithEvidence(
+            FuzzyQuery.Parse("env"), ["env"], Entry("System Settings", ["environment"]), "Settings");
+
+        Assert.AreEqual(MatchEvidenceField.ProviderAlias, alias.Evidence.Field);
+        Assert.AreEqual(MatchEvidenceGrade.SecondaryField, alias.Evidence.Grade);
+        Assert.AreEqual("StartMenu", alias.Evidence.ProviderId);
+        Assert.AreEqual(MatchEvidenceField.Keyword, keyword.Evidence.Field);
+        Assert.AreEqual(MatchEvidenceGrade.ExactIdentity, keyword.Evidence.Grade);
+        Assert.AreEqual(MatchEvidenceMode.LegacyUnknown, alias.Evidence.Mode);
+    }
+
+    [TestMethod]
+    public void SyntheticPath_UsesTheProviderTypeName_SoTheStockDemotionWorksInEveryLanguage()
+    {
+        var provider = new SystemSettingsItemProvider();
+        var path = SearchableItemMapper.SyntheticPath(provider, "查看网络连接");
+
+        Assert.AreEqual("__SEARCHABLE_ITEM__:" + nameof(SystemSettingsItemProvider) + ":查看网络连接", path);
+        var rules = ExclusionRuleSet.From(new UserSettings());
+        Assert.AreEqual(IndexRuleEffect.Low, rules.GetPriority(path, isDirectory: false));
+        Assert.AreEqual(IndexRuleEffect.Low,
+            rules.GetPriority(SearchableItemMapper.SyntheticPath(provider, "View network connections"), isDirectory: false));
     }
 
     private static SearchableItemCache.CacheEntry Entry(string title, string[] keywords) =>

@@ -1,14 +1,16 @@
+using System.Runtime.CompilerServices;
 using Lertaro.Core.SearchIndex;
+using Lertaro.Core.SearchIndex.Fzf;
+using Lertaro.Core.Tests.SearchRanking;
 using Lertaro.PluginSdk.Abstractions.Plugins;
 
 namespace Lertaro.Core.Tests.SearchIndex;
 
-// The alias lane reads an Exact term a second, loose way (see FzfPatternAliasReading) so an
-// abbreviation that straddles syllables still reaches its file in exact mode. That loose reading is
-// gated by the same tightness the painter applies; without the gate it also accepted a scatter the
-// painter refuses, and since the literal read used to be skipped whenever a live provider existed, such
-// a row could rank on a hit the user cannot see ("zbl" against a name whose only "z b l" are the
-// letters of "z-library" and "1lib").
+// The alias lane reads an Exact term loosely only where the alias is a SPELLING of the candidate: on a
+// same-script alias -- here the identity provider, the shape a Simplified spelling has -- the alias is the
+// candidate's own text rewritten, so it keeps the precision the user typed and no abbreviation of it can
+// straddle. Without that rule, a row could rank on a hit the user cannot see ("zbl" against a name whose
+// only "z b l" are the letters of "z-library" and "1lib").
 [TestClass]
 [DoNotParallelize]
 public sealed class AliasLooseReadingTests
@@ -26,8 +28,9 @@ public sealed class AliasLooseReadingTests
             SearchContext.DefaultFuzzyMatchEnabled = false;
             Assert.IsFalse(FuzzyMatcher.IsMatch("zbl", Text));
 
-            // The loose reading still admits a tight abbreviation inside the same alias.
-            Assert.IsTrue(FuzzyMatcher.IsMatch("zL", Text));
+            // Not even a tighter abbreviation: a run of two letters is what an exact "zL" asks for, and
+            // this name's own letters are scattered.
+            Assert.IsFalse(FuzzyMatcher.IsMatch("zL", Text));
         }
         finally
         {
@@ -51,10 +54,58 @@ public sealed class AliasLooseReadingTests
         }
     }
 
+    // #440's absence claim is about candidate generation, not ranking: an exact `zbl` must never
+    // generate the loose alias row. The fixture carries both sides, so this pins the shared gate rather
+    // than asserting absence from a list that was already filtered by ranking.
+    [TestMethod]
+    public void Reported440_CandidateGate_RejectsLooseAliasAndKeepsTightAlias()
+    {
+        var reported = RankingCaseFixtureLoader
+            .LoadReportedCases(FixturePath(["..", "SearchRanking", "Fixtures", "reported-search-cases.v1.json"]))
+            .Single(item => item.Id == "440-zbl-alias-scatter");
+        var loose = reported.Corpus.Single(row => row.Token == "loose-alias-negative");
+        var tight = reported.Corpus.Single(row => row.Token == "tight-alias-positive");
+        Assert.IsFalse(loose.ExpectedAcceptanceBySharedTightnessGate ?? true);
+        Assert.IsTrue(tight.ExpectedAcceptanceBySharedTightnessGate ?? false);
+
+        var looseOccurrence = AliasMatchRules.TightestOccurrence(loose.DisplayName, "zbl", caseSensitive: false);
+        var tightOccurrence = AliasMatchRules.TightestOccurrence(tight.DisplayName, "zbl", caseSensitive: false);
+        Assert.IsNotNull(looseOccurrence);
+        Assert.IsNotNull(tightOccurrence);
+        Assert.AreEqual(15, looseOccurrence[^1] - looseOccurrence[0] + 1);
+        Assert.AreEqual(11, tightOccurrence[^1] - tightOccurrence[0] + 1);
+        Assert.IsFalse(AliasMatchRules.IsTightOccurrence(3, 15));
+        Assert.IsTrue(AliasMatchRules.IsTightOccurrence(3, 11));
+
+        // The shared gate itself is deterministic; FuzzyMatcher additionally depends on whichever alias
+        // providers other test classes have registered/filtered, so pin the gate rather than that global.
+        SearchContext.FuzzyMatchEnabled = false;
+        try
+        {
+            var pattern = FzfPattern.Parse("zbl");
+            var reading = pattern.ReadingFor('\'');
+            Assert.IsTrue(reading.TryMatch(tight.DisplayName, out var tightMatch, FzfScoringScheme.Default));
+            Assert.IsTrue(
+                pattern.IsAcceptableAliasMatch(tightMatch),
+                "the 11-character tight occurrence must pass the shared candidate gate");
+            Assert.IsTrue(reading.TryMatch(loose.DisplayName, out var looseMatch, FzfScoringScheme.Default));
+            Assert.IsFalse(
+                pattern.IsAcceptableAliasMatch(looseMatch),
+                "the 15-character scatter must not pass the shared candidate gate");
+        }
+        finally
+        {
+            SearchContext.FuzzyMatchEnabled = true;
+        }
+    }
+
+    private static string FixturePath(string[] relative, [CallerFilePath] string thisFile = "") =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(thisFile)!, Path.Combine(relative)));
+
     // Registers an alias provider whose only alias is the text itself -- the shape the pinyin provider
     // produces for an already-Simplified name. The provider stays registered (there is no unregister) but
     // is filtered out for every later test on dispose.
-    private sealed class IdentityAliasScope : IDisposable
+    internal sealed class IdentityAliasScope : IDisposable
     {
         private readonly Func<IAliasProvider, bool> _previous;
 

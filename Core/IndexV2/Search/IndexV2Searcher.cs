@@ -51,6 +51,7 @@ public static class IndexV2Searcher
             Lertaro.Core.SearchIndex.PerfTrace.Mark("idx.nameSearch", __name);
             return null;
         });
+        SearchPerf.Log($"[search] q='{query}' limit={limit} dir='{directoryFilter}' pathMode={parsed.IsPathMode} build={SearchPerf.BuildFlavor} total={SearchPerf.Ms(perfStart):F0}ms");
     }
 
     // Directory listing rather than search (see DirectoryEnumerator): no query, no ranking, walks the

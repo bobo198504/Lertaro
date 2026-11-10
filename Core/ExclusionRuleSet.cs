@@ -17,6 +17,10 @@ public sealed class ExclusionRuleSet
     private readonly Regex[] _ignoredRegexes;
 
     private readonly EffectivePathRule[] _priorityPaths;
+    // Exact-path lookup for PathPriorityAt: the rules were scanned one by one per row, which is eight
+    // case-insensitive comparisons of a whole path for every result. Built once (the set is immutable)
+    // with the same strongest-wins merge the scan performed.
+    private readonly Dictionary<string, PriorityVerdict> _priorityPathVerdicts;
     private readonly EffectiveGlobRule[] _priorityGlobs;
     private readonly EffectiveRegexRule[] _priorityRegexes;
 
@@ -42,7 +46,10 @@ public sealed class ExclusionRuleSet
 
     private readonly record struct EffectivePathRule(string Root, IndexRuleEffect Effect, bool AlwaysTop);
     private readonly record struct EffectiveGlobRule(NetworkGlobPattern Pattern, IndexRuleEffect Effect, bool AlwaysTop);
-    private readonly record struct EffectiveRegexRule(Regex Pattern, IndexRuleEffect Effect, bool AlwaysTop);
+    // HasSeparatorLiteral: whether the pattern itself mentions a path separator (a literal '/' or an
+    // escaped backslash). A pattern that does not can never require one at the end of the text, so the
+    // separator-suffixed spelling is not tested for it -- see PatternPriorityAt.
+    private readonly record struct EffectiveRegexRule(Regex Pattern, IndexRuleEffect Effect, bool AlwaysTop, bool HasSeparatorLiteral);
 
     /// <summary>
     /// What the rules say about one path: which bucket it lands in, and whether a high rule pins it to the
@@ -121,7 +128,7 @@ public sealed class ExclusionRuleSet
                     if (parsed.Effect == IndexRuleEffect.Exclude)
                         ignoredRegexes.Add(regex);
                     else
-                        priorityRegexes.Add(new EffectiveRegexRule(regex, parsed.Effect, parsed.AlwaysTop));
+                        priorityRegexes.Add(new EffectiveRegexRule(regex, parsed.Effect, parsed.AlwaysTop, HasSeparatorLiteral(parsed.Pattern)));
                     break;
                 }
             }
@@ -134,6 +141,14 @@ public sealed class ExclusionRuleSet
         _ignoredGlobs = ignoredGlobs.ToArray();
         _ignoredRegexes = ignoredRegexes.ToArray();
         _priorityPaths = priorityPaths.ToArray();
+        _priorityPathVerdicts = new Dictionary<string, PriorityVerdict>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in _priorityPaths)
+        {
+            var verdict = Verdict(rule.Effect, rule.AlwaysTop);
+            _priorityPathVerdicts[rule.Root] = _priorityPathVerdicts.TryGetValue(rule.Root, out var known)
+                ? Strongest(known, verdict) ?? verdict
+                : verdict;
+        }
         _priorityGlobs = priorityGlobs.ToArray();
         _priorityRegexes = priorityRegexes.ToArray();
         HighPriorityRoots = _priorityPaths
@@ -241,6 +256,18 @@ public sealed class ExclusionRuleSet
     /// </remarks>
     public IReadOnlyList<string> HighPriorityRoots { get; }
 
+    // How much per-row work GetPriorityVerdict will do: each glob/regex rule is tested against every row's
+    // path, so a non-zero count here is what makes a large result set's decoration expensive.
+    public int PriorityPathRuleCount => _priorityPaths.Length;
+    public int PriorityGlobRuleCount => _priorityGlobs.Length;
+    public int PriorityRegexRuleCount => _priorityRegexes.Length;
+
+    // The other half of the same per-row question: IsExcluded tests every row against these, and an
+    // exclude glob there costs the same as a priority glob here.
+    public int ExcludedRootCount => _excludedRoots.Length;
+    public int IgnoredGlobCount => _ignoredGlobs.Length;
+    public int IgnoredRegexCount => _ignoredRegexes.Length;
+
     public IndexRuleEffect GetPriority(string path, bool isDirectory) => GetPriorityVerdict(path, isDirectory).Effect;
 
     /// <summary>
@@ -260,17 +287,30 @@ public sealed class ExclusionRuleSet
         if (normalized.Length == 0)
             return Verdict(IndexRuleEffect.Normal, alwaysTop: false);
 
-        // Own-level patterns matter (a `*.exe` high rule must beat a low folder), but a path rule on an
-        // ancestor is a deliberate folder-level decision and the nearest one wins over shallower paths.
         var pathPart = PathPriorityAt(normalized);
         var patternPart = PatternPriorityAt(normalized);
 
-        var parent = Path.GetDirectoryName(normalized);
-        if (!string.IsNullOrEmpty(parent))
+        if (pathPart == null && !IsStartMenuRoot(normalized))
         {
-            InheritedPriority(parent, out var inheritedPath, out var inheritedPattern);
-            pathPart ??= inheritedPath;
-            patternPart = Strongest(patternPart, inheritedPattern);
+            var parent = Path.GetDirectoryName(normalized);
+            if (!string.IsNullOrEmpty(parent))
+            {
+                InheritedPriority(parent, out var inheritedPath, out var inheritedPattern);
+                pathPart = inheritedPath;
+                patternPart = Strongest(patternPart, inheritedPattern);
+            }
+        }
+        else
+        {
+            var parent = Path.GetDirectoryName(normalized);
+            if (!string.IsNullOrEmpty(parent))
+            {
+                InheritedPriority(parent, out var inheritedPath, out var inheritedPattern);
+                if (pathPart == null && IsStartMenuRoot(normalized) && inheritedPath?.Effect == IndexRuleEffect.Low)
+                    inheritedPath = null;
+                pathPart ??= inheritedPath;
+                patternPart = Strongest(patternPart, inheritedPattern);
+            }
         }
 
         return PreferPath(pathPart, patternPart) ?? Verdict(IndexRuleEffect.Normal, alwaysTop: false);
@@ -309,9 +349,15 @@ public sealed class ExclusionRuleSet
         for (var i = undecided.Count - 1; i >= 0; i--)
         {
             var level = undecided[i];
+            // Stock Low rules on %ProgramData% and %USERPROFILE%\AppData target background caches/state, not
+            // Start Menu shortcuts nested underneath them. Reset an ancestor Low when entering Start Menu,
+            // while still honoring explicit rules placed on Start Menu itself or any folder beneath it.
+            var explicitAtLevel = PathPriorityAt(level);
+            if (explicitAtLevel == null && IsStartMenuRoot(level) && inheritedPath?.Effect == IndexRuleEffect.Low)
+                inheritedPath = null;
             // A path rule closer to the child replaces the inherited one even when it is weaker, and even
             // for the pin: an unpinned High on this folder is how the user switches an ancestor's pin off.
-            inheritedPath = PathPriorityAt(level) ?? inheritedPath;
+            inheritedPath = explicitAtLevel ?? inheritedPath;
             inheritedPattern = Strongest(inheritedPattern, PatternPriorityAt(level));
             _priorityVerdicts[level] = Encode(inheritedPath, inheritedPattern);
         }
@@ -319,6 +365,9 @@ public sealed class ExclusionRuleSet
         pathPart = inheritedPath;
         patternPart = inheritedPattern;
     }
+
+    internal static bool IsStartMenuRoot(string normalizedPath) =>
+        normalizedPath.EndsWith(@"\Microsoft\Windows\Start Menu", StringComparison.OrdinalIgnoreCase);
 
     // A pin is only ever carried by High, so every verdict goes through here.
     private static PriorityVerdict Verdict(IndexRuleEffect effect, bool alwaysTop) =>
@@ -383,16 +432,8 @@ public sealed class ExclusionRuleSet
     }
 
     /// <summary>Exact path rules at one level; null when no path rule names it.</summary>
-    private PriorityVerdict? PathPriorityAt(string fullPath)
-    {
-        PriorityVerdict? matched = null;
-        foreach (var rule in _priorityPaths)
-        {
-            if (fullPath.Equals(rule.Root, StringComparison.OrdinalIgnoreCase))
-                matched = Strongest(matched, Verdict(rule.Effect, rule.AlwaysTop));
-        }
-        return matched;
-    }
+    private PriorityVerdict? PathPriorityAt(string fullPath) =>
+        _priorityPathVerdicts.TryGetValue(fullPath, out var matched) ? matched : null;
 
     /// <summary>
     /// Glob and regex rules at one level, ignoring path rules and ancestors. Priority regexes test only the
@@ -405,32 +446,84 @@ public sealed class ExclusionRuleSet
             return null;
 
         PriorityVerdict? matched = null;
-        var name = Path.GetFileName(fullPath);
-        var relative = GetPriorityRelativePath(fullPath);
-        var withSeparator = fullPath + Path.DirectorySeparatorChar;
-        var relativeWithSeparator = relative.Length == 0 ? relative : relative + Path.DirectorySeparatorChar;
+        var name = Path.GetFileName(fullPath.AsSpan());
+        string? relative = null;
+        string? withSeparator = null;
+        string? relativeWithSeparator = null;
 
         foreach (var rule in _priorityGlobs)
         {
-            if (rule.Pattern.IsMatch(fullPath)
-                || rule.Pattern.IsMatch(withSeparator)
-                || (relative.Length > 0 && (rule.Pattern.IsMatch(relative) || rule.Pattern.IsMatch(relativeWithSeparator)))
-                || rule.Pattern.IsMatch(name))
+            // One scan of the path covers every spelling: the required literal is shared by all of them
+            // and none of them can contain it when the path does not. A segment-only pattern is then
+            // answered by the name alone (see NetworkGlobPattern.IsSegmentOnly), which is what skips the
+            // three strings the other spellings would have been built into.
+            if (!rule.Pattern.CouldMatch(fullPath))
+                continue;
+
+            bool hit;
+            if (rule.Pattern.IsSegmentOnly)
             {
-                matched = Strongest(matched, Verdict(rule.Effect, rule.AlwaysTop));
+                hit = rule.Pattern.IsMatch(name);
             }
+            else
+            {
+                hit = rule.Pattern.IsMatch(fullPath)
+                      || rule.Pattern.IsMatch(withSeparator ??= fullPath + Path.DirectorySeparatorChar);
+                if (!hit)
+                {
+                    relative ??= GetPriorityRelativePath(fullPath);
+                    hit = relative.Length > 0
+                          && (rule.Pattern.IsMatch(relative)
+                              || rule.Pattern.IsMatch(relativeWithSeparator ??= relative + Path.DirectorySeparatorChar));
+                }
+                hit = hit || rule.Pattern.IsMatch(name);
+            }
+
+            if (hit)
+                matched = Strongest(matched, Verdict(rule.Effect, rule.AlwaysTop));
         }
 
         foreach (var rule in _priorityRegexes)
         {
-            if (rule.Pattern.IsMatch(name)
-                || (relative.Length > 0 && (rule.Pattern.IsMatch(relative) || rule.Pattern.IsMatch(relativeWithSeparator))))
+            var hit = rule.Pattern.IsMatch(name);
+            if (!hit)
             {
-                matched = Strongest(matched, Verdict(rule.Effect, rule.AlwaysTop));
+                relative ??= GetPriorityRelativePath(fullPath);
+                hit = relative.Length > 0 && rule.Pattern.IsMatch(relative);
+                // The separator-suffixed spelling exists for a pattern that is written to end at one.
+                // Decided 2026-10-29: a pattern with no separator literal in it does not get that form,
+                // because nothing in it can ask for a trailing separator -- the only patterns the extra
+                // test used to answer are accidental ones like "^abc.$" meeting "abc".
+                if (!hit && rule.HasSeparatorLiteral && relative.Length > 0)
+                    hit = rule.Pattern.IsMatch(relativeWithSeparator ??= relative + Path.DirectorySeparatorChar);
             }
+
+            if (hit)
+                matched = Strongest(matched, Verdict(rule.Effect, rule.AlwaysTop));
         }
 
         return matched;
+    }
+
+    // Whether a rule pattern can say anything about a path separator at all: a literal '/' (inside or
+    // outside a character class) or an escaped backslash. Escapes such as \. or \d are not separators,
+    // so "\.log$" -- the common suffix rule -- counts as separator-free and skips the extra spelling.
+    private static bool HasSeparatorLiteral(string pattern)
+    {
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            var c = pattern[i];
+            if (c == '/')
+                return true;
+            if (c == '\\' && i + 1 < pattern.Length)
+            {
+                if (pattern[i + 1] is '\\' or '/')
+                    return true;
+                i++;
+            }
+        }
+
+        return false;
     }
 
     private static int PriorityStrength(IndexRuleEffect effect) => effect switch
@@ -572,12 +665,26 @@ public sealed class ExclusionRuleSet
     // apart, see _anyPatternCanTellSeparatorsApart -- the same path with '/' separators, built once.
     private bool MatchesIgnorePatterns(string currentWithSeparator, string pathForGlob)
     {
-        var relativePath = GetRelativePath(currentWithSeparator);
+        string? relativePath = null;
         string? slashPath = null;
+        var name = Path.GetFileName(pathForGlob.AsSpan());
 
         foreach (var glob in _ignoredGlobs)
         {
-            if (glob.IsMatch(pathForGlob) || glob.IsMatch(relativePath))
+            if (!glob.CouldMatch(pathForGlob))
+                continue;
+
+            // A segment-only pattern is answered by the name: every spelling below is the same path (or
+            // the same path plus a separator the pattern cannot cross), and this one is anchored to that
+            // last segment. See NetworkGlobPattern.IsSegmentOnly.
+            if (glob.IsSegmentOnly)
+            {
+                if (glob.IsMatch(name))
+                    return true;
+                continue;
+            }
+
+            if (glob.IsMatch(pathForGlob) || glob.IsMatch(relativePath ??= GetRelativePath(currentWithSeparator)))
                 return true;
             if (_anyPatternCanTellSeparatorsApart && glob.IsMatch(slashPath ??= pathForGlob.Replace('\\', '/')))
                 return true;
@@ -586,10 +693,9 @@ public sealed class ExclusionRuleSet
         if (_ignoredRegexes.Length == 0)
             return false;
 
-        var name = Path.GetFileName(pathForGlob);
         foreach (var regex in _ignoredRegexes)
         {
-            if (regex.IsMatch(name) || regex.IsMatch(pathForGlob) || regex.IsMatch(relativePath))
+            if (regex.IsMatch(name) || regex.IsMatch(pathForGlob) || regex.IsMatch(relativePath ??= GetRelativePath(currentWithSeparator)))
                 return true;
             if (_anyPatternCanTellSeparatorsApart && regex.IsMatch(slashPath ??= pathForGlob.Replace('\\', '/')))
                 return true;

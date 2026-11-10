@@ -189,6 +189,8 @@ public sealed class SearchBarLayoutSettingsViewModelTests
         settings.SearchWindow.SearchBarHeight = 90;
         settings.SearchWindow.ShowClock = true;
         settings.SearchWindow.ReopenAsFullWindowOnRepeatHotkey = true;
+        settings.SearchWindow.RememberCategoryFilter = true;
+        settings.SearchWindow.ShowCategoryFilter = false;
 
         var vm = new SearchBarLayoutSettingsViewModel(settings);
 
@@ -196,7 +198,21 @@ public sealed class SearchBarLayoutSettingsViewModelTests
         Assert.AreEqual(90, vm.SearchBarHeight);
         Assert.IsTrue(vm.ShowClock);
         Assert.IsTrue(vm.ReopenAsFullWindowOnRepeatHotkey);
+        Assert.IsTrue(vm.RememberCategoryFilter);
+        Assert.IsFalse(vm.ShowCategoryFilter);
     }
+
+    [TestMethod]
+    public void TheFilterBarSettingDefaultsToOn() =>
+        // The bar is the only way to narrow a query to one kind of entry, so it ships visible; hiding it is
+        // the opt out, and it has to stay an upgrade-safe default for every existing settings file.
+        Assert.IsTrue(new SearchWindowSettings().ShowCategoryFilter);
+
+    [TestMethod]
+    public void TheFilterMemorySettingDefaultsToOff() =>
+        // Off is the requested default: the bar goes back to 全部 on every reopen, and keeping it where
+        // the last summon left it is the opt in.
+        Assert.IsFalse(new SearchWindowSettings().RememberCategoryFilter);
 
     [TestMethod]
     public void SearchBarWidth_BelowMinimum_Throws() =>
@@ -215,6 +231,8 @@ public sealed class SearchBarLayoutSettingsViewModelTests
             SearchBarHeight = 50,
             ShowClock = true,
             ReopenAsFullWindowOnRepeatHotkey = true,
+            RememberCategoryFilter = true,
+            ShowCategoryFilter = false,
         };
 
         vm.ResetCommand.Execute(null);
@@ -223,19 +241,23 @@ public sealed class SearchBarLayoutSettingsViewModelTests
         Assert.AreEqual(60, vm.SearchBarHeight);
         Assert.IsFalse(vm.ShowClock);
         Assert.IsFalse(vm.ReopenAsFullWindowOnRepeatHotkey);
+        Assert.IsFalse(vm.RememberCategoryFilter);
+        Assert.IsTrue(vm.ShowCategoryFilter, "reset restores the shipped default, which is a visible bar");
     }
 
     [TestMethod]
     public void Save_WritesStagedValuesToUserSettings()
     {
         var settings = new UserSettings();
-        var vm = new SearchBarLayoutSettingsViewModel(settings) { SearchBarWidth = 700, ShowClock = true, ReopenAsFullWindowOnRepeatHotkey = true };
+        var vm = new SearchBarLayoutSettingsViewModel(settings) { SearchBarWidth = 700, ShowClock = true, ReopenAsFullWindowOnRepeatHotkey = true, RememberCategoryFilter = true, ShowCategoryFilter = false };
 
         vm.Save();
 
         Assert.AreEqual(700, settings.SearchWindow.SearchBarWidth);
         Assert.IsTrue(settings.SearchWindow.ShowClock);
         Assert.IsTrue(settings.SearchWindow.ReopenAsFullWindowOnRepeatHotkey);
+        Assert.IsTrue(settings.SearchWindow.RememberCategoryFilter);
+        Assert.IsFalse(settings.SearchWindow.ShowCategoryFilter);
     }
 
     [TestMethod]

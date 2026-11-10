@@ -1,0 +1,613 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "cfwj-shortcuts-vs-inside-word-file",
+      "window": "quick",
+      "rawQuery": "cfwj",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "cfwj-exact-lnk",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "重复文件",
+          "syntheticPath": "X:\\Fixture\\Tools\\重复文件.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3
+        },
+        {
+          "token": "cfwj-exact-dir",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "重复文件",
+          "syntheticPath": "X:\\Fixture\\Projects\\重复文件",
+          "kind": ["Directory"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 3
+        },
+        {
+          "token": "cfwj-clean-lnk",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "重复文件清理",
+          "syntheticPath": "X:\\Fixture\\Desktop\\重复文件清理.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 1, "start": 0, "coverage": 0.667, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 2
+        },
+        {
+          "token": "cfwj-compare-lnk",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "重复文件对比",
+          "syntheticPath": "X:\\Fixture\\Tools\\重复文件对比.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 0, "coverage": 0.667, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 2
+        },
+        {
+          "token": "cfwj-find-lnk",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "查找重复文件",
+          "syntheticPath": "X:\\Fixture\\Tools\\查找重复文件.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 2, "coverage": 0.667, "contiguity": 1.0, "shape": 2 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 2
+        },
+        {
+          "token": "cfwj-delete-lnk",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "删除重复文件",
+          "syntheticPath": "X:\\Fixture\\Tools\\删除重复文件.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 2, "coverage": 0.667, "contiguity": 1.0, "shape": 2 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 2
+        },
+        {
+          "token": "cfwj-etc-txt",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "ETC服务监督热线.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\ETC服务监督热线.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 1, "start": 2, "coverage": 0.308, "contiguity": 1.0, "shape": 2 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 0
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "cfwj-exact-lnk", "after": "cfwj-exact-dir" },
+          { "before": "cfwj-exact-dir", "after": "cfwj-clean-lnk" },
+          { "before": "cfwj-exact-dir", "after": "cfwj-compare-lnk" },
+          { "before": "cfwj-exact-dir", "after": "cfwj-find-lnk" },
+          { "before": "cfwj-exact-dir", "after": "cfwj-delete-lnk" },
+          { "before": "cfwj-exact-dir", "after": "cfwj-etc-txt" },
+          { "before": "cfwj-clean-lnk", "after": "cfwj-etc-txt" }
+        ],
+        "mustBeTopK": [
+          { "token": "cfwj-exact-lnk", "k": 1 },
+          { "token": "cfwj-exact-dir", "k": 6 }
+        ],
+        "mustBeAbsent": ["cfwj-scattered-alias"]
+      }
+    },
+    {
+      "id": "pinyin-space-identity-and-reversal",
+      "window": "quick",
+      "rawQuery": "sousuo jieguo",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "ssjg-lnk",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "搜索结果",
+          "syntheticPath": "X:\\Fixture\\Desktop\\搜索结果.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 2, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3,
+          "queryVariant": "PinyinJoined",
+          "spanStart": 0,
+          "spanLength": 4
+        },
+        {
+          "token": "ssjg-txt",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "搜索结果.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\搜索结果.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 2, "start": 0, "coverage": 0.5, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 3,
+          "queryVariant": "PinyinJoined",
+          "spanStart": 0,
+          "spanLength": 4
+        },
+        {
+          "token": "ssjg-reversed-txt",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "结果搜索.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\结果搜索.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 2, "start": 0, "coverage": 0.5, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1,
+          "queryVariant": "Original",
+          "spanStart": 0,
+          "spanLength": 4
+        },
+        {
+          "token": "ssjg-scattered-txt",
+          "expectedV3Grade": "DirectApproximate",
+          "displayName": "搜-x-索-y-结-z-果.txt",
+          "syntheticPath": "X:\\Fixture\\Noise\\搜-x-索-y-结-z-果.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 2, "start": 0, "coverage": 0.235, "contiguity": 0.4, "shape": 3 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 0,
+          "queryVariant": "PinyinJoined",
+          "spanStart": 0,
+          "spanLength": 10
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "ssjg-lnk", "after": "ssjg-txt" },
+          { "before": "ssjg-txt", "after": "ssjg-reversed-txt" },
+          { "before": "ssjg-reversed-txt", "after": "ssjg-scattered-txt" }
+        ],
+        "mustBeTopK": [
+          { "token": "ssjg-lnk", "k": 1 },
+          { "token": "ssjg-txt", "k": 2 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "grade2-type-preference-boundary",
+      "window": "quick",
+      "rawQuery": "report",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "report-strong-file",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "quarterly-report.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\quarterly-report.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 10, "coverage": 0.3, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 2,
+          "relevance": 3
+        },
+        {
+          "token": "report-weak-app",
+          "expectedV3Grade": "DirectApproximate",
+          "displayName": "r-e-p-o-r-t-helper",
+          "syntheticPath": "X:\\Fixture\\Apps\\r-e-p-o-r-t-helper.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 3, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 0
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "report-strong-file", "after": "report-weak-app" }
+        ],
+        "mustBeTopK": [
+          { "token": "report-strong-file", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "explicit-user-low-in-start-menu",
+      "window": "quick",
+      "rawQuery": "pixpin",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "pixpin-normal-file",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "PixPin.exe",
+          "syntheticPath": "X:\\Fixture\\Tools\\PixPin\\PixPin.exe",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.6, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 3
+        },
+        {
+          "token": "pixpin-explicit-low-shortcut",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "PixPin",
+          "syntheticPath": "X:\\Fixture\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Demoted\\PixPin.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Low",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 1,
+          "explicitUserPriority": true
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "pixpin-normal-file", "after": "pixpin-explicit-low-shortcut" }
+        ],
+        "mustBeTopK": [
+          { "token": "pixpin-normal-file", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "secondary-alias-below-direct-above-learned",
+      "window": "quick",
+      "rawQuery": "telegram",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "direct-approx-file",
+          "expectedV3Grade": "DirectApproximate",
+          "displayName": "t-e-l-e-g-r-a-m.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\t-e-l-e-g-r-a-m.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.421, "contiguity": 0.467, "shape": 3 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 2
+        },
+        {
+          "token": "secondary-alias-app",
+          "expectedV3Grade": "SecondaryField",
+          "displayName": "电报客户端",
+          "syntheticPath": "X:\\Fixture\\Apps\\Telegram\\电报客户端.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3,
+          "evidenceField": "ShortcutTarget",
+          "queryVariant": "ProviderAlias"
+        },
+        {
+          "token": "learned-alias-file",
+          "expectedV3Grade": "LearnedAlias",
+          "displayName": "Archive2024.bin",
+          "syntheticPath": "X:\\Fixture\\Archive\\Archive2024.bin",
+          "kind": ["File"],
+          "source": "History",
+          "match": { "tier": 0, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 700,
+          "typeRank": 1,
+          "relevance": 1,
+          "isHistoryOnly": true
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "direct-approx-file", "after": "secondary-alias-app" },
+          { "before": "secondary-alias-app", "after": "learned-alias-file" }
+        ],
+        "mustBeTopK": [
+          { "token": "direct-approx-file", "k": 1 },
+          { "token": "secondary-alias-app", "k": 2 }
+        ],
+        "mustBeAbsent": ["scattered-zbl-alias"]
+      }
+    },
+    {
+      "id": "wand-app-beats-shorter-names-at-the-same-placement",
+      "window": "quick",
+      "rawQuery": "wand",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "wand-app",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "Wand (WeMod)",
+          "syntheticPath": "X:\\Fixture\\Start Menu\\Wand (WeMod).lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 0, "coverage": 0.333, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3
+        },
+        {
+          "token": "wand-gfx-dir",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "wand_gfx",
+          "syntheticPath": "X:\\Fixture\\Games\\mods\\wand_gfx",
+          "kind": ["Directory"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.5, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        },
+        {
+          "token": "wand-png",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "wand_1.png",
+          "syntheticPath": "X:\\Fixture\\Games\\mods\\wand_gfx\\wand_1.png",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.4, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        },
+        {
+          "token": "wandbase-file",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "WandBase.as",
+          "syntheticPath": "X:\\Fixture\\Games\\Script\\WandBase.as",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.364, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "wand-app", "after": "wand-gfx-dir" },
+          { "before": "wand-app", "after": "wand-png" },
+          { "before": "wand-app", "after": "wandbase-file" }
+        ],
+        "mustBeTopK": [
+          { "token": "wand-app", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "ocr-exact-file-beats-later-placed-app",
+      "window": "quick",
+      "rawQuery": "ocr",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "ocr-file",
+          "expectedV3Grade": "ExactIdentity",
+          "displayName": "ocr",
+          "syntheticPath": "X:\\Fixture\\Tools\\ocr",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 1.0, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 3
+        },
+        {
+          "token": "ocr-long-lnk",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "截图截屏标注ocr屏幕批注录屏",
+          "syntheticPath": "X:\\Fixture\\Start Menu\\截图截屏标注ocr屏幕批注录屏.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 6, "coverage": 0.2, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 1
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "ocr-file", "after": "ocr-long-lnk" }
+        ],
+        "mustBeTopK": [
+          { "token": "ocr-file", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "long-named-app-beats-shorter-file-at-the-same-placement",
+      "window": "quick",
+      "rawQuery": "重复文件",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "long-named-app",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "重复文件删除工具大全",
+          "syntheticPath": "X:\\Fixture\\Tools\\重复文件删除工具大全.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 0, "coverage": 0.4, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3
+        },
+        {
+          "token": "shorter-file",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "重复文件表.txt",
+          "syntheticPath": "X:\\Fixture\\Docs\\重复文件表.txt",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.444, "contiguity": 1.0, "shape": 1 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "long-named-app", "after": "shorter-file" }
+        ],
+        "mustBeTopK": [
+          { "token": "long-named-app", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    },
+    {
+      "id": "gog-app-beats-shorter-folder-at-the-same-placement",
+      "window": "quick",
+      "rawQuery": "gog",
+      "fuzzyEnabled": true,
+      "typeOrder": ["App", "Files"],
+      "providerReadiness": "ready",
+      "candidates": [
+        {
+          "token": "gog-galaxy-app",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "GOG GALAXY",
+          "syntheticPath": "X:\\Fixture\\Start Menu\\GOG GALAXY.lnk",
+          "kind": ["Application", "Shortcut"],
+          "source": "SearchableProvider",
+          "match": { "tier": 0, "start": 0, "coverage": 0.3, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 0,
+          "relevance": 3
+        },
+        {
+          "token": "gog-db-dir",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "gog-db",
+          "syntheticPath": "X:\\Fixture\\Data\\gog-db",
+          "kind": ["Directory"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.5, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        },
+        {
+          "token": "gog-setup-log",
+          "expectedV3Grade": "DirectStrong",
+          "displayName": "gog_setup.log",
+          "syntheticPath": "X:\\Fixture\\Logs\\gog_setup.log",
+          "kind": ["File"],
+          "source": "FileIndex",
+          "match": { "tier": 0, "start": 0, "coverage": 0.231, "contiguity": 1.0, "shape": 0 },
+          "priority": "Normal",
+          "alwaysTop": false,
+          "historyScoreX100": 0,
+          "typeRank": 1,
+          "relevance": 1
+        }
+      ],
+      "assertions": {
+        "mustAppearBefore": [
+          { "before": "gog-galaxy-app", "after": "gog-db-dir" },
+          { "before": "gog-galaxy-app", "after": "gog-setup-log" }
+        ],
+        "mustBeTopK": [
+          { "token": "gog-galaxy-app", "k": 1 }
+        ],
+        "mustBeAbsent": []
+      }
+    }
+  ]
+}

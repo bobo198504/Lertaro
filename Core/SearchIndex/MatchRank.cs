@@ -2,7 +2,7 @@ namespace Lertaro.Core.SearchIndex;
 
 // One candidate's match quality, as both search windows rank it. There is exactly one key order:
 //
-//   Contiguity (how much of the matched span is one run)
+//   Contiguity (how many matched terms are one run: a multi-term query gets one run per term)
 //   -> Shape (whole word > word start > inside word > scattered)
 //   -> left-contiguous (Start == 0, only to break a shape tie)
 //   -> Start (leftmost matched character)
@@ -54,17 +54,11 @@ public readonly record struct MatchRank(
 
     public bool IsLeftContiguous => Start == 0 && Contiguity >= 1;
 
-    // The strong/weak boundary used by the rank score (see RankPolicy and dev-docs/search-ranking-redesign.md
-    // 3.1). Shape is the signal, not Contiguity >= 1: a two-term query hitting "code-atlas" is a clean hit
-    // even though its Contiguity is only 0.5, so contiguity would misfile it as weak. Scattered, no-name and
-    // a query with no positive terms are weak, and so is a rare-reading pinyin hit; plain full-pinyin
-    // (TierFull) is strong because it is how a Chinese query normally hits a CJK name.
+    // Shape, rather than aggregate contiguity, defines strong matches: a clean multi-term hit can have
+    // contiguity below 1. Scattered, no-name and rare-reading pinyin hits remain weak.
     public bool IsStrong => IsMatch && IsStrongHit(Tier, Shape);
 
-    /// <summary>Strong-match rule shared by both windows (redesign 3.1): whole-word to inside-word shape,
-    /// tier up to full. Scattered, no-name and rare-full hits are weak. The caller that has only the two
-    /// discrete signals -- the full window, reading them out of a packed key -- needs no MatchRank. Named
-    /// apart from the property because C# will not let a method and a property share a name.</summary>
+    /// <summary>Shared strong-match rule: tier through full pinyin and shape through inside-word.</summary>
     public static bool IsStrongHit(int tier, int shape) => tier <= TierFull && shape <= ShapeInsideWord;
 
     // Kept as the single quality number some callers compare for diagnostics; ordering itself uses the
@@ -93,6 +87,17 @@ public readonly record struct MatchRank(
     /// </remarks>
     public static int CompareQuality(in MatchRank left, in MatchRank right)
     {
+        var compare = CompareQualityPlacement(left, right);
+        return compare != 0 ? compare : CompareQualityDetail(left, right);
+    }
+
+    // CompareQuality in two halves, so the quick window can slot the configured result-type order between
+    // them (RankKeyComparer): WHERE the query sits in the name (contiguity, shape, left edge, start) is a real
+    // quality difference and beats the type order, while how much of the name it explains (coverage) and how
+    // it was found (tier) only refine it. Otherwise "wand" picks wand_gfx over an app titled "Wand (WeMod)"
+    // purely because the folder name is shorter.
+    public static int CompareQualityPlacement(in MatchRank left, in MatchRank right)
+    {
         var compare = right.Contiguity.CompareTo(left.Contiguity);
         if (compare != 0)
             return compare;
@@ -106,11 +111,12 @@ public readonly record struct MatchRank(
 
         var leftStart = Math.Min(left.Start, StartCap);
         var rightStart = Math.Min(right.Start, StartCap);
-        compare = leftStart.CompareTo(rightStart);
-        if (compare != 0)
-            return compare;
+        return leftStart.CompareTo(rightStart);
+    }
 
-        compare = right.Coverage.CompareTo(left.Coverage);
+    public static int CompareQualityDetail(in MatchRank left, in MatchRank right)
+    {
+        var compare = right.Coverage.CompareTo(left.Coverage);
         if (compare != 0)
             return compare;
 

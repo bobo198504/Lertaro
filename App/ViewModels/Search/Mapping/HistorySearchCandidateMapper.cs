@@ -11,9 +11,42 @@ namespace Lertaro.App.ViewModels.Search.Mapping;
 internal static class HistorySearchCandidateMapper
 {
     private const int MaxCandidates = 50;
+    public const int MaxLearnedCandidatesPerQuery = 1;
 
     public static List<SearchResultMapper.RankedCandidate> Collect(FuzzyQuery fuzzy, string? scope, int typeRank = int.MaxValue) =>
-        Collect(fuzzy, scope, SearchHistoryStore.GetEntries(), SafeFileExists, SafeDirectoryExists, typeRank);
+        CollectLearned(fuzzy, scope, rankContext: null, typeRank);
+
+    public static List<SearchResultMapper.RankedCandidate> CollectLearned(
+        FuzzyQuery fuzzy,
+        string? scope,
+        RankContext? rankContext,
+        int typeRank = int.MaxValue) =>
+        CollectLearned(
+            fuzzy,
+            scope,
+            SearchHistoryStore.GetLearnedAssociationEntries(),
+            SafeFileExists,
+            SafeDirectoryExists,
+            rankContext,
+            typeRank);
+
+    internal static List<SearchResultMapper.RankedCandidate> CollectLearned(
+        FuzzyQuery fuzzy,
+        string? scope,
+        IEnumerable<HistoryEntry> associationEntries,
+        Func<string, bool> fileExists,
+        Func<string, bool> directoryExists,
+        RankContext? rankContext = null,
+        int typeRank = int.MaxValue) =>
+        CollectCore(
+            fuzzy,
+            scope,
+            associationEntries.Where(entry => entry.Count >= SearchHistoryStore.MinAssociationOrganicOpens),
+            fileExists,
+            directoryExists,
+            typeRank,
+            rankContext,
+            MaxLearnedCandidatesPerQuery);
 
     private static bool SafeFileExists(string path)
     {
@@ -37,35 +70,72 @@ internal static class HistorySearchCandidateMapper
         Func<string, bool> directoryExists,
         // The caller's rank for the Files type: history rows ARE file paths, so they have to land in the
         // same type group as the index's file rows instead of a group of their own.
-        int typeRank = int.MaxValue)
+        int typeRank = int.MaxValue) =>
+        CollectCore(fuzzy, scope, entries, fileExists, directoryExists, typeRank, rankContext: null, MaxCandidates);
+
+    // The association key already passed the exact canonical comparison. Give it a full-strength
+    // keyword rank so the history-only marker, not a fuzzy coincidence, decides its tier.
+    private static MatchEvidenceResult ExactHistoryMatch(HistoryEntry entry)
+    {
+        var rank = new MatchRank(MatchRank.TierName, 0, 1d, 1d, MatchRank.ShapeWholeWord);
+        var evidence = MatchEvidence.Accepted(
+            entry.Keyword,
+            entry.Keyword,
+            MatchEvidenceField.HistoryKeyword,
+            rank,
+            MatchEvidenceMode.LearnedAlias,
+            MatchQueryVariant.HistoryExact);
+        return new MatchEvidenceResult(rank, evidence);
+    }
+
+    private static List<SearchResultMapper.RankedCandidate> CollectCore(
+        FuzzyQuery fuzzy,
+        string? scope,
+        IEnumerable<HistoryEntry> entries,
+        Func<string, bool> fileExists,
+        Func<string, bool> directoryExists,
+        int typeRank,
+        RankContext? rankContext,
+        int maxCandidates)
     {
         if (fuzzy.IsEmpty)
             return [];
 
         var query = fuzzy.Text;
+        // Learned association is an exact canonical lookup, not another fuzzy surface: the only query
+        // allowed to recall a learned pair is the one the user confirmed, after P4's pinyin-equivalence
+        // folding (see SearchHistoryStore.NormalizeAssociationQuery).
+        var canonicalQuery = SearchHistoryStore.NormalizeAssociationQuery(query);
         var matches = entries
-            .Select(entry => (Entry: entry, Match: fuzzy.BestMatch(entry.Keyword)))
-            .Where(candidate => candidate.Match.IsMatch)
-            .OrderBy(candidate => candidate.Match.Start)
+            .Where(entry => canonicalQuery.Length > 0
+                && string.Equals(
+                    SearchHistoryStore.NormalizeAssociationQuery(entry.Keyword),
+                    canonicalQuery,
+                    StringComparison.OrdinalIgnoreCase))
+            .Select(entry => (Entry: entry, Matched: ExactHistoryMatch(entry)))
+            .OrderBy(candidate => candidate.Matched.Rank.Start)
             // Most recent pick first: choosing the 10th result for "atlas" makes it the top one next time,
             // even over something opened more often before.
             .ThenByDescending(candidate => candidate.Entry.Time)
             .ThenByDescending(candidate => candidate.Entry.Count)
             // Shape is gone; the shared quality ladder is the only textual order.
-            .ThenBy(candidate => candidate.Match, MatchRankQualityComparer.Instance);
-        var candidates = new List<SearchResultMapper.RankedCandidate>(MaxCandidates);
+            .ThenBy(candidate => candidate.Matched.Rank, MatchRankQualityComparer.Instance);
+        var candidates = new List<SearchResultMapper.RankedCandidate>(Math.Min(maxCandidates, MaxCandidates));
         var candidatePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var normalizedScope = string.IsNullOrEmpty(scope) ? null : SearchResultHelper.NormalizePath(scope);
 
-        foreach (var (entry, match) in matches)
+        foreach (var (entry, matched) in matches)
         {
-            if (candidates.Count >= MaxCandidates)
+            if (candidates.Count >= maxCandidates)
                 break;
             if (!TryCreateResult(entry, query, normalizedScope, fileExists, directoryExists, out var result, out var normalizedPath) ||
                 !candidatePaths.Add(normalizedPath))
                 continue;
+            if (rankContext?.PriorityResolver?.Invoke(normalizedPath, result.IsDir).Effect == IndexRuleEffect.Low)
+                continue;
             if (IsExcludedFromSearch(result))
                 continue;
+            result.IsLearnedAliasRecall = true;
 
             // A history row exists because a stored KEYWORD matched -- nothing has been asked yet about the
             // path's own name. When the name matches too, the row is an ordinary name match and must rank

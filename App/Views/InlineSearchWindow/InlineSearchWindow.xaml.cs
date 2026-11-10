@@ -10,6 +10,7 @@ using Lertaro.App.Services.AppWindow;
 using Lertaro.App.Services.Theme;
 using Lertaro.App.Services.ShellMenu.Presenter;
 using Lertaro.App.Helpers.Visuals;
+using Lertaro.Core;
 namespace Lertaro.App;
 
 /// <summary>
@@ -80,6 +81,7 @@ public partial class InlineSearchWindow : Window, ISearchWindow
         // cursor) it now deserves in every host.
         SearchBox.IsIconClickable = true;
         SearchBox.IsIconDraggable = true;
+        SearchBox.IconDragStarted += _positioner.BeginUserDrag;
         SearchBox.IconDragCompleted += _positioner.RememberUserDrag;
 
         // And the same right click that brings the quick window back to the middle brings this card back to the
@@ -100,8 +102,17 @@ public partial class InlineSearchWindow : Window, ISearchWindow
             {
                 if (!InlineSearchWindowNativeMethods.IsWindow(tracker.ActiveHwnd))
                 {
+                    // Logged before it closes, because the two handles disagreeing is the whole question: the
+                    // tracker's answer moves with every activation event, while the card is docked to whichever
+                    // window summoned it. A dead tracked handle beside a live docked host means the card is
+                    // being destroyed for a window it was never on.
+                    var docked = _manager.CurrentHostHwnd;
+                    Logger.Log(
+                        $"[InlineSearchWindow] Host watchdog: tracked 0x{tracker.ActiveHwnd:x} is gone "
+                        + $"while docked is 0x{docked:x} (alive={InlineSearchWindowNativeMethods.IsWindow(docked)}).",
+                        LogLevel.Debug);
                     _activeTimer.Stop();
-                    _manager.CloseInlineSearch();
+                    _manager.CloseInlineSearch("HostWindowGone");
                 }
             }
 
@@ -273,7 +284,11 @@ public partial class InlineSearchWindow : Window, ISearchWindow
     /// <summary>Puts back the keyboard layout that the last summon adopted from its host.</summary>
     internal void RestoreKeyboardLayout() => _focusSupport.RestoreLayout();
 
-    public void HideWindow() => _manager.CloseInlineSearch();
+    // Eight callers reach this (every InlineSearchNavigator execution route, the actions-mode and plugin
+    // surfaces), and they all mean the same thing here: put the card away because something was executed. The
+    // reason names the method rather than the route, because naming a route would mean threading a reason
+    // through all eight.
+    public void HideWindow() => _manager.CloseInlineSearch("HideWindow");
 
     public void UpdateSearchDisplay(string text)
     {

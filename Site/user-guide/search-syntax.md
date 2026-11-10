@@ -33,10 +33,10 @@ Within each group:
 
 When everything else is equal, a file is listed before a folder (the Inline window's current-folder listing keeps folders first, like Explorer). With several terms, the weakest term decides the group.
 
-Two things come before all of this, in every window:
+Across all search windows, explicit pins and monotonic match grades keep ordering predictable:
 
-1. **What you picked before**: open a result, and the next time you type the same text it is at the top. Your most recent pick comes first.
-2. **Windows' Recent Items**: files and folders you recently opened in any app that match what you typed.
+1. **Explicit pins first**: rules marked **High + Always on Top** and clean matches in **Favorites** stay pinned at the top, while system/cache **Low** rules stay demoted below normal results.
+2. **Direct matches before aliases & history recall**: exact and clean direct title/filename matches always rank ahead of approximate fuzzy matches, clean secondary aliases (such as shortcut targets or product metadata, shown with an `Alias:` / `Target:` subtitle), and confirmed **Query Associations** (which refine within equal match grades or supplement after direct matches).
 
 ### Case Insensitivity
 
@@ -214,11 +214,17 @@ Multiple tokens can be combined in a single `:` suffix separated by commas `,`, 
 
 Quickly apply preset file extension category rules, supporting `|` combinations:
 
-- `:@doc`: Documents (`*.doc; *.docx; *.pdf; *.txt; *.ppt; *.pptx; *.xls; *.xlsx; *.csv; *.rtf; *.md; *.wps; *.et; *.dps; *.odf; *.odt; *.ods; *.odg; *.odb; *.eqp; *.mmx; *.tex`)
-- `:@img`: Images (`*.jpg; *.jpeg; *.png; *.gif; *.bmp; *.webp; *.ico; *.svg; *.tif; *.tiff; *.psd; *.ai; *.jxl; *.avif`)
-- `:@video`: Videos (`*.mp4; *.mkv; *.avi; *.mov; *.wmv; *.flv; *.m4v; *.webm; *.3gp; *.rmvb; *.ts`)
-- `:@audio`: Audio (`*.mp3; *.wav; *.flac; *.aac; *.ogg; *.m4a; *.wma; *.ape`)
+- `:@doc`: Documents (`*.txt; *.md; *.log; *.doc; *.docx; *.rtf; *.odt; *.pdf; *.xls; *.xlsx; *.csv; *.ods; *.ppt; *.pptx; *.odp; *.epub; *.mobi; *.one; *.vsdx; *.vsd; *.wps; *.et; *.dps; *.odf; *.odt; *.ods; *.odg; *.odb; *.eqp; *.mmx; *.tex; *.ini; *.conf`)
+- `:@img`: Images (`*.jpg; *.jpeg; *.png; *.jfif; *.gif; *.bmp; *.webp; *.svg; *.ico; *.tif; *.tiff; *.heic; *.heif; *.avif; *.raw; *.psd; *.ai; *.jxl`)
+- `:@video`: Videos (`*.mp4; *.mkv; *.avi; *.mov; *.wmv; *.flv; *.webm; *.m4v; *.mpg; *.mpeg; *.ts; *.m2ts; *.mts; *.3gp; *.rmvb; *.rm; *.vob; *.ogv`)
+- `:@audio`: Audio (`*.mp3; *.wav; *.flac; *.aac; *.ogg; *.oga; *.m4a; *.wma; *.ape; *.opus; *.aiff; *.aif; *.mid; *.midi; *.dsf; *.dff`)
 - `:@zip`: Archives (`*.zip; *.rar; *.7z; *.tar; *.gz; *.bz2; *.xz; *.iso; *.wim; *.esd`)
+- `:@app`: Programs (`*.exe; *.url; *.appref-ms; *.msi; *.msix; *.appx; *.bat; *.cmd; *.com`)
+
+> [!NOTE]
+> These six default rules, the type filters in the full search window's sidebar, and the **type filter bar** under the quick window's search box all read one table: the same file is never three different kinds. The rules are editable in **Settings → Plugins → CoreExtensions → Configure → Custom Filters**, and an edit shows up in all three places at once.
+>
+> A shortcut is filed by what it points at, not by being a shortcut: a shortcut to a document counts as a document, and only a shortcut whose target cannot be read falls back to Programs.
 
 **Examples**:
 
@@ -228,7 +234,7 @@ Quickly apply preset file extension category rules, supporting `|` combinations:
 
 You can customize rules or add new categories under **Settings → Plugins → CoreExtensions**.
 
-The full search window's left type-filter sidebar is configured separately in the same plugin's **Search Filters** group. Sidebar filter names are display-only; `@keyword` references are parsed only inside a sidebar filter rule and refer to keywords from the **Custom Filters** list, including disabled custom filters.
+The full search window's sidebar filters and the quick window's type filter bar are the same rows, configured in the same plugin's **Search Filters** group -- there is no separate setting for either. Sidebar filter names are display-only; `@keyword` references are parsed only inside a sidebar filter rule and refer to keywords from the **Custom Filters** list, including disabled custom filters.
 
 ### Specific Extension Filters (`:.ext` or `:.ext1.ext2`)
 

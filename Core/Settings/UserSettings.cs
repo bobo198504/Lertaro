@@ -48,8 +48,23 @@ public class UserSettings
     public bool EnableRankingEventLog { get; set; } = false;
     public bool EnableKeywordHistory { get; set; } = true;
     public bool StartWithWindows { get; set; } = true;
+
+    /// <summary>
+    /// Whether the App asks the service for an elevated hook at all. Off by default, because the elevation is
+    /// handed over without ever showing a prompt -- the service swaps in the session's UAC-linked admin token
+    /// -- and an ordinary-integrity hook does everything except touch programs that themselves run as
+    /// administrator, whose keystrokes it cannot see and whose Open/Save dialogs it cannot write a path into.
+    /// Read once per hook launch, so changing it takes effect when the hook is relaunched, not on restart.
+    /// </summary>
+    public bool RequestElevatedHook { get; set; } = false;
     public bool AutoCheckUpdates { get; set; } = true;
     public bool AutoSilentUpdate { get; set; } = false;
+    /// <summary>
+    /// Prefixes a GitHub release download is tried through, in order, before its own address. Empty means
+    /// straight to GitHub. A release resolved from GitLab never uses these. Persistence normalizes the
+    /// list to at most <see cref="UpdateMirrorSettings.MaxMirrors"/> prefixes, each ending in one '/'.
+    /// </summary>
+    public List<string> GitHubUpdateMirrors { get; set; } = new();
     // Bookkeeping rather than a preference: the release tag whose last startup install attempt failed, and
     // when. Without it a startup that cannot update (service not running, download failed) re-downloads a
     // full release zip on every single launch. Only UpdateCheckService reads or writes these; the About

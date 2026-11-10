@@ -38,6 +38,9 @@ internal sealed class PreviewFocusGuard
     // closing in that same process doesn't falsely signal "the dialog is gone".
     private const uint EVENT_OBJECT_DESTROY = 0x8001;
     private const uint WINEVENT_OUTOFCONTEXT = 0;
+    // How long the UI thread will wait for a dialog's own thread before giving up on raising it. A dialog that is up
+    // answers WM_NULL in single-digit milliseconds; anything slower is already not worth blocking this app for.
+    private const uint HungProbeTimeoutMs = 200;
 
     private WinEventDelegate? _focusHookDelegate;
     private IntPtr _hFocusHook;
@@ -85,6 +88,11 @@ internal sealed class PreviewFocusGuard
             if (hwnd == IntPtr.Zero) return;
             PreviewHandlerInterop.GetWindowThreadProcessId(hwnd, out var dialogPid);
             if (dialogPid != pid) return;
+            // SetForegroundWindow sends to the dialog's own thread, and this callback runs on the thread that owns
+            // the preview window -- so a handler app that is not answering would stop this app for as long as it
+            // takes. Probe first and skip: raising a prompt nobody is waiting on is worth less than not blocking.
+            if (PreviewHandlerInterop.SendMessageTimeout(hwnd, PreviewHandlerInterop.WM_NULL, IntPtr.Zero, IntPtr.Zero,
+                    PreviewHandlerInterop.SMTO_ABORTIFHUNG, HungProbeTimeoutMs, out _) == IntPtr.Zero) return;
             try { PreviewHandlerInterop.SetForegroundWindow(hwnd); } catch { }
             PreviewDialogSignal.NotifyDialogOpened();
             ArmDialogCloseWatcher(hwnd, pid);

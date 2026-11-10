@@ -115,9 +115,8 @@ public sealed class RankAndDedupeTests
     [TestMethod]
     public void RankAndDedupe_FavoriteStrongMatch_BeatsABetterQualityNonFavorite()
     {
-        // 44 is the reward for a favorite that the query really explains, not for the favorite flag alone:
-        // a late start and low coverage is still a whole-word literal hit, so it stays strong and beats a
-        // better-matching ordinary row.
+        // A strong direct match puts a favorite in Pinned, not a score reward: a late start and low
+        // coverage is still a whole-word literal hit, so it beats a better-matching ordinary Boosted row.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\favorite", isFavorite: true, start: 5, coverage: 0.3),
@@ -130,8 +129,8 @@ public sealed class RankAndDedupeTests
     [TestMethod]
     public void RankAndDedupe_FavoriteWeakMatch_KeepsTheBaseScore()
     {
-        // The same favorite one notch down: a rare-reading hit is weak, so it scores like any normal row and
-        // the better match wins.
+        // The same favorite one notch down: a rare-reading hit is weak, so it stays in Boosted at
+        // DirectApproximate and the better match wins.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\favorite", isFavorite: true, tier: MatchRank.TierFullRare),
@@ -156,8 +155,8 @@ public sealed class RankAndDedupeTests
     [TestMethod]
     public void RankAndDedupe_HistoryH5_BeatsANormalStrongMatch()
     {
-        // Redesign 3.2: five weighted opens lift a row above an ordinary strong match (34 over 18). The old
-        // name claimed history could never beat quality; that was the pre-kernel ladder's contract.
+        // Neither row supplies MatchEvidence, so both resolve to DirectStrong; H5 then wins the
+        // same-grade history tie-break.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\often", historyCount: 5, start: 5, coverage: 0.3),
@@ -194,17 +193,17 @@ public sealed class RankAndDedupeTests
     }
 
     [TestMethod]
-    public void RankAndDedupe_TypeGroupDecidesAtEqualScore()
+    public void RankAndDedupe_QualityBeatsTypeAtEqualGrade()
     {
-        // Both rows are strong (whole-word, common reading) so both score 18, and the display type order
-        // decides. The weaker-looking start and coverage only split them later, inside the quality keys.
+        // Both rows are strong (whole-word, common reading), so they share a grade; the match placement
+        // (contiguity, start) decides before the display type order, which only outranks coverage.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\files-perfect", typeRank: 2, start: 0, coverage: 1.0, contiguity: 1.0),
             Candidate(@"C:\apps-weak", typeRank: 1, start: 9, coverage: 0.2, contiguity: 0.4),
         });
 
-        Assert.AreEqual(@"C:\apps-weak", ranked[0].FullPath);
+        Assert.AreEqual(@"C:\files-perfect", ranked[0].FullPath);
     }
 
     [TestMethod]
@@ -222,8 +221,9 @@ public sealed class RankAndDedupeTests
     [TestMethod]
     public void RankAndDedupe_FavoriteStrongMatch_BeatsTypeGroupOrder()
     {
-        // The favorite's 44 outranks an application row's 18 before any type order is consulted. "Same score,
-        // then TypeRank" is pinned by RankAndDedupe_TypeGroupDecidesAtEqualScore.
+        // The favorite enters Pinned, so it outranks the application row's Boosted section before any type
+        // order is consulted. Type only breaks a complete quality tie, pinned by
+        // RankedCandidateOrderingTests.TypeRank_DecidesInsideOnePriorityBand.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\app", typeRank: 0),
@@ -318,7 +318,7 @@ public sealed class RankAndDedupeTests
     [TestMethod]
     public void RankAndDedupe_PinnedHighPriorityWeak_LeadsAFavorite()
     {
-        // AlwaysTop is a section, not a score: the Pinned rows outrank every Boosted row, favorite 44 included.
+        // AlwaysTop is a section, not a score: Pinned outranks every Boosted row, a favorite pin included.
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\favorite", isFavorite: true),
@@ -372,23 +372,47 @@ public sealed class RankAndDedupeTests
     }
 
     [TestMethod]
-    public void RankAndDedupe_TypeBonusLiftsAReasonableMatchOfTheLeadingType()
+    public void RankAndDedupe_QualityDecidesWithinStrongGrades_AndTypeNeverLiftsWeakOverStrong()
     {
-        // The user ordered the type list, so the leading type earns its bonus on top of its own C/P score:
-        // a rare-reading row of the first type (8 + 16) now beats a strong row of the third type (18 + 4).
-        var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
+        // I2: within clean direct matches, match quality still comes before the type tie-break.
+        var sameGrade = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
+        {
+            Candidate(@"C:\files.txt", typeRank: 2),
+            Candidate(@"C:\apps.txt", typeRank: 0, start: 3, coverage: 0.5),
+        });
+        Assert.AreEqual(@"C:\files.txt", sameGrade[0].FullPath);
+
+        // I1: a rare/weak match of the leading type cannot jump across EvidenceGrade over a strong match.
+        var acrossGrades = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {
             Candidate(@"C:\files.txt", typeRank: 2),
             Candidate(@"C:\apps.txt", typeRank: 0, tier: MatchRank.TierFullRare),
         });
-
-        Assert.AreEqual(@"C:\apps.txt", ranked[0].FullPath);
+        Assert.AreEqual(@"C:\files.txt", acrossGrades[0].FullPath);
+        Assert.AreEqual(@"C:\apps.txt", acrossGrades[1].FullPath);
     }
 
-    // The bonus is capped by the row's own match quality: a barely matching row of the leading type does not
-    // ride the type order past a strong match further down.
     [TestMethod]
-    public void RankAndDedupe_TypeBonusDoesNotLiftABarelyMatchingRow()
+    public void RankAndDedupe_QualityGroupsApproximateGrades()
+    {
+        // Both rows are DirectApproximate; the better-quality file row wins, and type only breaks a
+        // complete quality tie.
+        var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
+        {
+            Candidate(@"C:\files.txt", typeRank: 2, start: 0, coverage: 1.0, contiguity: 1.0,
+                shape: MatchRank.ShapeScattered),
+            Candidate(@"C:\apps.lnk", typeRank: 0, start: 5, coverage: 0.2, contiguity: 0.2,
+                shape: MatchRank.ShapeScattered),
+        });
+
+        Assert.AreEqual(@"C:\files.txt", ranked[0].FullPath);
+        Assert.AreEqual(@"C:\apps.lnk", ranked[1].FullPath);
+    }
+
+    // Type only breaks a complete quality tie: a weaker grade of the leading type still loses to a strong
+    // match further down.
+    [TestMethod]
+    public void RankAndDedupe_TypeRankDoesNotLiftABarelyMatchingRow()
     {
         var ranked = SearchResultMapper.RankAndDedupe(new List<SearchResultMapper.RankedCandidate>
         {

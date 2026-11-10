@@ -49,6 +49,14 @@ public sealed class HookIpcClient : IDisposable
     /// valid, so only a caller outside that process can notice. See <see cref="IpcMessageId.RearmHooks"/>.</summary>
     public void RearmHooks() => SendMessage(new IpcMessage { Id = IpcMessageId.RearmHooks });
 
+    /// <summary>
+    /// Ends this round with the hook so the retry loop asks for another one, with whatever the settings now
+    /// say about elevation. The hook is told to exit rather than killed -- the same message a shutdown sends
+    /// -- and the receive loop notices the exit by itself, so this needs no lifecycle plumbing of its own and
+    /// does not stop the client.
+    /// </summary>
+    public void RelaunchHook() => SendMessage(new IpcMessage { Id = IpcMessageId.Stop });
+
     private async Task ClosePipesAsync()
     {
         try
@@ -415,10 +423,10 @@ public sealed class HookIpcClient : IDisposable
         }
     }
 
-    // Always asks for elevation -- the Service only actually grants it when this session's user is
-    // genuinely an administrator (see HookProcessBroker), so there's nothing left for the App to decide.
+    // Asks for the elevated hook and falls back to an unelevated one when the session cannot provide it;
+    // both requests go through the Service, which decides what this session's token actually allows.
     private Task<Process?> LaunchHookProcessAsync(CancellationToken token) =>
-        _launchBroker.LaunchAsync(requestElevation: true, token);
+        _launchBroker.LaunchAsync(token);
 
     public void Dispose()
     {

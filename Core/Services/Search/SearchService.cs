@@ -1,3 +1,4 @@
+using Lertaro.PluginSdk.Helpers;
 using Lertaro.Core.Indexer.Usn;
 
 using Lertaro.Core.Services.Network;
@@ -112,8 +113,19 @@ public class SearchService : IDisposable
                 var __pipeStart = Lertaro.Core.SearchIndex.PerfTrace.Begin();
                 await SearchPipeClient.SendSearchPipeCommandAsync(msg, result =>
                 {
-                    if (effectiveBypassExclusions || !exclusionRules.IsExcluded(result, directoryFilter))
-                        uniqueOnResult(result);
+                    var filterStart = SearchPerf.Start();
+                    try
+                    {
+                        if (effectiveBypassExclusions || !exclusionRules.IsExcluded(result, directoryFilter))
+                        {
+                            kept++;
+                            uniqueOnResult(result);
+                        }
+                    }
+                    finally
+                    {
+                        filterTicks += SearchPerf.ElapsedTicks(filterStart);
+                    }
                 }, token).ConfigureAwait(false);
                 Lertaro.Core.SearchIndex.PerfTrace.Mark("client.pipe", __pipeStart);
                 Lertaro.Core.SearchIndex.PerfTrace.Flush("client", "ok", __trace, seenPaths.Count);
