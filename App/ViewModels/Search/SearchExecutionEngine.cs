@@ -23,6 +23,11 @@ internal sealed class SearchExecutionEngine : IDisposable
     private CancellationTokenSource? _debounceCts;
     private int _searchVersion;
 
+    internal CancellationToken CurrentCancellationToken
+    {
+        get { lock (_searchCtsLock) return _searchCts?.Token ?? new CancellationToken(canceled: true); }
+    }
+
     public SearchExecutionEngine(SearchService searchService, Func<SearchCategoryFilter>? getCategory = null)
     {
         _searchService = searchService;
@@ -36,7 +41,7 @@ internal sealed class SearchExecutionEngine : IDisposable
         bool isInlineSearchContext,
         int fileLimit,
         int appLimit,
-        Func<List<SearchResult>?, string?, List<AppSearchResult>> resultMapper,
+        Func<List<SearchResult>?, string?, CancellationToken, List<AppSearchResult>> resultMapper,
         Action<bool> onSearchStateChanged,
         Action<List<AppSearchResult>, string, bool> onResultsUpdated,
         Action? onLocalServiceUnavailable = null,
@@ -111,7 +116,7 @@ internal sealed class SearchExecutionEngine : IDisposable
         bool isInlineSearchContext,
         int fileLimit,
         int appLimit,
-        Func<List<SearchResult>?, string?, List<AppSearchResult>> resultMapper,
+        Func<List<SearchResult>?, string?, CancellationToken, List<AppSearchResult>> resultMapper,
         Action<bool> onSearchStateChanged,
         Action<List<AppSearchResult>, string, bool> onResultsUpdated,
         Action? onLocalServiceUnavailable = null,
@@ -233,6 +238,7 @@ internal sealed class SearchExecutionEngine : IDisposable
     public void InvalidateDirectoryListing(string? directory)
     {
         _directChildrenListing.Invalidate(directory);
+        _searchService.InvalidateLiveDirectory(directory);
     }
 
     public void CancelPendingSearch()
@@ -266,7 +272,7 @@ internal sealed class SearchExecutionEngine : IDisposable
         string contextDirectory,
         int fileLimit,
         int appLimit,
-        Func<List<SearchResult>?, string?, List<AppSearchResult>> resultMapper,
+        Func<List<SearchResult>?, string?, CancellationToken, List<AppSearchResult>> resultMapper,
         int searchVersion,
         Action<List<AppSearchResult>, string, bool> onResultsUpdated,
         CancellationToken token,

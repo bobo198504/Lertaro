@@ -10,9 +10,10 @@ public sealed class FzfSingleCharacterFastPathTests
     [
         "a", "A", "apex", "Apex.exe", "x-a", "x_a", "x a", "xa", "ax", "a---a",
         "foo/a/bar", "fooAbar", "123a", "a123", ".a", "a.", "中a文", "éa", "a中", "zzz",
+        "", "K", "Kk", "Kxxk", "kxxK", "İi", "ıI", "éÉ", "Σσς",
     ];
 
-    private static readonly char[] Patterns = ['a', 'A', 'z', '1', '.', '/', '中', 'é'];
+    private static readonly char[] Patterns = ['a', 'A', 'z', '1', '.', '/', '中', 'é', 'k', 'i', 'σ'];
 
     [TestMethod]
     public void CharacterFastPathMatchesTheFullV2SingleCharacterAlgorithm()
@@ -22,9 +23,11 @@ public sealed class FzfSingleCharacterFastPathTests
         foreach (var scheme in Enum.GetValues<FzfScoringScheme>())
         foreach (var caseSensitive in new[] { false, true })
         {
-            var expected = ReferenceChar(text, pattern, caseSensitive, scheme);
+            var query = (caseSensitive ? pattern : char.ToLowerInvariant(pattern)).ToString();
+            var expected = FzfFuzzyMatcher.FuzzyMatchV2(
+                text, query, caseSensitive, scheme, enableFastPaths: false);
             var actual = FzfFuzzyMatcher.FuzzyMatchV2(
-                text, pattern.ToString(), caseSensitive, scheme);
+                text, query, caseSensitive, scheme);
 
             Assert.AreEqual(expected, actual, $"{text} / {pattern} / {scheme} / case={caseSensitive}");
         }
@@ -38,23 +41,69 @@ public sealed class FzfSingleCharacterFastPathTests
         foreach (var scheme in Enum.GetValues<FzfScoringScheme>())
         foreach (var caseSensitive in new[] { false, true })
         {
-            var expectedChars = ReferenceChar(text, pattern, caseSensitive, scheme);
             var textBytes = Encoding.ASCII.GetBytes(text);
-            var actualBytes = FzfByteMatcher.FuzzyMatchV2(
-                textBytes, [(byte)pattern], caseSensitive, scheme, new FzfSlab(), new FzfByteBuffers());
+            var query = (byte)(caseSensitive ? pattern : char.ToLowerInvariant(pattern));
+            var expected = FzfByteMatcher.FuzzyMatchV2(
+                textBytes, [query], caseSensitive, scheme,
+                new FzfSlab(), new FzfByteBuffers(), enableFastPaths: false);
+            var actual = FzfByteMatcher.FuzzyMatchV2(
+                textBytes, [query], caseSensitive, scheme,
+                new FzfSlab(), new FzfByteBuffers());
 
-            Assert.AreEqual(expectedChars, actualBytes, $"{text} / {pattern} / {scheme} / case={caseSensitive}");
+            Assert.AreEqual(expected, actual, $"{text} / {pattern} / {scheme} / case={caseSensitive}");
         }
     }
 
     [TestMethod]
-    public void FastPathStillPrefersTheLeftEdgeBoundary()
+    public void FastPathStillPrefersTheBoundaryScoreWithoutMovingTheMatch()
     {
         var match = FzfFuzzyMatcher.FuzzyMatchV2(
             "x---a-more-a", "a", caseSensitive: false, FzfScoringScheme.Default);
 
         Assert.AreEqual(4, match.Start);
         Assert.AreEqual(5, match.End);
+    }
+
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public void SingleCharacter_ReturnsTheKnownBoundaryScore(bool enableFastPaths)
+    {
+        var expected = new FzfMatchResult(0, 1, 36);
+        Assert.AreEqual(expected, FzfFuzzyMatcher.FuzzyMatchV2("a", "a", false,
+            FzfScoringScheme.Default, enableFastPaths: enableFastPaths));
+        Assert.AreEqual(expected, FzfByteMatcher.FuzzyMatchV2("a"u8, [(byte)'a'], false,
+            FzfScoringScheme.Default, new FzfSlab(), new FzfByteBuffers(), enableFastPaths));
+    }
+
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public void LongTextWithShortScope_PreservesSingleCharacterScore(bool enableFastPaths)
+    {
+        var offset = FzfAlgorithm.MaxV2Cells + 1;
+        var text = new string('x', offset) + "a";
+        var expected = new FzfMatchResult(offset, offset + 1, FzfAlgorithm.ScoreMatch);
+        Assert.AreEqual(expected, FzfFuzzyMatcher.FuzzyMatchV2(text, "a", false,
+            FzfScoringScheme.Default, enableFastPaths: enableFastPaths));
+        Assert.AreEqual(expected, FzfByteMatcher.FuzzyMatchV2(Encoding.ASCII.GetBytes(text), [(byte)'a'], false,
+            FzfScoringScheme.Default, new FzfSlab(), new FzfByteBuffers(), enableFastPaths));
+    }
+
+    [TestMethod]
+    public void OversizedScope_StillUsesTheOriginalV1Fallback()
+    {
+        var text = "xa" + new string('x', FzfAlgorithm.MaxV2Cells) + " a";
+        var expected = new FzfMatchResult(text.Length - 1, text.Length, 36);
+        var v1 = FzfFuzzyMatcher.FuzzyMatchV1(text, "a", false, FzfScoringScheme.Default);
+        Assert.AreEqual(expected, v1);
+        foreach (var enabled in new[] { true, false })
+        {
+            Assert.AreEqual(expected, FzfFuzzyMatcher.FuzzyMatchV2(text, "a", false,
+                FzfScoringScheme.Default, enableFastPaths: enabled));
+            Assert.AreEqual(expected, FzfByteMatcher.FuzzyMatchV2(Encoding.ASCII.GetBytes(text), [(byte)'a'], false,
+                FzfScoringScheme.Default, new FzfSlab(), new FzfByteBuffers(), enabled));
+        }
     }
 
     [TestMethod]
@@ -127,46 +176,5 @@ public sealed class FzfSingleCharacterFastPathTests
 
             Assert.AreEqual(expected, actual, $"{text} / {pattern} / {scheme} / case={caseSensitive}");
         }
-    }
-
-    private static FzfMatchResult ReferenceChar(
-        string text, char pattern, bool caseSensitive, FzfScoringScheme scheme)
-    {
-        var patternText = pattern.ToString();
-        if (!FzfScoring.FindFuzzyScope(
-                text, patternText, caseSensitive, out var minIdx, out var maxIdx))
-            return FzfMatchResult.NoMatch;
-
-        var scopedLength = maxIdx - minIdx;
-        var chars = new char[scopedLength];
-        var bonus = new short[scopedLength];
-        var previousClass = (byte)FzfAlgorithm.InitialClass(scheme);
-        for (var offset = 0; offset < scopedLength; offset++)
-        {
-            var raw = text[minIdx + offset];
-            var currentClass = FzfCharTables.GetClass(raw);
-            chars[offset] = caseSensitive ? raw : FzfCharTables.ToLower(raw);
-            bonus[offset] = FzfCharTables.Bonus(scheme, previousClass, currentClass);
-            previousClass = currentClass;
-        }
-
-        var bestScore = 0;
-        var bestPos = -1;
-        for (var i = 0; i < scopedLength; i++)
-        {
-            if (!FzfCharTables.CharsEqual(chars[i], pattern, caseSensitive))
-                continue;
-            var score = FzfAlgorithm.ScoreMatch + bonus[i] * FzfAlgorithm.BonusFirstCharMultiplier;
-            if (score <= bestScore)
-                continue;
-            bestScore = score;
-            bestPos = i;
-            if (bonus[i] >= FzfAlgorithm.BonusBoundary)
-                break;
-        }
-
-        return bestPos >= 0
-            ? new FzfMatchResult(minIdx + bestPos, minIdx + bestPos + 1, bestScore)
-            : FzfMatchResult.NoMatch;
     }
 }

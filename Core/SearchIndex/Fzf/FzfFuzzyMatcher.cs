@@ -19,7 +19,8 @@ internal static class FzfFuzzyMatcher
         var n = text.Length;
         if (m > n)
             return FzfMatchResult.NoMatch;
-        if (enableFastPaths && m == 1 && n <= FzfAlgorithm.MaxV2Cells)
+        if (enableFastPaths && m == 1 && n <= FzfAlgorithm.MaxV2Cells
+            && (caseSensitive || System.Text.Ascii.IsValid(text)))
             return FuzzyMatchSingle(text, pattern[0], caseSensitive, scheme);
         if (enableFastPaths && m > 1)
         {
@@ -34,6 +35,14 @@ internal static class FzfFuzzyMatcher
         if (m > 1000 || (long)scopedLength * m > FzfAlgorithm.MaxV2Cells)
             return FuzzyMatchV1(text, pattern, caseSensitive, scheme);
 
+        // Unicode case mappings are not bijective (e.g. Kelvin sign -> k). Preserve the old scope
+        // before scoring those names, while still avoiding the normalized/bonus arrays for one char.
+        if (enableFastPaths && m == 1)
+        {
+            var match = FuzzyMatchSingle(text.Slice(minIdx, scopedLength), pattern[0], caseSensitive, scheme);
+            return match.IsMatch ? match with { Start = match.Start + minIdx, End = match.End + minIdx } : match;
+        }
+
         var chars = slab?.Chars(scopedLength) ?? new char[scopedLength];
         var bonus = slab?.Bonus(scopedLength) ?? new short[scopedLength];
         var first = slab?.First(m) ?? new int[m];
@@ -42,6 +51,7 @@ internal static class FzfFuzzyMatcher
         var patternIndex = 0;
         var lastIdx = 0;
         var firstPatternChar = caseSensitive ? pattern[0] : FzfCharTables.ToLower(pattern[0]);
+        var nextPatternChar = firstPatternChar;
         var previousClass = (byte)FzfAlgorithm.InitialClass(scheme);
         for (var offset = 0; offset < scopedLength; offset++)
         {
@@ -52,16 +62,42 @@ internal static class FzfFuzzyMatcher
             bonus[offset] = FzfCharTables.Bonus(scheme, previousClass, currentClass);
             previousClass = currentClass;
 
-            if (patternIndex < m && FzfCharTables.CharsEqual(normalized, pattern[patternIndex], caseSensitive))
+            if (patternIndex < m && normalized == nextPatternChar)
             {
                 first[patternIndex] = offset;
                 lastIdx = offset;
                 patternIndex++;
+                if (patternIndex < m)
+                    nextPatternChar = caseSensitive ? pattern[patternIndex] : FzfCharTables.ToLower(pattern[patternIndex]);
             }
         }
 
         if (patternIndex != m)
             return FzfMatchResult.NoMatch;
+
+        // Keep the original one-character algorithm as the independent reference path. The DP loop
+        // starts at pattern index 1 and cannot produce a score for a one-character pattern.
+        if (m == 1)
+        {
+            var bestScore = 0;
+            var bestPos = -1;
+            for (var i = 0; i < scopedLength; i++)
+            {
+                if (chars[i] != firstPatternChar)
+                    continue;
+                var score = FzfAlgorithm.ScoreMatch + bonus[i] * FzfAlgorithm.BonusFirstCharMultiplier;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPos = i;
+                    if (bonus[i] >= FzfAlgorithm.BonusBoundary)
+                        break;
+                }
+            }
+            return bestPos >= 0
+                ? new FzfMatchResult(minIdx + bestPos, minIdx + bestPos + 1, bestScore)
+                : FzfMatchResult.NoMatch;
+        }
 
         var f0 = first[0];
         var width = lastIdx - f0 + 1;
@@ -96,6 +132,8 @@ internal static class FzfFuzzyMatcher
         var maxScorePos = f0;
         for (var pidx = 1; pidx < m; pidx++)
         {
+            // Text is already folded. Fold this pattern character once per row, not per DP cell.
+            var patternChar = caseSensitive ? pattern[pidx] : FzfCharTables.ToLower(pattern[pidx]);
             var row = pidx * width;
             var previousRow = row - width;
             inGap = false;
@@ -115,7 +153,7 @@ internal static class FzfFuzzyMatcher
 
                 short s1 = 0;
                 short consecutiveScore = 0;
-                if (FzfCharTables.CharsEqual(chars[col], pattern[pidx], caseSensitive) && rel > 0)
+                if (chars[col] == patternChar && rel > 0)
                 {
                     s1 = (short)(scores[previousRow + rel - 1] + FzfAlgorithm.ScoreMatch);
                     var b = bonus[col];
@@ -171,6 +209,7 @@ internal static class FzfFuzzyMatcher
     {
         var bestScore = 0;
         var bestPos = -1;
+        if (!caseSensitive) pattern = FzfCharTables.ToLower(pattern);
         var previousClass = (byte)FzfAlgorithm.InitialClass(scheme);
         for (var i = 0; i < text.Length; i++)
         {
@@ -179,7 +218,7 @@ internal static class FzfFuzzyMatcher
             var normalized = caseSensitive ? raw : FzfCharTables.ToLower(raw);
             var bonus = FzfCharTables.Bonus(scheme, previousClass, currentClass);
             previousClass = currentClass;
-            if (!FzfCharTables.CharsEqual(normalized, pattern, caseSensitive))
+            if (normalized != pattern)
                 continue;
 
             var score = FzfAlgorithm.ScoreMatch + bonus * FzfAlgorithm.BonusFirstCharMultiplier;

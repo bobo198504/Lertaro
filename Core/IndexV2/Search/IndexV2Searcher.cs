@@ -57,7 +57,8 @@ public static class IndexV2Searcher
 
             if (parsed.IsPathMode)
             {
-                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, CacheOrOriginal(), token, directoryFilterLower);
+                PathSearch.SearchStreaming(snapshot, delta, parsed, limit, onResult, token, directoryFilterLower,
+                    FilterPatternHelper.SplitOrNullIfMatchAll(fileNameFilter), category);
                 return null;
             }
 

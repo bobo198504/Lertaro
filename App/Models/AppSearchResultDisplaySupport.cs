@@ -36,14 +36,17 @@ internal static class AppSearchResultDisplaySupport
             return iconOverride;
 
         var extras = owner.DisplayExtras;
-        if (extras.Icon != null)
+        if (extras.Icon != null && !extras.IconNeedsRefresh)
             return extras.Icon;
 
         // This runs on the UI thread as a binding getter, and a cache miss resolves the icon
         // SYNCHRONOUSLY through the shell. Only a miss is recorded: a hit is a dictionary lookup, and
         // recording every row call would make the probe the cost it is measuring.
         var __iconAt = Lertaro.Core.SearchIndex.PerfTrace.Begin();
+        var previousIcon = extras.Icon;
         extras.Icon = ShellIconHelper.GetIconFromCacheOnly(owner.FullPath, owner.IsDir, out var needsLoad);
+        if (needsLoad && previousIcon != null) extras.Icon = previousIcon;
+        extras.IconNeedsRefresh = false;
         // Only the misses are interesting: a hit is a dictionary lookup.
         if (needsLoad)
             Lertaro.Core.SearchIndex.PerfTrace.Mark("icon.sync", __iconAt, 0, owner.IsDir ? "dir" : "file");

@@ -6,6 +6,81 @@ namespace Lertaro.Core.Tests.DriveMonitoring;
 public sealed class DriveWatcherHostTests
 {
     [TestMethod]
+    public void Start_InitiallyUnavailable_ReconcilesOnceWhenWatcherStarts()
+    {
+        using var dir = new TempDirectory();
+        var available = false;
+        var loss = new WatcherLossRefreshGate();
+        var reconciliations = 0;
+        FileSystemWatcher? watcher = null;
+        using var host = new DriveWatcherHost("Test", dir.Path, _ => available,
+            (current, _, _, _, _) => { watcher = current; return true; }, (_, _) => { },
+            onStarted: () =>
+            {
+                Assert.IsTrue(watcher!.EnableRaisingEvents);
+                if (loss.Recovered(dir.Path)) reconciliations++;
+            },
+            onUnavailable: () => loss.ShouldRequestRefresh(dir.Path));
+
+        host.Start();
+        host.Start();
+        Assert.AreEqual(0, reconciliations);
+        available = true;
+        host.Start();
+        host.Start();
+
+        Assert.AreEqual(1, reconciliations);
+    }
+
+    [TestMethod]
+    public void Start_WatcherSetupFails_ReportsTheGapAndRecovers()
+    {
+        using var dir = new TempDirectory();
+        var failSetup = true;
+        var unavailable = 0;
+        var starts = 0;
+        using var host = new DriveWatcherHost("Test", dir.Path, _ => true,
+            (_, _, _, _, _) => failSetup ? throw new IOException("share disconnected") : true,
+            (_, _) => { }, onStarted: () => starts++, onUnavailable: () => unavailable++);
+
+        host.Start();
+        Assert.AreEqual(1, unavailable);
+        Assert.AreEqual(0, starts);
+        failSetup = false;
+        host.Start();
+
+        Assert.AreEqual(1, starts);
+        Assert.AreEqual(1, unavailable);
+    }
+
+    [TestMethod]
+    public async Task Dispose_DuringBlockedProbe_DoesNotWaitOrStartALateWatcher()
+    {
+        using var releaseProbe = new ManualResetEventSlim();
+        var probeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var configured = 0;
+        using var host = new DriveWatcherHost("Test", @"C:\unused", _ =>
+            {
+                probeEntered.SetResult();
+                releaseProbe.Wait();
+                return true;
+            }, (_, _, _, _, _) => { configured++; return true; }, (_, _) => { });
+        var start = Task.Run(host.Start);
+        try
+        {
+            await probeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(host.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseProbe.Set();
+            await start.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.AreEqual(0, configured);
+    }
+
+    [TestMethod]
     public async Task Start_OfflineRoot_ReturnsOnlineAndNotifiesOnlyAfterWatching()
     {
         using var dir = new TempDirectory();
@@ -15,7 +90,7 @@ public sealed class DriveWatcherHostTests
         using var host = new DriveWatcherHost("Test", dir.Path,
             _ => Volatile.Read(ref online) != 0,
             (current, _, _, _, _) => { watcher = current; return true; },
-            _ => { }, TimeSpan.FromMilliseconds(20),
+            (_, _) => { }, TimeSpan.FromMilliseconds(20),
             onStarted: () => started.TrySetResult(watcher!.EnableRaisingEvents));
 
         host.Start();
@@ -35,7 +110,7 @@ public sealed class DriveWatcherHostTests
         var recovered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var host = new DriveWatcherHost("Test", dir.Path, _ => true,
             (current, _, restartWatcher, _, _) => { watcher = current; restart = restartWatcher; return true; },
-            _ => { }, TimeSpan.FromMilliseconds(20), onStarted: () =>
+            (_, _) => { }, TimeSpan.FromMilliseconds(20), onStarted: () =>
             {
                 if (Interlocked.Increment(ref starts) == 2) recovered.TrySetResult(watcher!.EnableRaisingEvents);
             });
@@ -56,7 +131,7 @@ public sealed class DriveWatcherHostTests
         using var host = new DriveWatcherHost("Test", @"C:\lertaro-does-not-exist",
             _ => false,
             (_, _, _, _, _) => { configureCalled = true; return true; },
-            logs.Add);
+            (message, _) => logs.Add(message));
 
         host.Start();
 
@@ -72,7 +147,7 @@ public sealed class DriveWatcherHostTests
         using var host = new DriveWatcherHost("Test", dir.Path,
             _ => true,
             (watcher, drive, _, _, _) => false,
-            logs.Add);
+            (message, _) => logs.Add(message));
 
         host.Start();
 
@@ -80,20 +155,21 @@ public sealed class DriveWatcherHostTests
     }
 
     [TestMethod]
-    public void Start_ConfigureReturnsTrue_LogsStartedMonitoringWithNameAndDrive()
+    public void Start_ConfigureReturnsTrue_LogsInfoWithNameAndDrive()
     {
         using var dir = new TempDirectory();
-        var logs = new List<string>();
+        var logs = new List<(string Message, LogLevel Level)>();
         using var host = new DriveWatcherHost("MyHost", dir.Path,
             _ => true,
             (_, _, _, _, _) => true,
-            logs.Add);
+            (message, level) => logs.Add((message, level)));
 
         host.Start();
 
         Assert.HasCount(1, logs);
-        StringAssert.Contains(logs[0], "[MyHost]");
-        StringAssert.Contains(logs[0], dir.Path);
+        Assert.AreEqual(LogLevel.Info, logs[0].Level);
+        StringAssert.Contains(logs[0].Message, "[MyHost]");
+        StringAssert.Contains(logs[0].Message, dir.Path);
     }
 
     [TestMethod]
@@ -105,7 +181,7 @@ public sealed class DriveWatcherHostTests
         using var host = new DriveWatcherHost("Test", dir.Path,
             _ => true,
             (watcher, drive, _, _, _) => { seen = watcher; seenDrive = drive; return true; },
-            _ => { });
+            (_, _) => { });
 
         host.Start();
 
@@ -121,7 +197,7 @@ public sealed class DriveWatcherHostTests
         using var host = new DriveWatcherHost("Test", dir.Path,
             _ => true,
             (_, _, _, _, _) => { configureCount++; return true; },
-            _ => { });
+            (_, _) => { });
 
         host.Start();
         host.Start();
@@ -142,7 +218,7 @@ public sealed class DriveWatcherHostTests
                 else rearmed.TrySetResult(current);
                 return true;
             },
-            _ => { }, TimeSpan.FromMilliseconds(20));
+            (_, _) => { }, TimeSpan.FromMilliseconds(20));
 
         host.Start();
         host.Release();
@@ -160,7 +236,7 @@ public sealed class DriveWatcherHostTests
         var configured = 0;
         var host = new DriveWatcherHost("Test", dir.Path, _ => true,
             (_, _, _, _, _) => { Interlocked.Increment(ref configured); return true; },
-            _ => { }, TimeSpan.FromMilliseconds(20));
+            (_, _) => { }, TimeSpan.FromMilliseconds(20));
 
         host.Start();
         host.Dispose();
@@ -179,13 +255,53 @@ public sealed class DriveWatcherHostTests
         var host = new DriveWatcherHost("Test", dir.Path,
             _ => { existsCalled = true; return true; },
             (_, _, _, _, _) => { configureCalled = true; return true; },
-            _ => { });
+            (_, _) => { });
 
         host.Dispose();
         host.Start();
 
         Assert.IsFalse(existsCalled);
         Assert.IsFalse(configureCalled);
+    }
+
+    [TestMethod]
+    [DataRow("Started monitoring is part of the failure details")]
+    [DataRow("配置失败")]
+    public void Start_ConfigureThrows_LogsWarningRegardlessOfWording(string error)
+    {
+        using var dir = new TempDirectory();
+        var logs = new List<(string Message, LogLevel Level)>();
+        using var host = new DriveWatcherHost("Test", dir.Path, _ => true,
+            (_, _, _, _, _) => throw new IOException(error),
+            (message, level) => logs.Add((message, level)));
+
+        host.Start();
+
+        Assert.HasCount(1, logs);
+        Assert.AreEqual(LogLevel.Warn, logs[0].Level);
+        StringAssert.Contains(logs[0].Message, error);
+    }
+
+    [TestMethod]
+    [DataRow("Started monitoring is part of the watcher error")]
+    [DataRow("监视缓冲区溢出")]
+    public void WatcherError_AfterSuccessfulStart_LogsWarningRegardlessOfWording(string error)
+    {
+        using var dir = new TempDirectory();
+        var logs = new List<(string Message, LogLevel Level)>();
+        Action<string>? logError = null;
+        using var host = new DriveWatcherHost("Test", dir.Path, _ => true,
+            (_, _, _, _, reportError) => { logError = reportError; return true; },
+            (message, level) => logs.Add((message, level)));
+
+        host.Start();
+        Assert.IsNotNull(logError);
+        logError(error);
+
+        Assert.HasCount(2, logs);
+        Assert.AreEqual(LogLevel.Info, logs[0].Level);
+        Assert.AreEqual(LogLevel.Warn, logs[1].Level);
+        StringAssert.Contains(logs[1].Message, error);
     }
 
     private sealed class TempDirectory : IDisposable

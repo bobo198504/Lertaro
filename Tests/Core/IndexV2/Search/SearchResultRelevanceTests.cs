@@ -20,12 +20,12 @@ public sealed class SearchResultRelevanceTests
     }
 
     [TestMethod]
-    public void Apply_ContiguityRanksAboveAnEarlierScatteredHit()
+    public void Apply_LeftEdgeRanksAboveALaterContiguousHit()
     {
         var contiguousLater = Ranked(@"C:\data\xxatlas", "xxatlas", "atlas");
         var scatteredAtStart = Ranked(@"C:\data\axtlaxs", "axtlaxs", "atlas");
 
-        Assert.IsLessThan(scatteredAtStart, contiguousLater);
+        Assert.IsLessThan(contiguousLater, scatteredAtStart);
     }
 
     [TestMethod]
@@ -56,12 +56,12 @@ public sealed class SearchResultRelevanceTests
     }
 
     [TestMethod]
-    public void KeyLayout_ShapeOutranksLeftContiguous()
+    public void KeyLayout_LeftEdgeOutranksShape()
     {
         var leftWordStart = Key(start: 0, coverage: 0.5, contiguity: 1, shape: MatchRank.ShapeWordStart);
         var laterWholeWord = Key(start: 5, coverage: 1, contiguity: 1, shape: MatchRank.ShapeWholeWord);
 
-        Assert.IsLessThan(leftWordStart, laterWholeWord);
+        Assert.IsLessThan(laterWholeWord, leftWordStart);
     }
 
     [TestMethod]
@@ -74,25 +74,25 @@ public sealed class SearchResultRelevanceTests
     }
 
     [TestMethod]
-    public void KeyLayout_ShapeOutranksStartAndCoverage()
+    public void KeyLayout_StartAndCoverageOutrankShape()
     {
         var wholeLater = Key(start: 5, coverage: 0.5, contiguity: 1, shape: MatchRank.ShapeWholeWord);
         var insideEarlier = Key(start: 0, coverage: 1, contiguity: 1, shape: MatchRank.ShapeInsideWord);
 
-        Assert.IsLessThan(insideEarlier, wholeLater);
+        Assert.IsLessThan(wholeLater, insideEarlier);
     }
 
     [TestMethod]
-    public void KeyLayout_ShapeOrderIsWholeWordThenWordStartThenInsideThenScattered()
+    public void KeyLayout_ShapeDoesNotChangeThePackedKey()
     {
         var whole = Key(start: 0, coverage: 1, contiguity: 1, shape: MatchRank.ShapeWholeWord);
         var wordStart = Key(start: 0, coverage: 1, contiguity: 1, shape: MatchRank.ShapeWordStart);
         var inside = Key(start: 0, coverage: 1, contiguity: 1, shape: MatchRank.ShapeInsideWord);
         var scattered = Key(start: 0, coverage: 1, contiguity: 1, shape: MatchRank.ShapeScattered);
 
-        Assert.IsLessThan(wordStart, whole);
-        Assert.IsLessThan(inside, wordStart);
-        Assert.IsLessThan(scattered, inside);
+        Assert.AreEqual(whole, wordStart);
+        Assert.AreEqual(whole, inside);
+        Assert.AreEqual(whole, scattered);
     }
 
     [TestMethod]
@@ -114,12 +114,12 @@ public sealed class SearchResultRelevanceTests
     }
 
     [TestMethod]
-    public void KeyLayout_ContiguityOutranksStart()
+    public void KeyLayout_StartOutranksContiguity()
     {
         var contiguousLater = Key(start: 5, coverage: 0.5, contiguity: 1);
         var scatteredAtStart = Key(start: 0, coverage: 1, contiguity: 0.5);
 
-        Assert.IsLessThan(scatteredAtStart, contiguousLater);
+        Assert.IsLessThan(contiguousLater, scatteredAtStart);
     }
 
     [TestMethod]
@@ -204,14 +204,14 @@ public sealed class SearchResultRelevanceTests
                 result.RankSortKey = (ulong)Key(rank) << 32 | 0xFFFF_FFFFUL;
 
                 Assert.AreEqual(
-                    rank.IsStrong,
+                    tier <= MatchRank.TierFull && rank.Contiguity >= 1,
                     SearchResultRelevance.IsStrongMatch(result.RankSortKey),
-                    $"tier {tier} shape {shape} disagree");
+                    $"tier {tier} contiguity {rank.Contiguity} disagree");
             }
         }
 
         Assert.IsFalse(SearchResultRelevance.IsStrongMatch((ulong)Key(new MatchRank(MatchRank.TierFullRare, 0, 1d, 1d, MatchRank.ShapeWholeWord)) << 32));
-        Assert.IsFalse(SearchResultRelevance.IsStrongMatch((ulong)Key(new MatchRank(MatchRank.TierName, 0, 1d, 1d, MatchRank.ShapeScattered)) << 32));
+        Assert.IsFalse(SearchResultRelevance.IsStrongMatch((ulong)Key(new MatchRank(MatchRank.TierName, 0, 1d, 0d, MatchRank.ShapeWholeWord)) << 32));
     }
 
     private static uint Key(MatchRank rank) => SearchResultRelevance.HighKey(rank);

@@ -5,6 +5,108 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.12.10.1
+
+## 更新内容
+
+上游：
+```
+# test(hook): keep the abandoned-read budget test out of the parallel run
+# fix(updater): retry a transient 1061 once even without a retry budget
+# deps: update lunar-csharp
+# docs(search): document offline drive recovery and network scan behavior
+# fix(tree-builder): reuse unchanged directories and retry transient enumeration
+# fix(network-drive): reconcile offline watchers without blocking removal
+# fix(drive-maintenance): cancel stale rebuild work before queueing
+# fix(drive-monitor): await monitor shutdown and isolate stale callbacks
+# fix(quick-nav): reject invalid triggers and parked dialog owners
+# fix(quick-launch): retain displayed icons while refreshed rows reload
+# fix(quick-launch): skip cache cleanup from superseded hides
+# docs(chore): remove unused and add new
+# docs(search): record performance audits and reproducible comparisons
+# perf(search): avoid boxing metadata keys in query token sorts
+# fix(search): cancel superseded work and reuse query match evidence
+# perf(search): avoid redundant sidebar renders and collection resets
+# fix(search): scope and refresh live directory scan caches
+# fix(search): enforce index filters and cancel stale refinement
+# fix(search): make bounded ranking deterministic for equal keys
+# fix(fzf): normalize both sides in case-insensitive matching
+# fix(diagnostics): dedupe plugin loads and correct watcher log levels
+# perf(search): classify category filters once per unique
+# perf(search): shortcut single-character fuzzy matching
+# fix(ipc): report a dropped hook command at Warn
+# fix(file-dialog): drive the folder picker modern apps actually show
+```
+
+本fork：
+```
+* 保留 fork 的左侧优先、历史权重和常用便携应用召回排序
+* 名称索引保留 128 位字符掩码，并只扫描查询实际使用的掩码半区
+* 连续前缀命中继续直接复用精确前缀计分
+* 已完成查询页按索引版本、别名查询版本、分类、目录、文件过滤和完整请求语义缓存
+* 缓存捕获和回放复制结果对象，调用方修改结果不会污染后续查询
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+```
+
+## What's changed
+
+Upstream:
+```
+# test(hook): keep the abandoned-read budget test out of the parallel run
+# fix(updater): retry a transient 1061 once even without a retry budget
+# deps: update lunar-csharp
+# docs(search): document offline drive recovery and network scan behavior
+# fix(tree-builder): reuse unchanged directories and retry transient enumeration
+# fix(network-drive): reconcile offline watchers without blocking removal
+# fix(drive-maintenance): cancel stale rebuild work before queueing
+# fix(drive-monitor): await monitor shutdown and isolate stale callbacks
+# fix(quick-nav): reject invalid triggers and parked dialog owners
+# fix(quick-launch): retain displayed icons while refreshed rows reload
+# fix(quick-launch): skip cache cleanup from superseded hides
+# docs(chore): remove unused and add new
+# docs(search): record performance audits and reproducible comparisons
+# perf(search): avoid boxing metadata keys in query token sorts
+# fix(search): cancel superseded work and reuse query match evidence
+# perf(search): avoid redundant sidebar renders and collection resets
+# fix(search): scope and refresh live directory scan caches
+# fix(search): enforce index filters and cancel stale refinement
+# fix(search): make bounded ranking deterministic for equal keys
+# fix(fzf): normalize both sides in case-insensitive matching
+# fix(diagnostics): dedupe plugin loads and correct watcher log levels
+# perf(search): classify category filters once per unique
+# perf(search): shortcut single-character fuzzy matching
+# fix(ipc): report a dropped hook command at Warn
+# fix(file-dialog): drive the folder picker modern apps actually show
+```
+
+This fork:
+```
+* Keeps the fork's left-edge-first ranking, history weighting and portable-app recall
+* Keeps the 128-bit name mask and scans only the mask half the query actually needs
+* Contiguous prefix hits continue to reuse exact-prefix scoring
+* Completed pages are cached by index, alias-query, category, directory, file-filter and full request semantics
+* Cache capture and replay copy results, so caller decoration cannot pollute later queries
+* Confirmed query associations add at most two weak recalls, always after direct matches
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+```
+
+附：
+```
+上游 v5.12.10 起提供有效的 ECDSA 便携包签名；本 fork 继续使用本仓库自己的 SIGNING_KEY 发布。
+本版同时纳入上游 main 中尚未随 v5.12.11 发版的两个 Alt+Tab 窗口修复。
+```
+
+Note:
+```
+Upstream v5.12.10 and later provide valid ECDSA portable-package signatures; this fork continues to sign with its own repository SIGNING_KEY.
+This build also includes the two Alt+Tab window fixes currently on upstream main but not yet released as v5.12.11.
+```
+
 ## v5.12.9.3
 
 ## 更新内容

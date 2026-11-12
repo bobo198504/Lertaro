@@ -55,14 +55,13 @@ internal static class SearchResultRelevance
         return (start << 24) | (leftContiguous << 23) | (coveragePoint << 13) | (contiguityPoint << 5) | tier;
     }
 
-    /// <summary>True when the packed quality key describes a strong match. Mirrors the layout in
-    /// <see cref="HighKey"/>: tier in bits 0-3, shape in bits 21-23 of the high word. A key of 0 (never
-    /// packed) is NOT handled here -- the caller decides, because an unpacked key must not read as the
-    /// best possible tier and shape.</summary>
+    /// <summary>True when the packed quality key describes a strong match. The fork layout keeps the left
+    /// edge ahead of shape and therefore has no shape bits to unpack; tier and contiguity are the shared
+    /// strong-match signals this key still carries. A key of 0 (never packed) is NOT handled here -- the
+    /// caller decides, because an unpacked key must not read as the best possible tier.</summary>
     public static bool IsStrongMatch(ulong rankSortKey) =>
-        MatchRank.IsStrongHit(
-            tier: (int)((rankSortKey >> 32) & 0xF),
-            shape: (int)((rankSortKey >> 53) & 0x7));
+        (int)((rankSortKey >> 32) & 0xF) <= MatchRank.TierFull
+        && ((rankSortKey >> 37) & 0xFF) == 0;
 
     private static double Clamp01(double value)
     {
