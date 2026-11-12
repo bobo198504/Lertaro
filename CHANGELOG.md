@@ -97,13 +97,13 @@ This fork:
 
 附：
 ```
-上游 v5.12.10 起提供有效的 ECDSA 便携包签名；本 fork 继续使用本仓库自己的 SIGNING_KEY 发布。
+上游 v5.12.10 提供有效的 ECDSA 便携包签名；本 fork 本次发行使用 unsigned 占位签名，自动更新会拒绝，需手动下载替换。
 本版同时纳入上游 main 中尚未随 v5.12.11 发版的两个 Alt+Tab 窗口修复。
 ```
 
 Note:
 ```
-Upstream v5.12.10 and later provide valid ECDSA portable-package signatures; this fork continues to sign with its own repository SIGNING_KEY.
+Upstream v5.12.10 provides valid ECDSA portable-package signatures; this fork's current assets use unsigned placeholders, so automatic updates reject them and users must replace them manually.
 This build also includes the two Alt+Tab window fixes currently on upstream main but not yet released as v5.12.11.
 ```
 
