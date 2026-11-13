@@ -5,6 +5,58 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.13.1.1
+
+## 更新内容
+
+上游：
+```
+# fix(quicknav): fix quick nav win on explorer new tab
+# chore(update): gitlab download with token
+# chore: remove min release limit for gitlab
+```
+
+本fork：
+```
+* 保留 fork 的左侧优先、历史权重和常用便携应用召回排序
+* 名称索引保留 128 位字符掩码，并只扫描查询实际使用的掩码半区
+* 连续前缀命中继续直接复用精确前缀计分
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+```
+
+附：
+```
+本版同时纳入上游 v5.12.12 的查询页缓存合并与后续释放、保留行预算修复；上游 v5.12.11 尚未单独发布，但其窗口修复已包含在代码中。
+```
+
+## What's changed
+
+Upstream:
+```
+# fix(quicknav): fix quick nav win on explorer new tab
+# chore(update): gitlab download with token
+# chore: remove min release limit for gitlab
+```
+
+This fork:
+```
+* Keeps the fork's left-edge-first ranking, history weighting and portable-app recall
+* Keeps the 128-bit name mask and scans only the mask half the query actually needs
+* Contiguous prefix hits continue to reuse exact-prefix scoring
+* Confirmed query associations add at most two weak recalls, always after direct matches
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+```
+
+Note:
+```
+This build includes the v5.12.12 query-page-cache merge and its release/row-budget follow-up. The v5.12.11 window fixes are also present although that tag has no separate GitHub release.
+```
+
 ## v5.12.10.1
 
 ## 更新内容

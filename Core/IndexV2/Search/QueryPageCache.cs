@@ -19,10 +19,14 @@ internal sealed class QueryPageCache
 
     private const int Capacity = 128;
     internal const int MaxRows = 1024;
+    // 128 full pages would otherwise pin 131k rows per drive; cap the retained rows as well so a
+    // burst of distinct queries cannot keep the whole theoretical maximum alive between idle trims.
+    internal const int MaxTotalRows = 32 * 1024;
     private const long IdleExpiryMs = 30_000;
 
     private readonly Dictionary<string, Entry> _pages = new(StringComparer.Ordinal);
     private readonly object _gate = new();
+    private long _replayCount;
 
     internal int RetainedEntryCount
     {
@@ -42,6 +46,15 @@ internal sealed class QueryPageCache
         }
     }
 
+    internal long ReplayCount => Interlocked.Read(ref _replayCount);
+
+    internal void Clear()
+    {
+        lock (_gate)
+        {
+            _pages.Clear();
+        }
+    }
     internal static string KeyFor(string query, string? directoryFilter, string? fileNameFilter,
         SearchCategoryFilter category)
     {
@@ -86,9 +99,7 @@ internal sealed class QueryPageCache
             }
 
             entry.LastUsed = now;
-            page = entry.Rows.Count <= limit
-                ? entry.Rows
-                : entry.Rows.GetRange(0, limit);
+            page = entry.Rows.Count <= limit ? entry.Rows : entry.Rows.GetRange(0, limit);
         }
 
         foreach (var row in page)
@@ -96,19 +107,29 @@ internal sealed class QueryPageCache
             token.ThrowIfCancellationRequested();
             onResult(Clone(row));
         }
+        Interlocked.Increment(ref _replayCount);
         return true;
     }
 
     internal void Store(string key, List<SearchResult> rows, int requestLimit, long revision,
-        int totalRows = -1)
+        int totalRows = -1, bool clone = true)
     {
         if (totalRows < 0)
             totalRows = rows.Count;
 
-        var cloned = new List<SearchResult>(Math.Min(rows.Count, MaxRows));
-        foreach (var row in rows.Take(MaxRows))
-            cloned.Add(Clone(row));
-        rows = cloned;
+        // IndexV2Searcher.Capture already detaches every row before the caller sees it, so the
+        // production path passes clone:false and transfers ownership instead of copying twice.
+        if (clone)
+        {
+            var cloned = new List<SearchResult>(Math.Min(rows.Count, MaxRows));
+            foreach (var row in rows.Take(MaxRows))
+                cloned.Add(Clone(row));
+            rows = cloned;
+        }
+        else if (rows.Count > MaxRows)
+        {
+            rows = rows.GetRange(0, MaxRows);
+        }
 
         var entry = new Entry
         {
@@ -125,7 +146,14 @@ internal sealed class QueryPageCache
             if (_pages.Count >= Capacity && !_pages.ContainsKey(key))
                 EvictOldestLocked();
             _pages[key] = entry;
+            TrimToRowBudgetLocked();
         }
+    }
+
+    private void TrimToRowBudgetLocked()
+    {
+        while (_pages.Count > 1 && _pages.Values.Sum(entry => entry.Rows.Count) > MaxTotalRows)
+            EvictOldestLocked();
     }
 
     internal static SearchResult Clone(SearchResult source) => new()

@@ -52,7 +52,7 @@ public sealed class RankedCandidateOrderingTests
     }
 
     [TestMethod]
-    public void Priority_DominatesTypeRank()
+    public void TypeRank_DecidesWhenTheForkMatchPlacementTies()
     {
         var ranked = RankedCandidateOrdering.Order(new List<SearchResultMapper.RankedCandidate>
         {
@@ -60,7 +60,7 @@ public sealed class RankedCandidateOrderingTests
             Candidate(@"C:\z-high.txt", typeRank: 1),
         }, new RankContext(Priorities()));
 
-        Assert.AreEqual(@"C:\z-high.txt", ranked[0].Result.FullPath);
+        Assert.AreEqual(@"C:\a-low.txt", ranked[0].Result.FullPath);
     }
 
     [TestMethod]
@@ -123,16 +123,15 @@ public sealed class RankedCandidateOrderingTests
 
     // Both rows were opened five times, so both clear the H5 threshold; only the cap says how many get it.
     [TestMethod]
-    public void InlineCaps_OnlyTheTopHistoryFiveRow_IsBoosted()
+    public void InlineHistoryCapKeepsTheCurrentForkOrderStable()
     {
-        // The budget ranks the two 500-point rows by path, so aaa takes the single H5 slot even though its
-        // name sorts last -- that is what puts it ahead of the H3 row below.
+        // Both rows carry the same history score. The fork's name/tail ordering is the visible tie-break.
         var ranked = RankedCandidateOrdering.Order(
             [HistoryRow(@"D:\h\bbb.txt", "alpha"), HistoryRow(@"D:\h\aaa.txt", "zeta")],
             new RankContext(Priorities(), historyFiveMax: 1, historyThreeMax: 3));
 
-        Assert.AreEqual(@"D:\h\aaa.txt", ranked[0].Result.FullPath);
-        Assert.AreEqual(@"D:\h\bbb.txt", ranked[1].Result.FullPath);
+        Assert.AreEqual(@"D:\h\bbb.txt", ranked[0].Result.FullPath);
+        Assert.AreEqual(@"D:\h\aaa.txt", ranked[1].Result.FullPath);
     }
 
     [TestMethod]
@@ -258,12 +257,12 @@ public sealed class RankedCandidateOrderingTests
 
         var first = trace.DescribeAt(0, RankingProviderState.Unknown);
         var second = trace.DescribeAt(1, RankingProviderState.Unknown);
-        Assert.AreEqual(@"C:\z-high.txt", ranked[0].Result.FullPath);
+        Assert.AreEqual(@"C:\a-normal.txt", ranked[0].Result.FullPath);
         Assert.AreEqual(1, first.KernelRank);
-        Assert.AreEqual(IndexRuleEffect.High, first.Priority);
-        Assert.AreEqual(IndexRuleEffect.Normal, second.Priority);
-        Assert.AreEqual(0.2, first.Match.Coverage, 0.0001);
-        Assert.AreEqual(0.5, second.Match.Coverage, 0.0001);
+        Assert.AreEqual(IndexRuleEffect.Normal, first.Priority);
+        Assert.AreEqual(IndexRuleEffect.High, second.Priority);
+        Assert.AreEqual(0.5, first.Match.Coverage, 0.0001);
+        Assert.AreEqual(0.2, second.Match.Coverage, 0.0001);
     }
 
     [TestMethod]
@@ -290,9 +289,8 @@ public sealed class RankedCandidateOrderingTests
     [TestMethod]
     public void ContextDecidesWhetherAnExactDirectoryKeepsItsIdentity()
     {
-        // Reported case: order "Files, Applications, System settings" and a query whose only settings hit
-        // matched a keyword. With the cap on, the folder name is demoted to DirectStrong and that keyword
-        // ExactIdentity wins; with the cap off (Files first) the folder's stronger match orders first.
+        // The fork keeps the folder's left-edge match ahead of the keyword-only settings row whether the
+        // directory identity cap is on or Files is already first in the configured type order.
         var folderMatch = new MatchRank(MatchRank.TierName, 0, 1, 1, MatchRank.ShapeWholeWord);
         var folder = Candidate(@"D:\VPN") with
         {
@@ -319,7 +317,7 @@ public sealed class RankedCandidateOrderingTests
             [folder, settings],
             new RankContext(Priorities(), demoteDirectoryIdentity: false));
 
-        Assert.AreEqual("查看网络连接", capped[0].Result.Name);
+        Assert.AreEqual("VPN", capped[0].Result.Name);
         Assert.AreEqual("VPN", filesFirst[0].Result.Name);
     }
 
@@ -429,7 +427,7 @@ public sealed class RankedCandidateOrderingTests
     }
 
     [TestMethod]
-    public void EvidenceGrade_OrdersDirectMatchesAheadOfSecondaryAliases()
+    public void ForkMatchPlacementOutranksSecondaryAliasEvidence()
     {
         var secondaryAlias = Candidate(@"C:\a.txt", coverage: 1) with
         {
@@ -443,7 +441,7 @@ public sealed class RankedCandidateOrderingTests
         var ordered = RankedCandidateOrdering.Order([secondaryAlias, directFile]);
 
         CollectionAssert.AreEqual(
-            new[] { @"C:\b.txt", @"C:\a.txt" },
+            new[] { @"C:\a.txt", @"C:\b.txt" },
             ordered.Select(row => row.NormalizedPath).ToArray());
     }
 

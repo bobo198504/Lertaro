@@ -25,7 +25,6 @@ public sealed class LiveIndex : IDisposable
     private long _revision;
     internal QueryPageCache SearchPages { get; } = new();
 
-
     public LiveIndex(Snapshot snapshot)
     {
         _snapshot = snapshot;
