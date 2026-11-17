@@ -37,6 +37,9 @@
 + 快速和内联搜索的非文件候选在一次查询的中间帧之间复用
 + 文件匹配缓存同时复用规范化路径
 # 多词查询的路径兜底改为一次扫描名称表
+# 超大目录的外部文件夹大小查询跳过逐项权限打开
++ Directory Opus 大目录大小使用目录专用紧凑响应并在短时内复用
++ Everything 兼容层缓存父目录的子文件夹大小并合并并发加载
 + 保留鼠标平滑滚动
 + 保留自定义应用搜索目录
 + 自动更新只检查本仓库的发行
@@ -72,6 +75,9 @@ This fork:
 + Reuses non-file candidates across intermediate frames of one quick or inline query
 + Reuses normalized paths together with cached file matches
 # Scans the name table once instead of once per term for the multi-term path fallback
+# Skips per-row access probes for external folder-size queries in very large directories
++ Uses a directory-only compact response and a short-lived cache for large Directory Opus size columns
++ Caches parent-directory child sizes and coalesces concurrent loads in the Everything compatibility layer
 + Keeps the smooth wheel scrolling
 + Keeps custom app search folders
 + Auto-update only checks this repository's releases
