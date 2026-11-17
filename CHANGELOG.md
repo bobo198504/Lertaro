@@ -5,6 +5,74 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.13.3.2
+
+## 更新内容
+
+上游：
+```
+本版无新增上游发行
+```
+
+本fork：
+```
+* 保留 fork 的左侧优先、历史权重和常用便携应用召回排序
+* 名称索引保留 128 位字符掩码，并只扫描查询实际使用的掩码半区
+* 连续前缀命中继续直接复用精确前缀计分
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
+# 结果目录刷新的订阅改为停顿后合并，避免首个搜索词与目录订阅抢处理
+# 完整窗口只在结果发生创建、删除、重命名或移动时实时刷新
+# 完整窗口结果监听只跟随结果头部，避免大结果集拖慢稳定后的界面
+# Everything 文件夹总大小复用父目录的递归大小结果
+# 完整窗口首屏只返回 200 条，滚动接近底部时继续加载
+# 完整窗口类型切换改为按新条件重新搜索，多选类型按并集合并
+# 快速搜索与完整窗口互相切换时停止离开窗口的搜索
++ 完整窗口的大小列显示文件夹递归大小
++ 完整窗口类型搜索包含与快速搜索同源的设置、应用等插件结果
++ 快速和内联搜索的非文件候选在一次查询的中间帧之间复用
++ 文件匹配缓存同时复用规范化路径
+# 多词查询的路径兜底改为一次扫描名称表
+# 超大目录的外部文件夹大小查询跳过逐项权限打开
++ Directory Opus 大目录大小使用目录专用紧凑响应并在短时内复用
++ Everything 兼容层缓存父目录的子文件夹大小并合并并发加载
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+```
+
+## What's changed
+
+Upstream:
+```
+No new upstream release in this build
+```
+
+This fork:
+```
+* Keeps the fork's left-edge-first ranking, history weighting and portable-app recall
+* Keeps the 128-bit name mask and scans only the mask half the query actually needs
+* Contiguous prefix hits continue to reuse exact-prefix scoring
+* Confirmed query associations add at most two weak recalls, always after direct matches
+# Coalesces the result-folder refresh subscription after a pause, so the first keystroke does not race it
+# Refreshes full-window results only for create, delete, rename and move changes
+# Limits full-window result watching to the leading rows, so large result sets do not slow settled UI updates
+# Reuses the parent-directory recursive size answer for Everything folder-size requests
+# Returns 200 rows in the full window first and loads more near the bottom
+# Re-searches the selected result types instead of filtering only the loaded page, with multi-select as a union
+# Stops the search from the window being left when switching between quick and full search
++ Shows recursive folder sizes in the full-window size column
++ Includes settings and application plugin rows from the quick-search providers in full-window type searches
++ Reuses non-file candidates across intermediate frames of one quick or inline query
++ Reuses normalized paths together with cached file matches
+# Scans the name table once instead of once per term for the multi-term path fallback
+# Skips per-row access probes for external folder-size queries in very large directories
++ Uses a directory-only compact response and a short-lived cache for large Directory Opus size columns
++ Caches parent-directory child sizes and coalesces concurrent loads in the Everything compatibility layer
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+```
+
 ## v5.13.3.1
 
 ## 更新内容
