@@ -38,7 +38,8 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
     {
         _mainVm = mainVm;
         _selectedCategory = _categories[0];
-        _engine = new SearchExecutionEngine(searchService, () => _selectedCategory.Category ?? SearchCategoryFilter.All);
+        _engine = new SearchExecutionEngine(searchService,
+            () => [_selectedCategory.Category ?? SearchCategoryFilter.All]);
         Results = new ObservableRangeCollection<AppSearchResult>();
 
         _dispatcher = new SearchDispatchController(

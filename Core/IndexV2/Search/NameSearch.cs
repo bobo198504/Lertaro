@@ -114,13 +114,10 @@ internal static class NameSearch
         // suppressed the entire path pass, so a query whose initials matched both a file and a folder
         // returned only the file and hid every result under the folder.
         //
-        // ponytail: for the full window this gate never closes -- its limit is int.MaxValue by design
-        // (SearchViewModel.FullSearchFileLimit), so "room left" is always true and a multi-term query
-        // pays one extra whole-index scan of the unique-name table per term. Left as it is on purpose
-        // (decided 2026-09-22): whatever the full window finds is what it returns, so the only ways to
-        // close the gate are a first-page ceiling or narrowing what the window may answer -- both are
-        // product/relevance decisions, not a fix that belongs at this line. The quick window's 51 and
-        // the inline window's bounded limit do close it.
+        // ponytail: an ordinary full-window query keeps int.MaxValue, so this gate stays open and a
+        // multi-term query pays one extra whole-index scan of the unique-name table per term. That is
+        // deliberate for complete results. Short queries pass a bounded first-page limit instead (the
+        // full window bounds one-character searches), so the gate closes normally there.
         if (emitted < limit)
         {
             var reportedUids = BuildReportedUids(pattern, hits);

@@ -110,6 +110,7 @@ public class AppSearchResult : System.ComponentModel.INotifyPropertyChanged, Plu
     }
 
     public string ResultKind { get; set; } = "File";
+    public Lertaro.PluginSdk.Helpers.SearchCategoryFilter? Category { get; set; }
     public int Index { get; set; }
     // True for rows contributed by IFullSearchFileResultProvider (e.g. ContentSearch hits in the
     // full search window). The full window excludes these rows whenever a type filter is selected.

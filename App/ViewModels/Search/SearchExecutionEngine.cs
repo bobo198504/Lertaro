@@ -15,7 +15,7 @@ internal sealed class SearchExecutionEngine : IDisposable
 {
     private readonly SearchService _searchService;
     private readonly SearchStreamRenderer _streamRenderer;
-    private readonly Func<SearchCategoryFilter> _getCategory;
+    private readonly Func<IReadOnlyList<SearchCategoryFilter>> _getCategories;
     // Per-engine, and the engine lives exactly as long as its window -- see DirectChildrenListingCache.
     private readonly DirectChildrenListingCache _directChildrenListing = new();
     private readonly object _searchCtsLock = new();
@@ -28,10 +28,11 @@ internal sealed class SearchExecutionEngine : IDisposable
         get { lock (_searchCtsLock) return _searchCts?.Token ?? new CancellationToken(canceled: true); }
     }
 
-    public SearchExecutionEngine(SearchService searchService, Func<SearchCategoryFilter>? getCategory = null)
+    public SearchExecutionEngine(SearchService searchService,
+        Func<IReadOnlyList<SearchCategoryFilter>>? getCategories = null)
     {
         _searchService = searchService;
-        _getCategory = getCategory ?? (() => SearchCategoryFilter.All);
+        _getCategories = getCategories ?? (() => [SearchCategoryFilter.All]);
         _streamRenderer = new SearchStreamRenderer(searchService, () => Volatile.Read(ref _searchVersion));
     }
 
@@ -193,7 +194,7 @@ internal sealed class SearchExecutionEngine : IDisposable
 
                 var streamingScope = tracker.IsActiveWindowExplorer ? searchScope : null;
                 var streamingContextDirectory = commandDirectory;
-                await _streamRenderer.RenderAsync(query, streamingScope, streamingContextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token, onLocalServiceUnavailable: onLocalServiceUnavailable, bypassExclusions: bypassExclusions, resultMapperConsumesBatches: resultMapperConsumesBatches, onReceivedCountUpdated: onReceivedCountUpdated, scopeDirective: scopeDirective, foldersOnly: folderScope, priorityRoots: priorityRoots, category: _getCategory()).ConfigureAwait(false);
+                await _streamRenderer.RenderAsync(query, streamingScope, streamingContextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token, onLocalServiceUnavailable: onLocalServiceUnavailable, bypassExclusions: bypassExclusions, resultMapperConsumesBatches: resultMapperConsumesBatches, onReceivedCountUpdated: onReceivedCountUpdated, scopeDirective: scopeDirective, foldersOnly: folderScope, priorityRoots: priorityRoots, categories: _getCategories()).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -328,7 +329,7 @@ internal sealed class SearchExecutionEngine : IDisposable
 
         await _streamRenderer.RenderAsync(query, null, contextDirectory, fileLimit, appLimit, resultMapper, searchVersion, onResultsUpdated, token,
             GetLocalSnapshot, () => Volatile.Read(ref localUpdateVersion), localSearchTask, onLocalServiceUnavailable, bypassExclusions,
-            foldersOnly: folderScope, priorityRoots: priorityRoots, category: _getCategory()).ConfigureAwait(false);
+            foldersOnly: folderScope, priorityRoots: priorityRoots, categories: _getCategories()).ConfigureAwait(false);
     }
 
     private void EmitInstantResults(

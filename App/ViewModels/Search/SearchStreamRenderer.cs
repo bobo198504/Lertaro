@@ -72,8 +72,12 @@ internal sealed class SearchStreamRenderer
         FileFilterScopeDirective? scopeDirective = null,
         bool foldersOnly = false,
         IReadOnlyList<string>? priorityRoots = null,
-        SearchCategoryFilter category = SearchCategoryFilter.All)
+        IReadOnlyList<SearchCategoryFilter>? categories = null)
     {
+        var categoryList = (categories ?? [SearchCategoryFilter.All]).Distinct().ToList();
+        if (categoryList.Count == 0)
+            categoryList.Add(SearchCategoryFilter.All);
+        var categoryLimit = PerCategoryFileLimit(fileLimit, categoryList.Count);
         var streamedResponse = new List<SearchResult>();
         object responseLock = new();
         var streamedCount = 0;
@@ -96,6 +100,7 @@ internal sealed class SearchStreamRenderer
         var dedupePaths = scopeDirective is { Folders.Count: > 0 }
             || priorityRoots is { Count: > 0 }
             || runShortcutSupplement
+            || categoryList.Count > 1
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : null;
         var scopePatterns = scopeDirective is { Folders.Count: > 0 }
@@ -269,20 +274,28 @@ internal sealed class SearchStreamRenderer
         {
             if (scopeDirective is { Folders.Count: > 0 })
             {
-                await ScopedSearchRunner.RunAsync(_searchService, scopeDirective, query, fileLimit, appLimit, Accumulate,
-                    () => _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        if (!token.IsCancellationRequested && searchVersion == _getSearchVersion())
-                            onLocalServiceUnavailable?.Invoke();
-                    })), bypassExclusions, token).ConfigureAwait(false);
+                foreach (var category in categoryList)
+                {
+                    await ScopedSearchRunner.RunAsync(_searchService, scopeDirective, query, categoryLimit, appLimit,
+                        Accumulate,
+                        () => _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (!token.IsCancellationRequested && searchVersion == _getSearchVersion())
+                                onLocalServiceUnavailable?.Invoke();
+                        })), bypassExclusions, token, category).ConfigureAwait(false);
+                }
             }
             else
             {
-                await _searchService.SearchStreamingAsync(query, fileLimit, appLimit, searchScope, Accumulate, token, () => _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                foreach (var category in categoryList)
                 {
-                    if (!token.IsCancellationRequested && searchVersion == _getSearchVersion())
-                        onLocalServiceUnavailable?.Invoke();
-                })), bypassExclusions, category: category).ConfigureAwait(false);
+                    await _searchService.SearchStreamingAsync(query, categoryLimit, appLimit, searchScope,
+                        Accumulate, token, () => _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            if (!token.IsCancellationRequested && searchVersion == _getSearchVersion())
+                                onLocalServiceUnavailable?.Invoke();
+                        })), bypassExclusions, category: category).ConfigureAwait(false);
+                }
             }
 
             token.ThrowIfCancellationRequested();
@@ -367,6 +380,13 @@ internal sealed class SearchStreamRenderer
         var start = copiedCount;
         copiedCount = end;
         return source.GetRange(start, end - start);
+    }
+
+    internal static int PerCategoryFileLimit(int fileLimit, int categoryCount)
+    {
+        if (categoryCount <= 1 || fileLimit == int.MaxValue)
+            return fileLimit;
+        return Math.Max(50, fileLimit / Math.Max(1, categoryCount));
     }
 
 }
