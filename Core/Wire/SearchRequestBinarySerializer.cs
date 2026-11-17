@@ -52,6 +52,7 @@ public static class SearchRequestBinarySerializer
                 payloadSize += 1;
                 break;
             case SearchRequestId.SubscribeDirectoryChanges:
+            case SearchRequestId.SubscribeDirectoryStructureChanges:
                 payloadSize += SearchRequestValueCodec.CalculateStringListSize(msg.Directories);
                 break;
             case SearchRequestId.ApplyUpdate:
@@ -127,6 +128,7 @@ public static class SearchRequestBinarySerializer
                     span[offset++] = (byte)(msg.RequestElevation ? 1 : 0);
                     break;
                 case SearchRequestId.SubscribeDirectoryChanges:
+                case SearchRequestId.SubscribeDirectoryStructureChanges:
                     SearchRequestValueCodec.WriteStringList(span, ref offset, msg.Directories);
                     break;
                 case SearchRequestId.ApplyUpdate:
@@ -228,6 +230,7 @@ public static class SearchRequestBinarySerializer
                 msg.RequestElevation = payload[offset++] != 0;
                 break;
             case SearchRequestId.SubscribeDirectoryChanges:
+            case SearchRequestId.SubscribeDirectoryStructureChanges:
                 msg.Directories = SearchRequestValueCodec.ReadStringList(payload, ref offset);
                 break;
             case SearchRequestId.ApplyUpdate:

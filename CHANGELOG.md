@@ -30,6 +30,13 @@
 * 连续前缀命中继续直接复用精确前缀计分
 * 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
 # 结果目录刷新的订阅改为停顿后合并，避免首个搜索词与目录订阅抢处理
+# 完整窗口只在结果发生创建、删除、重命名或移动时实时刷新
+# 完整窗口结果监听只跟随结果头部，避免大结果集拖慢稳定后的界面
+# Everything 文件夹总大小复用父目录的递归大小结果
++ 完整窗口的大小列显示文件夹递归大小
++ 快速和内联搜索的非文件候选在一次查询的中间帧之间复用
++ 文件匹配缓存同时复用规范化路径
+# 多词查询的路径兜底改为一次扫描名称表
 + 保留鼠标平滑滚动
 + 保留自定义应用搜索目录
 + 自动更新只检查本仓库的发行
@@ -58,6 +65,13 @@ This fork:
 * Contiguous prefix hits continue to reuse exact-prefix scoring
 * Confirmed query associations add at most two weak recalls, always after direct matches
 # Coalesces the result-folder refresh subscription after a pause, so the first keystroke does not race it
+# Refreshes full-window results only for create, delete, rename and move changes
+# Limits full-window result watching to the leading rows, so large result sets do not slow settled UI updates
+# Reuses the parent-directory recursive size answer for Everything folder-size requests
++ Shows recursive folder sizes in the full-window size column
++ Reuses non-file candidates across intermediate frames of one quick or inline query
++ Reuses normalized paths together with cached file matches
+# Scans the name table once instead of once per term for the multi-term path fallback
 + Keeps the smooth wheel scrolling
 + Keeps custom app search folders
 + Auto-update only checks this repository's releases

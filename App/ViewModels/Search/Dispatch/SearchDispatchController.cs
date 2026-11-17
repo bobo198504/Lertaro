@@ -206,6 +206,7 @@ internal sealed class SearchDispatchController
         // provider and search-action plugin on each call. See SearchResultMapper.InstantPassCache.
         var instantPass = new SearchResultMapper.InstantPassCache();
         var fileMatchCache = new SearchResultMapper.QuickFileMatchCache();
+        var candidatePass = new SearchResultMapper.QuickCandidatePassCache();
         var rankRules = ExclusionRuleSet.From(UserSettings.Load());
         // Also per search, not per paint: the history score decays at read time, and repainting a streaming
         // result set must not re-decay the same query's rows into a different order between two paints.
@@ -246,7 +247,7 @@ internal sealed class SearchDispatchController
                 // BuildQuickResults runs on the UI thread, before ui.apply, and was never timed. The
                 // UI-lag probe caught stalls larger than any paint, which points here.
                 var __buildAt = Lertaro.Core.SearchIndex.PerfTrace.Begin();
-                var __built = SearchResultMapper.BuildQuickResults(resp, searchQuery, hasScope ? null : _getIsInlineSearchContext() ? null : _getSearchScope(), contextDir, _getIsInlineSearchContext(), originalValue, skipDisplayCap: hasTokens || hasScope || filenameLike, fileFilterScope: scopeDirective, folderScope: folderScope, instantPass: instantPass, rankContext: rankContext, rankingTrace: rankingTrace, categoryFilter: _mainVm.ActiveCategoryFilter, cancellationToken: token, fileMatchCache: fileMatchCache);
+                var __built = SearchResultMapper.BuildQuickResults(resp, searchQuery, hasScope ? null : _getIsInlineSearchContext() ? null : _getSearchScope(), contextDir, _getIsInlineSearchContext(), originalValue, skipDisplayCap: hasTokens || hasScope || filenameLike, fileFilterScope: scopeDirective, folderScope: folderScope, instantPass: instantPass, rankContext: rankContext, rankingTrace: rankingTrace, categoryFilter: _mainVm.ActiveCategoryFilter, cancellationToken: token, fileMatchCache: fileMatchCache, candidatePass: candidatePass);
                 Lertaro.Core.SearchIndex.PerfTrace.Mark("ui.build", __buildAt, __built.Count);
                 return __built;
             },

@@ -69,6 +69,12 @@ public class SearchEngine : IDisposable
         remove => _indexer.DirectoriesChanged -= value;
     }
 
+    public event Action<string, IReadOnlyCollection<string>?> DirectoriesStructurallyChanged
+    {
+        add => _indexer.DirectoriesStructurallyChanged += value;
+        remove => _indexer.DirectoriesStructurallyChanged -= value;
+    }
+
     public event Action<UsnIndexer.IndexerStatus> StatusChanged
     {
         add => _indexer.StatusChanged += value;
@@ -145,6 +151,7 @@ public class SearchEngine : IDisposable
             {
                 RefreshDrivesInStatus();
                 _indexer.RaiseDirectoriesChanged(string.Empty, null);
+                _indexer.RaiseDirectoriesStructurallyChanged(string.Empty, null);
             }
         }
     }

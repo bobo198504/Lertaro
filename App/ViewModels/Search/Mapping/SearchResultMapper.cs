@@ -13,11 +13,14 @@ public static class SearchResultMapper
     private static readonly IReadOnlySet<string> EmptyTracePaths =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    // Owned by one query's render callback. Cache only match evidence, never mutable UI rows or the
-    // global ordering: history, favorites, plugin rows and type priority still participate per paint.
+    // Owned by one query's render callback. Cache per-query match evidence, normalized paths and
+    // non-file source candidates, never the final ordering: history, favorites, plugin rows and type
+    // priority still participate per paint.
+    internal readonly record struct CachedFileMatch(MatchEvidenceResult Match, string NormalizedPath);
+
     internal sealed class QuickFileMatchCache
     {
-        private readonly Dictionary<(string Name, string Path, bool IsDir), MatchEvidenceResult> _matches = new();
+        private readonly Dictionary<(string Name, string Path, bool IsDir), CachedFileMatch> _matches = new();
         private string? _query;
         private bool _fuzzy;
         private bool _andFirst;
@@ -43,12 +46,88 @@ public static class SearchResultMapper
             return _parsed;
         }
 
-        internal MatchEvidenceResult Match(SearchResult result, FuzzyQuery query)
+        internal MatchEvidenceResult Match(SearchResult result, FuzzyQuery query) =>
+            MatchWithPath(result, query).Match;
+
+        internal CachedFileMatch MatchWithPath(SearchResult result, FuzzyQuery query)
         {
             var key = (result.Name, result.Path, result.IsDir);
-            if (!_matches.TryGetValue(key, out var match))
-                _matches.Add(key, match = MatchFile(result, query));
-            return match;
+            if (_matches.TryGetValue(key, out var cached))
+                return cached;
+
+            cached = new CachedFileMatch(
+                MatchFile(result, query),
+                SearchResultHelper.NormalizePath(result.Path));
+            _matches.Add(key, cached);
+            return cached;
+        }
+    }
+
+    internal sealed record HistoricalCandidateSources(
+        List<RankedCandidate> Learned,
+        List<RankedCandidate> Related,
+        List<RankedCandidate> Frequent,
+        List<RankedCandidate> Recent);
+
+    internal sealed record SearchableCandidateSources(
+        List<(AppSearchResult Result, MatchRank Match, MatchEvidence Evidence)> Active,
+        List<SearchableItemMapper.ShadowAliasCandidate> Shadow);
+
+    internal sealed record FavoriteCandidateSources(
+        List<RankedCandidate> Active,
+        List<string> DroppedOutsideScope);
+
+    /// <summary>
+    /// Per-search cache for candidate sources that do not depend on the amount of file results already
+    /// streamed. The quick and inline windows call the mapper again for every intermediate paint; leaving
+    /// these sources uncached repeated history, Recent Items and the complete searchable-item catalog scan.
+    /// </summary>
+    internal sealed class QuickCandidatePassCache
+    {
+        private string? _query;
+        private string? _scope;
+        private bool _isInlineWindow;
+        private bool _hasFileFilterScope;
+        private bool _captureShadow;
+        private int _filesTypeRank;
+        private RankContext? _rankContext;
+        private IReadOnlyDictionary<string, int>? _historyUsage;
+
+        internal HistoricalCandidateSources? Historical { get; set; }
+        internal SearchableCandidateSources? Searchable { get; set; }
+        internal FavoriteCandidateSources? Favorites { get; set; }
+
+        internal void Prepare(
+            string query,
+            string? scope,
+            bool isInlineWindow,
+            bool hasFileFilterScope,
+            bool captureShadow,
+            int filesTypeRank,
+            RankContext? rankContext,
+            IReadOnlyDictionary<string, int> historyUsage)
+        {
+            if (_query == query
+                && string.Equals(_scope, scope, StringComparison.Ordinal)
+                && _isInlineWindow == isInlineWindow
+                && _hasFileFilterScope == hasFileFilterScope
+                && _captureShadow == captureShadow
+                && _filesTypeRank == filesTypeRank
+                && ReferenceEquals(_rankContext, rankContext)
+                && ReferenceEquals(_historyUsage, historyUsage))
+                return;
+
+            _query = query;
+            _scope = scope;
+            _isInlineWindow = isInlineWindow;
+            _hasFileFilterScope = hasFileFilterScope;
+            _captureShadow = captureShadow;
+            _filesTypeRank = filesTypeRank;
+            _rankContext = rankContext;
+            _historyUsage = historyUsage;
+            Historical = null;
+            Searchable = null;
+            Favorites = null;
         }
     }
 
@@ -132,7 +211,7 @@ public static class SearchResultMapper
     private static readonly IReadOnlyDictionary<string, int> EmptyUsage =
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, QuickSearchRankingTrace? rankingTrace = null, Func<PluginSdk.Abstractions.ISearchResult, bool>? categoryFilter = null, CancellationToken cancellationToken = default, QuickFileMatchCache? fileMatchCache = null)
+    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, QuickSearchRankingTrace? rankingTrace = null, Func<PluginSdk.Abstractions.ISearchResult, bool>? categoryFilter = null, CancellationToken cancellationToken = default, QuickFileMatchCache? fileMatchCache = null, QuickCandidatePassCache? candidatePass = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var uiResults = new List<AppSearchResult>();
@@ -263,6 +342,15 @@ public static class SearchResultMapper
         var typeOrder = isInlineWindow ? new List<string>() : UserSettings.Load().ResultTypeOrder;
         var typeRanks = SearchResultTypePriority.BuildRanks(typeOrder);
         var filesTypeRank = SearchResultTypePriority.Rank(SearchResultTypePriority.FilesTypeId, typeRanks);
+        candidatePass?.Prepare(
+            query,
+            scope,
+            isInlineWindow,
+            fileFilterScope != null,
+            rankingTrace != null,
+            filesTypeRank,
+            rankContext,
+            historyUsage);
 
         // A .lnk/.appref-ms is a file row that is also an application shortcut. Taking the better of
         // the two ranks keeps the user's "Applications first" order working for shortcuts the app provider
@@ -326,7 +414,19 @@ public static class SearchResultMapper
         // downstream path dedupe. An explicit type trigger retains its strict result domain.
         if (triggeredTypeId == null)
         {
-            var historyCandidates = HistorySearchCandidateMapper.CollectLearned(fuzzy, scope, rankContext, filesTypeRank);
+            var historical = candidatePass?.Historical;
+            if (historical == null)
+            {
+                historical = new HistoricalCandidateSources(
+                    HistorySearchCandidateMapper.CollectLearned(fuzzy, scope, rankContext, filesTypeRank),
+                    RelatedHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank),
+                    FrequentHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank),
+                    WindowsRecentCandidateMapper.Collect(fuzzy, scope, filesTypeRank));
+                if (candidatePass != null)
+                    candidatePass.Historical = historical;
+            }
+
+            var historyCandidates = historical.Learned;
             if (normalizedScopeFolders != null)
             {
                 if (preRankingDrops != null)
@@ -339,13 +439,13 @@ public static class SearchResultMapper
                 historyCandidates = historyCandidates.Where(c => InFileFilterScope(c.NormalizedPath)).ToList();
             }
             candidates.AddRange(historyCandidates);
-            candidates.AddRange(RelatedHistoryCandidateMapper.Collect(
-                fuzzy, scope, rankContext, filesTypeRank,
-                normalizedScopeFolders == null ? null : InFileFilterScope));
-            candidates.AddRange(FrequentHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank));
+            candidates.AddRange(normalizedScopeFolders == null
+                ? historical.Related
+                : historical.Related.Where(c => InFileFilterScope(c.NormalizedPath)));
+            candidates.AddRange(historical.Frequent);
 
             // Windows' Recent Items: what was opened in any app, ranked right below the user's own picks.
-            var recentCandidates = WindowsRecentCandidateMapper.Collect(fuzzy, scope, filesTypeRank);
+            var recentCandidates = historical.Recent;
             if (normalizedScopeFolders != null)
             {
                 if (preRankingDrops != null)
@@ -362,48 +462,63 @@ public static class SearchResultMapper
 
         if (!string.IsNullOrWhiteSpace(query))
         {
-            var favorites = UserSettings.Load().Favorites;
-            for (var i = 0; i < favorites.Count; i++)
+            var favorites = candidatePass?.Favorites;
+            if (favorites == null)
             {
-                var fav = favorites[i];
-                var matched = FavoriteSearchHelper.ComputeMatchWithEvidence(fav, fuzzy);
-                if (!matched.Rank.IsMatch || !Helpers.FavoritePathResolver.IsPathAvailable(fav.Path))
-                    continue;
-
-                // A favorite is curated by the user regardless of whether it also has USAGE history.
-                // Under V3 a strong direct match enters Pinned; a weak one stays in Boosted at its
-                // evidence grade, so it cannot overrule a much better textual match. The type list never
-                // applies to it; it only inherits the Files rank like every other file-backed row.
-                var normalizedFavPath = Helpers.FavoritePathResolver.NormalizeForComparison(fav.Path);
-                if (normalizedScopeFolders != null && !InFileFilterScope(normalizedFavPath))
+                var active = new List<RankedCandidate>();
+                var dropped = new List<string>();
+                var configured = UserSettings.Load().Favorites;
+                for (var i = 0; i < configured.Count; i++)
                 {
-                    preRankingDrops?.Add(new RankingDroppedCandidate(
+                    var fav = configured[i];
+                    var matched = FavoriteSearchHelper.ComputeMatchWithEvidence(fav, fuzzy);
+                    if (!matched.Rank.IsMatch || !Helpers.FavoritePathResolver.IsPathAvailable(fav.Path))
+                        continue;
+
+                    // A favorite is curated by the user regardless of whether it also has USAGE history.
+                    // Under V3 a strong direct match enters Pinned; a weak one stays in Boosted at its
+                    // evidence grade, so it cannot overrule a much better textual match. The type list never
+                    // applies to it; it only inherits the Files rank like every other file-backed row.
+                    var normalizedFavPath = Helpers.FavoritePathResolver.NormalizeForComparison(fav.Path);
+                    if (normalizedScopeFolders != null && !InFileFilterScope(normalizedFavPath))
+                    {
+                        dropped.Add(normalizedFavPath);
+                        continue;
+                    }
+                    var favoriteRow = FavoriteSearchHelper.CreateFavoriteUiResult(fav, query, 0);
+                    // A favorite clears the same bar the index side's rows do (see
+                    // HistorySearchCandidateMapper.IsExcludedFromSearch): a hidden target, or one on a source
+                    // this session found unreachable, is not a row the full window could list either.
+                    if (HistorySearchCandidateMapper.IsExcludedFromSearch(favoriteRow))
+                        continue;
+                    var usage = historyUsage.TryGetValue(normalizedFavPath, out var uc) ? uc : 0;
+                    active.Add(new RankedCandidate(
+                        favoriteRow,
+                        IsFavorite: true,
+                        HistoryCount: usage,
+                        filesTypeRank,
+                        matched.Rank,
                         normalizedFavPath,
-                        RankingCandidateSource.Favorite,
-                        null,
-                        RankingProviderState.Unknown,
-                        0,
-                        RankingDropStage.ScopeFilter));
-                    continue;
+                        Source: RankingCandidateSource.Favorite,
+                        Evidence: matched.Evidence,
+                        TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(filesTypeRank)));
                 }
-                var favoriteRow = FavoriteSearchHelper.CreateFavoriteUiResult(fav, query, 0);
-                // A favorite clears the same bar the index side's rows do (see
-                // HistorySearchCandidateMapper.IsExcludedFromSearch): a hidden target, or one on a source
-                // this session found unreachable, is not a row the full window could list either.
-                if (HistorySearchCandidateMapper.IsExcludedFromSearch(favoriteRow))
-                    continue;
-                var usage = historyUsage.TryGetValue(normalizedFavPath, out var uc) ? uc : 0;
-                candidates.Add(new RankedCandidate(
-                    favoriteRow,
-                    IsFavorite: true,
-                    HistoryCount: usage,
-                    filesTypeRank,
-                    matched.Rank,
-                    normalizedFavPath,
-                    Source: RankingCandidateSource.Favorite,
-                    Evidence: matched.Evidence,
-                    TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(filesTypeRank)));
+                favorites = new FavoriteCandidateSources(active, dropped);
+                if (candidatePass != null)
+                    candidatePass.Favorites = favorites;
             }
+
+            foreach (var normalizedFavPath in favorites.DroppedOutsideScope)
+            {
+                preRankingDrops?.Add(new RankingDroppedCandidate(
+                    normalizedFavPath,
+                    RankingCandidateSource.Favorite,
+                    null,
+                    RankingProviderState.Unknown,
+                    0,
+                    RankingDropStage.ScopeFilter));
+            }
+            candidates.AddRange(favorites.Active);
         }
 
         // Searchable items (Start Menu apps, settings, ...) take part in ordinary searches only -- a
@@ -411,11 +526,20 @@ public static class SearchResultMapper
         // routing hid these too (its "Case B").
         if (fileFilterScope == null)
         {
-            var shadowHits = shadowAliasCandidates != null
-                ? new List<SearchableItemMapper.ShadowAliasCandidate>()
-                : null;
-            foreach (var (result, match, evidence) in SearchableItemMapper.CollectSearchableItemResults(
-                         query, isInlineWindow, shadowHits))
+            var searchable = candidatePass?.Searchable;
+            if (searchable == null)
+            {
+                var shadowHits = shadowAliasCandidates != null
+                    ? new List<SearchableItemMapper.ShadowAliasCandidate>()
+                    : null;
+                searchable = new SearchableCandidateSources(
+                    SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow, shadowHits),
+                    shadowHits ?? []);
+                if (candidatePass != null)
+                    candidatePass.Searchable = searchable;
+            }
+
+            foreach (var (result, match, evidence) in searchable.Active)
             {
                 var typeId = result.SourceProvider is ISearchableItemProvider provider
                     ? SearchResultTypePriority.GetProviderTypeId(provider)
@@ -452,7 +576,7 @@ public static class SearchResultMapper
                     HistoryCount: usage,
                     rowTypeRank,
                     match,
-                    SearchResultHelper.NormalizePath(result.FullPath),
+                    lookupPath,
                     Source: RankingCandidateSource.SearchableProvider,
                     Evidence: evidence,
                     TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(rowTypeRank)));
@@ -460,9 +584,9 @@ public static class SearchResultMapper
 
             // Alias hits are a parallel diagnostic stream. They never join candidates, and therefore
             // cannot affect merge ownership, history budgets, truncation, badges or execution behavior.
-            if (!folderScope && shadowHits != null)
+            if (!folderScope && shadowAliasCandidates != null)
             {
-                foreach (var hit in shadowHits)
+                foreach (var hit in searchable.Shadow)
                 {
                     var typeId = SearchResultTypePriority.GetProviderTypeId(hit.Provider);
                     if (triggeredTypeId != null && typeId != triggeredTypeId)
@@ -478,7 +602,7 @@ public static class SearchResultMapper
                         HistoryCount: usage,
                         typeRank,
                         hit.Match,
-                        SearchResultHelper.NormalizePath(hit.Result.FullPath),
+                        lookupPath,
                         Source: RankingCandidateSource.SearchableProvider,
                         Evidence: hit.Evidence,
                         TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(typeRank)));
@@ -515,14 +639,15 @@ public static class SearchResultMapper
                 // (SearchResultRelevance.Apply). Leaving it at NoMatch instead made this window order those
                 // rows by path length and name where the full window ordered the same rows by coverage: one
                 // query, two file orders, and exactly the many-CJK-files case pinyin search produces.
-                var matched = fileMatchCache?.Match(result, fuzzy) ?? MatchFile(result, fuzzy);
+                var cachedMatch = fileMatchCache?.MatchWithPath(result, fuzzy);
+                var matched = cachedMatch?.Match ?? MatchFile(result, fuzzy);
                 candidates.Add(new RankedCandidate(
                     SearchResultHelper.CreateUiResult(result, query, 0, isApplication: false, scope),
                     IsFavorite: false,
                     HistoryCount: usage,
                     filesTypeRank,
                     matched.Rank,
-                    SearchResultHelper.NormalizePath(result.Path),
+                    cachedMatch?.NormalizedPath ?? SearchResultHelper.NormalizePath(result.Path),
                     Source: RankingCandidateSource.FileIndex,
                     Evidence: matched.Evidence,
                     TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(filesTypeRank)));

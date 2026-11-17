@@ -28,6 +28,7 @@ public sealed class SearchChecklistWorkloadTests(TestContext context)
         // Reflection keeps this workload runnable against both saved and current product assemblies.
         var method = typeof(SearchResultMapper).GetMethod("BuildQuickResults", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
         var cacheParameter = method.GetParameters().FirstOrDefault(p => p.Name == "fileMatchCache");
+        var candidateParameter = method.GetParameters().FirstOrDefault(p => p.Name == "candidatePass");
         var iterations = 5;
         var times = new List<double>();
         var totalBytes = 0L;
@@ -37,6 +38,7 @@ public sealed class SearchChecklistWorkloadTests(TestContext context)
         {
             var pass = new SearchResultMapper.InstantPassCache { Collected = true };
             var cache = cacheParameter == null ? null : Activator.CreateInstance(cacheParameter.ParameterType);
+            var candidatePass = candidateParameter == null ? null : Activator.CreateInstance(candidateParameter.ParameterType);
             var bytes = GC.GetTotalAllocatedBytes(true);
             var timer = Stopwatch.StartNew();
             List<AppSearchResult> final = [];
@@ -49,6 +51,7 @@ public sealed class SearchChecklistWorkloadTests(TestContext context)
                     if (parameter.Name == "instantPass") arguments[parameter.Position] = pass;
                     if (parameter.Name == "skipDisplayCap") arguments[parameter.Position] = true;
                     if (parameter.Name == "fileMatchCache") arguments[parameter.Position] = cache;
+                    if (parameter.Name == "candidatePass") arguments[parameter.Position] = candidatePass;
                 }
                 final = (List<AppSearchResult>)method.Invoke(null, arguments)!;
             }
@@ -63,7 +66,7 @@ public sealed class SearchChecklistWorkloadTests(TestContext context)
                 uniqueMatches = ((System.Collections.IDictionary)cache.GetType().GetField("_matches", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(cache)!).Count;
         }
         Record(new { scenario = "quick-snapshots", query, iterations, rows = 4000, paints = 20, visits = 42000,
-            cached = cacheParameter != null, uniqueMatches, elapsedMs = times, allocatedBytes = totalBytes, signatures });
+            cached = cacheParameter != null && candidateParameter != null, uniqueMatches, elapsedMs = times, allocatedBytes = totalBytes, signatures });
     }
 
     [TestMethod]
