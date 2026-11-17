@@ -5,6 +5,64 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.13.3.1
+
+## 更新内容
+
+上游：
+```
++ feat(settings): add clear-invalid action for favorites and folder cascader
+# fix(search): refresh full results after filesystem changes
+# fix(search): watch result folders instead of drive roots
+# fix(search): keep viewport when refreshing the same query
+# fix(search): retry a refresh that a running search deferred
+# fix(inline-search): hand the foreground back to the host when the card parks
+# fix(shell): give delete, paste and rename an owner window
+# fix(inline-search): report an executed result to the adapter hook
+# docs(comments): drop empty adjectives from doc comments
+# docs: remove AI-flavored phrasing from docs and app strings
+```
+
+本fork：
+```
+* 保留 fork 的左侧优先、历史权重和常用便携应用召回排序
+* 名称索引保留 128 位字符掩码，并只扫描查询实际使用的掩码半区
+* 连续前缀命中继续直接复用精确前缀计分
+* 已确认历史关联支持最多 2 条弱关联召回，并保持在直接命中之后
+# 结果目录刷新的订阅改为停顿后合并，避免首个搜索词与目录订阅抢处理
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+```
+
+## What's changed
+
+Upstream:
+```
++ feat(settings): add clear-invalid action for favorites and folder cascader
+# fix(search): refresh full results after filesystem changes
+# fix(search): watch result folders instead of drive roots
+# fix(search): keep viewport when refreshing the same query
+# fix(search): retry a refresh that a running search deferred
+# fix(inline-search): hand the foreground back to the host when the card parks
+# fix(shell): give delete, paste and rename an owner window
+# fix(inline-search): report an executed result to the adapter hook
+# docs(comments): drop empty adjectives from doc comments
+# docs: remove AI-flavored phrasing from docs and app strings
+```
+
+This fork:
+```
+* Keeps the fork's left-edge-first ranking, history weighting and portable-app recall
+* Keeps the 128-bit name mask and scans only the mask half the query actually needs
+* Contiguous prefix hits continue to reuse exact-prefix scoring
+* Confirmed query associations add at most two weak recalls, always after direct matches
+# Coalesces the result-folder refresh subscription after a pause, so the first keystroke does not race it
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+```
+
 ## v5.13.1.2
 
 ## 更新内容
