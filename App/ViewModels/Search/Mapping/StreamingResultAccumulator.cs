@@ -1,4 +1,5 @@
 using Lertaro.Core;
+using Lertaro.Core.IndexV2.Search;
 using Lertaro.Core.SearchIndex;
 
 namespace Lertaro.App.ViewModels.Search.Mapping;
@@ -76,7 +77,10 @@ internal sealed class StreamingResultAccumulator
                 Name = candidate.Result.Name,
                 Path = candidate.Result.FullPath,
                 IsDir = candidate.Result.IsDir,
-                Drive = candidate.Result.Drive
+                Drive = candidate.Result.Drive,
+                RankSortKey = candidate.Match.IsMatch
+                    ? (ulong)SearchResultRelevance.HighKey(candidate.Match) << 32
+                    : 0
             };
             // No context yet -- UseRankContext re-decorates these rows before the first batch lands.
             SearchResultRanking.Decorate(raw, null);

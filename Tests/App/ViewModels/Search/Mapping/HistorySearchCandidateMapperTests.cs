@@ -1,6 +1,7 @@
 using System.IO;
 using Lertaro.App.ViewModels.Search.Mapping;
 using Lertaro.Core.SearchIndex;
+using Lertaro.PluginSdk.Abstractions.Plugins;
 using Lertaro.PluginSdk.Services;
 
 namespace Lertaro.App.Tests.ViewModels.Search.Mapping;
@@ -8,6 +9,42 @@ namespace Lertaro.App.Tests.ViewModels.Search.Mapping;
 [TestClass]
 public sealed class HistorySearchCandidateMapperTests
 {
+    private sealed class StubLiveAliasProvider(params string[][] readings) : IAliasLiveMatcherProvider
+    {
+        public IReadOnlyList<(char Start, char End)> InputRanges => [];
+        public IReadOnlyList<(char Start, char End)> OutputRanges => [('a', 'z')];
+        public bool CanHandle(string text) => true;
+        public IEnumerable<string> GetAliases(string text) => [];
+        public IAliasTermMatcher? CreateMatcher(string foldedTerm, bool commonOnly) => null;
+        public string[][] GetReadingSets(string text) => readings;
+        public void AppendSpellings(string text, List<string> dest) { }
+    }
+
+    [TestMethod]
+    public void RankHistoryName_SingleLetter_CanMatchAHistoryPinyinInitial()
+    {
+        var provider = new StubLiveAliasProvider(["bei"], ["chen"], ["gong"], ["ju"]);
+
+        var rank = HistorySearchCandidateMapper.RankHistoryName(
+            FuzzyQuery.Parse("b"), "北辰工具", [provider]);
+
+        Assert.IsTrue(rank.IsMatch);
+        Assert.AreEqual(0, rank.Start);
+        Assert.AreEqual(MatchRank.TierInitials, rank.Tier);
+        Assert.AreEqual(MatchRank.ShapeWordStart, rank.Shape);
+    }
+
+    [TestMethod]
+    public void RankHistoryName_SingleLetter_DoesNotUseProviderForLongerQueries()
+    {
+        var provider = new StubLiveAliasProvider(["bei"], ["chen"], ["gong"], ["ju"]);
+
+        var rank = HistorySearchCandidateMapper.RankHistoryName(
+            FuzzyQuery.Parse("bc"), "北辰工具", [provider]);
+
+        Assert.IsFalse(rank.IsMatch);
+    }
+
     [TestMethod]
     public void Collect_QueryMatchesRecordedKeyword_AddsExistingPathAsHistoryOnly()
     {

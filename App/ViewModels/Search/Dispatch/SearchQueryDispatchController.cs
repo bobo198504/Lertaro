@@ -172,7 +172,20 @@ internal sealed class SearchQueryDispatchController
         // even when the file search never answers. See StreamingResultAccumulator.
         var rankRules = ExclusionRuleSet.From(UserSettings.Load());
         SearchPerf.Log($"[rules] build={SearchPerf.BuildFlavor} priority={rankRules.PriorityPathRuleCount}/{rankRules.PriorityGlobRuleCount}/{rankRules.PriorityRegexRuleCount} excluded={rankRules.ExcludedRootCount}/{rankRules.IgnoredGlobCount}/{rankRules.IgnoredRegexCount}");
-        var accumulator = new StreamingResultAccumulator(cleanQuery);
+        var historySeeds = new List<SearchResultMapper.RankedCandidate>();
+        if (triggeredTypeId == null && scopeDirective == null && _queryTokens.Count == 0)
+        {
+            var historyContext = new RankContext(
+                rankRules.GetPriorityVerdict,
+                SearchHistoryStore.ScoreSnapshot(DateTimeOffset.UtcNow),
+                query: cleanQuery);
+            historySeeds = RankedCandidateOrdering.Order(
+                    HistorySearchCandidateMapper.CollectNamed(FuzzyQuery.Parse(cleanQuery), null, typeRank: 0),
+                    historyContext)
+                .Take(RankPolicy.HistoryLiftMax)
+                .ToList();
+        }
+        var accumulator = new StreamingResultAccumulator(cleanQuery, historySeeds.Count > 0 ? historySeeds : null);
         var rankContextApplied = false;
         _accumulator = accumulator;
         _searchSettled = false;

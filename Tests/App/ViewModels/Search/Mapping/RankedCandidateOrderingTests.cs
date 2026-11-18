@@ -76,6 +76,30 @@ public sealed class RankedCandidateOrderingTests
     }
 
     [TestMethod]
+    public void LeftFileMatch_LeadsPreferredApplicationWithAMiddleMatch()
+    {
+        var ranked = RankedCandidateOrdering.Order(
+        [
+            Candidate(@"C:\Apps\tool.exe", typeRank: 0, start: 2),
+            Candidate(@"C:\Docs\project.txt", typeRank: 1, start: 0),
+        ], new RankContext(Priorities()));
+
+        Assert.AreEqual(@"C:\Docs\project.txt", ranked[0].Result.FullPath);
+    }
+
+    [TestMethod]
+    public void LeftApplicationMatch_LeadsFileWithAMiddleMatch()
+    {
+        var ranked = RankedCandidateOrdering.Order(
+        [
+            Candidate(@"C:\Docs\project.txt", typeRank: 1, start: 1),
+            Candidate(@"C:\Apps\tool.exe", typeRank: 0, start: 0),
+        ], new RankContext(Priorities()));
+
+        Assert.AreEqual(@"C:\Apps\tool.exe", ranked[0].Result.FullPath);
+    }
+
+    [TestMethod]
     public void WithoutResolver_OrderIsUnchanged()
     {
         var ranked = RankedCandidateOrdering.Order(new List<SearchResultMapper.RankedCandidate>

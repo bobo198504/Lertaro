@@ -499,9 +499,9 @@ public sealed class RankKeyComparer : IComparer<RankKey>
         if ((xSection == RankSection.HistoryTail) != (ySection == RankSection.HistoryTail))
             return xSection == RankSection.HistoryTail ? 1 : -1;
 
-        // The owner's final ladder: favorites, at most three lifted-history rows, then result type,
-        // left placement, file/folder, and the remaining match quality. Once the history budget is used,
-        // the user's configured type order owns the rest of the list; left placement decides inside a type.
+        // The owner's final ladder: favorites, at most three lifted-history rows, then left placement,
+        // result type, file/folder, and the remaining match quality. Applications and files use the same
+        // left-edge rule; the configured type order breaks ties after that.
         var xFavorite = x.Score == RankPolicy.FavoriteStrongScore;
         var yFavorite = y.Score == RankPolicy.FavoriteStrongScore;
         if (xFavorite != yFavorite)
@@ -523,29 +523,18 @@ public sealed class RankKeyComparer : IComparer<RankKey>
 
         var xLeftContiguous = x.Match.Start == 0 && x.Match.Contiguity >= 1;
         var yLeftContiguous = y.Match.Start == 0 && y.Match.Contiguity >= 1;
-
-        if (!xHistoryLifted)
-        {
-            var byType = x.TypeRank.CompareTo(y.TypeRank);
-            if (byType != 0)
-                return byType;
-        }
-
         if (xLeftContiguous != yLeftContiguous)
             return xLeftContiguous ? -1 : 1;
+
+        var byType = x.TypeRank.CompareTo(y.TypeRank);
+        if (byType != 0)
+            return byType;
 
         var xHistory = xSection == RankSection.Low ? 0 : x.HistoryTie;
         var yHistory = ySection == RankSection.Low ? 0 : y.HistoryTie;
         var byHistory = yHistory.CompareTo(xHistory);
         if (byHistory != 0)
             return byHistory;
-
-        if (xHistoryLifted)
-        {
-            var byType = x.TypeRank.CompareTo(y.TypeRank);
-            if (byType != 0)
-                return byType;
-        }
 
         var byKind = x.IsDir.CompareTo(y.IsDir);
         if (byKind != 0)

@@ -2,6 +2,7 @@ using System.IO;
 using Lertaro.Core;
 using Lertaro.Core.SearchIndex;
 using Lertaro.PluginSdk.Services;
+using Lertaro.PluginSdk.Abstractions.Plugins;
 using Lertaro.App.Services;
 
 namespace Lertaro.App.ViewModels.Search.Mapping;
@@ -62,7 +63,7 @@ internal static class HistorySearchCandidateMapper
             if (string.IsNullOrEmpty(storedName))
                 continue;
 
-            var match = fuzzy.Rank(storedName);
+            var match = RankHistoryName(fuzzy, storedName);
             if (!match.IsMatch)
                 continue;
 
@@ -100,7 +101,7 @@ internal static class HistorySearchCandidateMapper
                 || IsExcludedFromSearch(result))
                 continue;
 
-            var match = fuzzy.Rank(result.Name);
+            var match = RankHistoryName(fuzzy, result.Name);
             if (!match.IsMatch)
                 continue;
 
@@ -115,6 +116,49 @@ internal static class HistorySearchCandidateMapper
         }
 
         return candidates;
+    }
+
+    internal static MatchRank RankHistoryName(
+        FuzzyQuery fuzzy,
+        string? name,
+        IEnumerable<IAliasLiveMatcherProvider>? providers = null)
+    {
+        var literal = fuzzy.Rank(name);
+        if (literal.IsMatch || string.IsNullOrEmpty(name))
+            return literal;
+
+        var query = fuzzy.Text.Trim();
+        if (query.Length != 1 || !char.IsAsciiLetter(query[0]))
+            return MatchRank.NoMatch;
+
+        var initial = char.ToLowerInvariant(query[0]);
+        foreach (var provider in providers ?? AliasProviderRegistry.GetActiveProviders().OfType<IAliasLiveMatcherProvider>())
+        {
+            if (!provider.CanHandle(name))
+                continue;
+
+            var readings = provider.GetReadingSets(name);
+            var count = Math.Min(name.Length, readings.Length);
+            for (var i = 0; i < count; i++)
+            {
+                var candidates = readings[i];
+                if (candidates == null)
+                    continue;
+
+                foreach (var reading in candidates)
+                {
+                    if (reading.Length > 0 && char.ToLowerInvariant(reading[0]) == initial)
+                        return new MatchRank(
+                            MatchRank.TierInitials,
+                            i,
+                            1d / Math.Max(1, name.Length),
+                            1d,
+                            MatchRank.ShapeWordStart);
+                }
+            }
+        }
+
+        return MatchRank.NoMatch;
     }
 
     internal static bool SafeFileExists(string path)
