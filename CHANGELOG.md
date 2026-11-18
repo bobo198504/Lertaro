@@ -16,7 +16,7 @@
 
 本fork：
 ```
-+ 搜索时先显示已经找到的结果，后面的结果到了会自动排好
++ 优化结果显示流畅度
 + 快速搜索一页最多显示 50 条，当前先显示 10 条，往下滚动就继续显示
 + 结果多的时候可以直接进入完整搜索
 + 快速搜索、结果列表和类型切换都更顺滑
@@ -47,7 +47,7 @@ No new upstream release in this build
 
 This fork:
 ```
-+ Shows results as soon as they are found, then keeps adding and reordering as the search continues
++ Improves the smoothness of result display
 + Shows up to 50 quick-search results per page, starting with 10 and loading more as you scroll
 + Lets you jump to full search when there are more results
 + Makes quick search, result updates and type switching feel smoother
