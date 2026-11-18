@@ -111,4 +111,5 @@ internal static class InlineResultTargetResolver
     // (InlineSearchWindowInputHandler.IsSelectableResult), so the two cannot drift.
     private static bool IsSelectable(AppSearchResult? row) =>
         row is not null && !row.IsEmptyResult && !row.IsSearchSectionHeader;
+
 }

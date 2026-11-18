@@ -32,6 +32,11 @@ internal static class SearchWarmup
             {
                 await Task.Yield();
 
+                // The mapping warm-up below cannot warm the elevated service's query path. Run one tiny,
+                // invisible local query first: this pays the service-side pipe/index/reader JIT before the
+                // user's first keystroke, while still being far too small to behave like a broad search.
+                var pipeWarm = WarmServiceQueryWhenReadyAsync();
+
                 // Two shapes: one query nothing can match (catalog + history + favorites, and the JIT of the
                 // whole mapping path), then a common letter so the fuzzy/highlight paths are compiled too.
                 ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(null, "\u0001warmup", null, null, false);
@@ -50,6 +55,7 @@ internal static class SearchWarmup
                     new() { Path = @"C:\Warmup\warmup", Name = "warmup", IsDir = true },
                 };
                 ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(warmRows, "a", null, null, false);
+                await pipeWarm.ConfigureAwait(false);
 
                 // Info, not Debug: whether this ran is the first thing to check when the first search still
                 // stalls, and a silent warm-up made that unknowable.
@@ -60,5 +66,34 @@ internal static class SearchWarmup
                 Logger.Log($"[SearchWarmup] Warm-up failed after {Environment.TickCount64 - started} ms: {ex.Message}", LogLevel.Info);
             }
         });
+
+        async Task WarmServiceQueryWhenReadyAsync()
+        {
+            var started = Environment.TickCount64;
+            using var service = new Core.Services.Search.SearchService();
+            while (true)
+            {
+                try
+                {
+                    if (await service.PingAsync().ConfigureAwait(false))
+                    {
+                        var status = await service.GetStatusAsync().ConfigureAwait(false);
+                        if (status.State is "ready" or "idle")
+                        {
+                            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                            await service.WarmupAsync(timeout.Token).ConfigureAwait(false);
+                            Logger.Log($"[SearchWarmup] Service query warm-up finished after ready in {Environment.TickCount64 - started} ms.", LogLevel.Info);
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                    // The service can disappear while it is restarting; the next poll reconnects.
+                }
+
+                await Task.Delay(250).ConfigureAwait(false);
+            }
+        }
     }
 }

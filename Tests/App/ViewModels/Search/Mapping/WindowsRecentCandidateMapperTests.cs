@@ -112,7 +112,7 @@ public sealed class WindowsRecentCandidateMapperTests
     }
 
     [TestMethod]
-    public void RankAndDedupe_HistoryRowWithHundredOpens_StaysBehindTheDirectNameRow()
+    public void RankAndDedupe_HistoryRowWithHundredOpensButMidNameMatch_RanksBelowExactName()
     {
         var history = HistorySearchCandidateMapper.Collect(
             FuzzyQuery.Parse("atlas"), null,
@@ -125,11 +125,30 @@ public sealed class WindowsRecentCandidateMapperTests
 
         var ranked = SearchResultMapper.RankAndDedupe([ordinary, .. history]);
 
-        // A hundred opens decay to well over the 5.0 threshold, so the row reaches H5 -- but its own name
-        // never matched, which puts it in the learned tail. Under V3 no amount of opening crosses the
-        // direct name row's section; that 34-beats-18 crossing was the exchange rate this replaces.
+        // The name matches only in the middle. Once a textual name match exists, left placement is the
+        // outer priority; a hundred opens do not move that match ahead of an exact left-edge name.
         CollectionAssert.AreEqual(
             new[] { @"C:\atlas", @"D:\Projects\code-atlas" },
+            ranked.Select(r => r.FullPath).ToList());
+    }
+
+    [TestMethod]
+    public void RankAndDedupe_HistoryOnlyAssociationWithHundredOpens_AppearsAfterLeftNameMatch()
+    {
+        var history = HistorySearchCandidateMapper.Collect(
+            FuzzyQuery.Parse("atlas"), null,
+            [new HistoryEntry("atlas", @"D:\Projects\code-map", HistoryEntryKind.Folder, Time: 100, Count: 100)],
+            _ => false, _ => true);
+        var ordinary = new SearchResultMapper.RankedCandidate(
+            new AppSearchResult { FullPath = @"C:\atlas", Name = "atlas" },
+            IsFavorite: false, HistoryCount: 0, TypeRank: int.MaxValue,
+            new MatchRank(MatchRank.TierName, 0, 1.0, 1.0), @"C:\atlas");
+
+        var ranked = SearchResultMapper.RankAndDedupe([ordinary, .. history]);
+
+        // Left placement is the outer priority even when the other row is a learned history association.
+        CollectionAssert.AreEqual(
+            new[] { @"C:\atlas", @"D:\Projects\code-map" },
             ranked.Select(r => r.FullPath).ToList());
     }
 

@@ -129,17 +129,18 @@ internal static class SettingsWindowSearchExtensions
             }
         }
 
-        var quickPanelSectionLabel = TranslationManager.Instance["Settings_QuickPanel"];
-        var quickPanelPluginTabsLabel = TranslationManager.Instance["QuickPanel_PluginTabs"];
-        var quickPanelPluginTabs = vm?.QuickPanel.PluginTabs ?? QuickPanelPluginTabCatalog.Available(UserSettings.Load().QuickPanel);
-        foreach (var pluginTab in quickPanelPluginTabs)
-        {
-            var capturedTab = pluginTab;
-            void SelectPluginTabSection(SettingsViewModel v) => v.QuickPanel.SelectedSection = "PluginTabs";
-
-            results.Add(new SettingsSearchResultItem(capturedTab.Name, $"{quickPanelSectionLabel} › {quickPanelPluginTabsLabel}", "QuickPanel", SelectPluginTabSection,
-                Reveal: new SettingsSearchDynamicReveal("QuickPanelPluginTabsList", capturedTab)));
-        }
+        // Quick Panel disabled.
+        // var quickPanelSectionLabel = TranslationManager.Instance["Settings_QuickPanel"];
+        // var quickPanelPluginTabsLabel = TranslationManager.Instance["QuickPanel_PluginTabs"];
+        // var quickPanelPluginTabs = vm?.QuickPanel.PluginTabs ?? QuickPanelPluginTabCatalog.Available(UserSettings.Load().QuickPanel);
+        // foreach (var pluginTab in quickPanelPluginTabs)
+        // {
+        //     var capturedTab = pluginTab;
+        //     void SelectPluginTabSection(SettingsViewModel v) => v.QuickPanel.SelectedSection = "PluginTabs";
+        //
+        //     results.Add(new SettingsSearchResultItem(capturedTab.Name, $"{quickPanelSectionLabel} › {quickPanelPluginTabsLabel}", "QuickPanel", SelectPluginTabSection,
+        //         Reveal: new SettingsSearchDynamicReveal("QuickPanelPluginTabsList", capturedTab)));
+        // }
 
         return results;
     }

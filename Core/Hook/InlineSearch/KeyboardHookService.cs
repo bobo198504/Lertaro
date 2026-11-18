@@ -21,7 +21,8 @@ public class KeyboardHookService : IDisposable
     internal const uint ContextMenuGraceMs = 400;
 
     public event Action? OnDoubleCtrl;
-    public event Action? OnQuickPanelHotkey;
+    // Disabled with the Quick Panel feature.
+    // public event Action? OnQuickPanelHotkey;
     public event Action? OnQuickNavigationHotkey;
     /// <summary>A recognized Quick Switch, carrying the dialog it was aimed at. The subscriber must not do the
     /// navigation on this thread: see <see cref="QuickSwitchNavigator"/>.</summary>
@@ -196,18 +197,19 @@ public class KeyboardHookService : IDisposable
             var isFullscreenBlocking = !_settings.Hotkeys.AllowHotkeysInFullscreen && FullscreenHelper.IsForegroundWindowFullScreen();
             var shouldDisableAllHooks = (IsHotkeysDisabledTemporarily || ForegroundProcessGate.IsForegroundProcessBlacklisted(_settings.BlacklistedProcesses) || isFullscreenBlocking)
                                          && !_explorerTracker.IsActiveWindowDialog;
+            // Quick Panel disabled: do not detect, consume, or publish its hotkey.
             // The quick panel first: a plain combination with no bare-modifier form, so nothing below
             // is waiting to see whether this key turns out to be part of a tap.
             //
             // While the inline card is up, its own summon chord belongs to the focus handoff even when
             // the panel is bound to the same combination -- the card is what is on screen, and that key
             // is what moves focus into it there. A chord only the panel claims still reaches it.
-            var inlineCardOwnsThisChord = IsInlineWindowOnScreen && _hotkeyDetector.IsToggleWindowComboDown(vkCode);
-            if (!shouldDisableAllHooks && !inlineCardOwnsThisChord && _hotkeyDetector.CheckQuickPanelHotkey(vkCode, out var consumeQuickPanel))
-            {
-                OnQuickPanelHotkey?.Invoke();
-                if (consumeQuickPanel) return (IntPtr)1;
-            }
+            // var inlineCardOwnsThisChord = IsInlineWindowOnScreen && _hotkeyDetector.IsToggleWindowComboDown(vkCode);
+            // if (!shouldDisableAllHooks && !inlineCardOwnsThisChord && _hotkeyDetector.CheckQuickPanelHotkey(vkCode, out var consumeQuickPanel))
+            // {
+            //     OnQuickPanelHotkey?.Invoke();
+            //     if (consumeQuickPanel) return (IntPtr)1;
+            // }
             if (!shouldDisableAllHooks && _hotkeyDetector.CheckToggleWindowHotkey(vkCode, time, out var consumeToggleKey, OnDoubleCtrl))
             {
                 if (consumeToggleKey)

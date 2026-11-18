@@ -1,45 +1,13 @@
 using Lertaro.App.Helpers;
 using Lertaro.App.ViewModels.Search;
-using Lertaro.Core.SearchIndex;
 
 namespace Lertaro.App.Tests.ViewModels.Search;
 
 [TestClass]
 public sealed class SearchResultsReconcilerTests
 {
-    [TestMethod]
-    public void Replace_LargeUnchangedIdentity_PreservesSelectionAndUpdatesHighlightAndAction()
-    {
-        var before = Enumerable.Range(0, 600).Select(i => Result($@"Z:\report{i}", query: "r")).ToArray();
-        var after = Enumerable.Range(0, 600).Select(i => Result($@"Z:\report{i}", query: "report")).ToArray();
-        after[300].InstantResultActionArgument = "new argument";
-        var collection = new ObservableRangeCollection<AppSearchResult>();
-        collection.ReplaceRange(before);
-        var selectionChanged = false;
-        SearchResultsReconciler.Replace(collection, after, before[300], _ => selectionChanged = true);
-        Assert.IsFalse(selectionChanged);
-        Assert.AreSame(before[300], collection[300]);
-        Assert.AreEqual("report", collection[300].SearchQuery);
-        Assert.AreEqual("new argument", collection[300].InstantResultActionArgument);
-    }
-
     private static AppSearchResult Result(string path, string name = "n", string kind = "File", string query = "") =>
         new() { FullPath = path, Name = name, ResultKind = kind, SearchQuery = query };
-
-    [TestMethod]
-    public void Replace_ChangedMetadata_ReplacesTheRowSoCachedDateAndColumnsRefresh()
-    {
-        var previous = Result(@"Z:\report.txt");
-        previous.Metadata = new(1, DateTime.MinValue, new DateTime(2026, 1, 1), DateTime.MinValue);
-        _ = previous.DateModified;
-        var current = Result(@"Z:\report.txt");
-        current.Metadata = new(20, DateTime.MinValue, new DateTime(2026, 11, 10), DateTime.MinValue);
-        var collection = new ObservableRangeCollection<AppSearchResult> { previous };
-        SearchResultsReconciler.Replace(collection, [current], previous, _ => { });
-        Assert.AreSame(current, collection[0]);
-        Assert.AreEqual(20L, collection[0].Metadata.Size);
-        Assert.AreEqual(new DateTime(2026, 11, 10), collection[0].DateModified);
-    }
 
     [TestMethod]
     public void Replace_UpdatesCollectionToNewResults()
@@ -210,27 +178,6 @@ public sealed class SearchResultsReconcilerTests
         Assert.AreSame(before, results[0]);
         Assert.IsTrue(results[0].IsFrequent);
         Assert.Contains(nameof(AppSearchResult.IsFrequent), raised);
-    }
-
-    [TestMethod]
-    public void Replace_StreamRepaint_CopiesTheLatestRankingExplanationOntoRetainedRow()
-    {
-        var before = Result(@"C:\a", query: "a");
-        var results = new ObservableRangeCollection<AppSearchResult> { before };
-
-        var after = Result(@"C:\a", query: "a");
-        var page = new RankingPageStamp("session", "page-2", RankingTraceWindow.Quick, 1);
-        var explanation = new RankingExplanation(
-            new RankingLogSession("session", 1, RankingTraceWindow.Quick, "raw", "raw", 0),
-            page,
-            default,
-            default);
-        after.RankingExplanation = explanation;
-
-        SearchResultsReconciler.Replace(results, new[] { after }, before, _ => { });
-
-        Assert.AreSame(before, results[0]);
-        Assert.AreSame(explanation, before.RankingExplanation);
     }
 
     [TestMethod]

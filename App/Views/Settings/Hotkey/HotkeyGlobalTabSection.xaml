@@ -220,6 +220,7 @@
                 RequireModifier="True" DefaultValue="Ctrl+T"/>
         </Grid>
 
+        <!-- Quick Panel disabled. Keep the row declaration for restoration.
         <Grid x:Name="RowQuickPanel" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" SharedSizeGroup="HotkeyLabel"/>
@@ -230,6 +231,7 @@
                 Value="{Binding QuickPanelHotkey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                 RequireModifier="True" DefaultValue="Ctrl+F2"/>
         </Grid>
+        -->
 
         <Border Style="{StaticResource SettingsGroupDivider}"/>
 

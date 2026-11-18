@@ -22,89 +22,8 @@
         Deactivated="Window_Deactivated"
         PreviewKeyDown="Window_PreviewKeyDown">
 
-    <Window.Resources>
-        <!-- One filter. At rest it is only its label, with a hairline pipe after it doing the separating. The
-             selected one is marked by a line under the row that slides between filters (see
-             UpdateCategoryIndicator) instead of by a fill, so the row itself stays quiet. -->
-        <Style x:Key="CategoryCardStyle" TargetType="ListBoxItem">
-            <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
-            <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Margin" Value="0"/>
-            <Setter Property="Padding" Value="3,3"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ListBoxItem">
-                        <Grid>
-                            <!-- Pipe between filters, drawn on the left of each one and hidden on the first, so
-                                 the row starts with a label rather than a leading rule. -->
-                            <Rectangle x:Name="Pipe"
-                                       Width="1"
-                                       Margin="0,3,0,3"
-                                       HorizontalAlignment="Left"
-                                       Fill="{DynamicResource SeparatorBrush}"
-                                       Opacity="0.45"/>
-
-                            <Border Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <!-- No leading pipe on the first filter. Needs AlternationCount on the ListBox;
-                                 when it is unset the attached index is -1 and this simply never fires. -->
-                            <Trigger Property="ItemsControl.AlternationIndex" Value="0">
-                                <Setter TargetName="Pipe" Property="Visibility" Value="Collapsed"/>
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- A bare ItemsPresenter, with no Border, ScrollViewer or focus chrome of its own. Setting Background
-             and BorderThickness is not enough: the default template still draws its own chrome and lays a
-             full-width strip behind the row, which is the band that showed to the right of the last pill. -->
-        <Style x:Key="CategoryBarStyle" TargetType="ListBox">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="0"/>
-            <Setter Property="HorizontalAlignment" Value="Left"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            <!-- The bare template below replaces the default one, so the horizontal panel has to be declared
-                 here: ListBox's default ItemsPanel is a vertical StackPanel, and without this override the
-                 pills stack one per row. -->
-            <Setter Property="ItemsPanel">
-                <Setter.Value>
-                    <ItemsPanelTemplate>
-                        <!-- Equal-width cells across the row, so the filters spread out instead of bunching at
-                             the left edge. Rows=1 keeps them on one line. -->
-                        <UniformGrid Rows="1"/>
-                    </ItemsPanelTemplate>
-                </Setter.Value>
-            </Setter>
-            <Setter Property="ItemContainerStyle" Value="{StaticResource CategoryCardStyle}"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ListBox">
-                        <ItemsPresenter/>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-    </Window.Resources>
-
     <!-- The window is one opaque surface (see ApplySurface: allows-transparency would cost ClearType). The
-         filter pills sit on that surface, and the card - the raised panel holding the search bar, the results
-         and the status bar - starts BELOW them. That is what makes the pills read as a separate control
-         floating above the search box rather than as content inside it: the card's own top rounded edge runs
-         underneath the pills, so the two are visibly different surfaces even where their colours match.
+         card holds the search bar, the results and the status bar.
 
          The window and the card deliberately keep the same colour. Tinting the window darker is the obvious
          way to separate them and it was tried; it changed what the whole window looks like, which is not what
@@ -130,8 +49,6 @@
             <Grid.RowDefinitions>
                 <!-- Search bar -->
                 <RowDefinition Height="Auto"/>
-                <!-- Category filter (row assignment is set in code, see ApplyCategoryBarPlacement) -->
-                <RowDefinition Height="Auto"/>
                 <!-- Separator -->
                 <RowDefinition Height="Auto"/>
                 <!-- Results panel (grows with content) -->
@@ -143,73 +60,15 @@
 
             <!-- ═══════════ 1. Search Bar ═══════════ -->
             <local:SearchBoxControl x:Name="SearchBox" Grid.Row="0" SearchText="{Binding SearchQuery, Mode=TwoWay}"
+                                    CategoryText="{Binding SelectedCategory.DisplayName}"
+                                    IsCategoryVisible="{Binding Search.ShowCategoryBar}"
                                     Height="{Binding SearchBarHeight}" IsDynamicScalingEnabled="True"
                                     LeftIconSize="34" RightIconSize="34"
                                     HorizontalAlignment="Stretch" IsServiceRunning="{Binding IsServiceConnected}"/>
 
-            <!-- ═══════════ 2. Category filter ═══════════ -->
-            <!-- SelectionChanged hands focus back to the search box and re-aims the indicator underneath:
-                 clicking a filter moves keyboard focus to the list, and without the first part the next
-                 keystroke goes nowhere the user is looking.
-                 The trailing pipe closes the row: every filter draws one on its left, so this one bounds the
-                 right end and the row is symmetrical. -->
-            <!-- Follows the result list's own visibility: the bar is a way to narrow what is on screen, so it
-                 has no business occupying a row while there is nothing to narrow. -->
-            <!-- ZIndex: the ContentBg layer below spans this row too and is declared after this grid, so
-                 without an explicit index it paints over the filters and leaves an empty band. -->
-            <Grid x:Name="CategoryBarHost" Grid.Row="1" Margin="12,1,12,2" HorizontalAlignment="Stretch" Panel.ZIndex="10"
-                  Visibility="{Binding ResultsPanelVisibility}">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <!-- Breathing room between the labels and the underline. -->
-                    <RowDefinition Height="4"/>
-                    <!-- The underline's rail. A real band rather than a negative margin: a line pulled past
-                         the bottom of its container is clipped away by the rounded-corner clip, which is what
-                         made it vanish. -->
-                    <RowDefinition Height="2"/>
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <ListBox x:Name="CategoryBar"
-                         Grid.Row="0" Grid.Column="0"
-                         HorizontalAlignment="Stretch"
-                         AlternationCount="64"
-                         Style="{StaticResource CategoryBarStyle}"
-                         ItemsSource="{Binding Categories}"
-                         SelectedItem="{Binding SelectedCategory, Mode=TwoWay}"
-                         SelectionChanged="CategoryBar_SelectionChanged">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding DisplayName}" Opacity="0.85"/>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-
-
-                <!-- The selected filter's underline. Its X and width are animated by
-                     UpdateCategoryIndicator, so moving between filters reads as a slide instead of a jump. -->
-                <Rectangle x:Name="CategoryIndicator"
-                           Grid.Row="2" Grid.ColumnSpan="2"
-                           Height="1.5"
-                           Width="0"
-                           VerticalAlignment="Bottom"
-                           HorizontalAlignment="Left"
-                           RadiusX="1" RadiusY="1"
-                           Fill="{DynamicResource AccentBlue}"
-                           Opacity="0.55"
-                           RenderTransformOrigin="0,0">
-                    <Rectangle.RenderTransform>
-                        <TranslateTransform x:Name="CategoryIndicatorTransform"/>
-                    </Rectangle.RenderTransform>
-                </Rectangle>
-            </Grid>
-
-            <!-- ═══════════ 3. Separator ═══════════ -->
+            <!-- ═══════════ 2. Separator ═══════════ -->
             <Rectangle x:Name="ResultsSeparator"
-                       Grid.Row="2"
+                       Grid.Row="1"
                        Height="1"
                        Margin="12,0,12,0"
                        Fill="{DynamicResource SeparatorBrush}"
@@ -219,21 +78,21 @@
                  "Main Results Grid" (Background=ContentBg, a shade back from the outer CardBackground
                  chrome/search bar) so every window's results area reads the same instead of being flat
                  CardBackground everywhere with no depth. -->
-            <Border x:Name="ResultsContentBackground" Grid.Row="3" Grid.RowSpan="2" Background="{DynamicResource ContentBg}"/>
+            <Border x:Name="ResultsContentBackground" Grid.Row="2" Grid.RowSpan="2" Background="{DynamicResource ContentBg}"/>
 
-            <quick:QuickSearchLaunchPanel x:Name="LaunchPanelControl" Grid.Row="3"
+            <quick:QuickSearchLaunchPanel x:Name="LaunchPanelControl" Grid.Row="2"
                                           Visibility="{Binding LaunchPanelVisibility}"/>
 
             <!-- ═══════════ 4. Results Panel ═══════════ -->
-            <results:ResultsControl x:Name="ResultsPanelControl" Grid.Row="3"
+            <results:ResultsControl x:Name="ResultsPanelControl" Grid.Row="2"
                                   UsesFloatingActionsLayout="True"
                                   ItemsSource="{Binding Results}"
                                   SelectedItem="{Binding SelectedResult, Mode=TwoWay}"
                                   ViewMode="List"
-                                  Visibility="{Binding ResultsPanelVisibility}"/>
+                                  Visibility="Collapsed"/>
 
             <!-- ═══════════ 5. Status bar (shown when loading or ready) ═══════════ -->
-            <local:StatusBarControl x:Name="StatusBarControl" Grid.Row="4"
+            <local:StatusBarControl x:Name="StatusBarControl" Grid.Row="3"
                                     Visibility="{Binding StatusBarVisibility}"/>
         </Grid>
             </Border>

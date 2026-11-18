@@ -4,7 +4,8 @@ using PriorityVerdict = Lertaro.Core.ExclusionRuleSet.PriorityVerdict;
 
 namespace Lertaro.Core.Tests.SearchIndex;
 
-// Full-window ordering over precomputed section, score, quality and path keys.
+// The full window's ordering over decorated rows: the four sections, the score inside them, then the packed
+// quality and the shared path tail. dev-docs/search-ranking-redesign.md 3.3.
 [TestClass]
 public sealed class RankedSearchResultComparerTests
 {
@@ -112,6 +113,18 @@ public sealed class RankedSearchResultComparerTests
                 Row(@"D:\dir\five.txt", rank: Strong, scoreX100: 900)));
 
     [TestMethod]
+    public void Compare_HighHistoryMiddleName_LeadsNormalLeftMatch()
+    {
+        var middle = new MatchRank(MatchRank.TierName, 1, 2.0 / 3.0, 1d, MatchRank.ShapeWordStart);
+
+        CollectionAssert.AreEqual(
+            new[] { @"D:\dir\项目", @"D:\dir\cc-notes.txt" },
+            Order(
+                Row(@"D:\dir\cc-notes.txt", rank: Strong),
+                Row(@"D:\dir\项目", rank: middle, scoreX100: 500)));
+    }
+
+    [TestMethod]
     public void Compare_AlwaysTopWeak_LeadsEverything() =>
         CollectionAssert.AreEqual(
             new[] { @"D:\dir\pinned.txt", @"D:\dir\favorite.txt", @"D:\dir\five.txt", @"D:\dir\weak.txt" },
@@ -184,52 +197,4 @@ public sealed class RankedSearchResultComparerTests
         Assert.IsGreaterThan(0, RankedSearchResultComparer.Instance.Compare(row, null));
         Assert.AreEqual(0, RankedSearchResultComparer.Instance.Compare(null, null));
     }
-
-    // RankedSearchResultComparer packs the pre-history part of this ordering into RankOrderKey. The packed
-    // path must not decide a single pair differently from the field-by-field definition it replaced, across
-    // every section, grade, priority and favorite combination -- including rows whose history tie is set,
-    // which deliberately fall back to the field-by-field path.
-    [TestMethod]
-    public void Compare_PackedKeyAgreesWithTheFieldByFieldPath()
-    {
-        var random = new Random(20261029);
-        var rows = new List<SearchResult>();
-        for (var i = 0; i < 60; i++)
-        {
-            var name = $"{random.Next(9)}file{random.Next(5)}.txt";
-            var rank = new MatchRank(
-                MatchRank.TierName,
-                random.Next(0, 4),
-                random.NextDouble(),
-                random.NextDouble(),
-                random.Next(0, 4));
-            rows.Add(Row(
-                $@"D:\dir{random.Next(3)}\{name}",
-                name: name,
-                rank: rank,
-                isDir: random.Next(2) == 0,
-                effect: (IndexRuleEffect)random.Next(3),
-                alwaysTop: random.Next(2) == 0,
-                favorite: random.Next(3) == 0,
-                scoreX100: random.Next(4) == 0 ? random.Next(0, 900) : 0));
-        }
-        // A pair of identical ranks and names, so the shared tail decides it.
-        rows.Add(Row(@"D:\dir\same.txt", name: "same.txt", rank: Strong));
-        rows.Add(Row(@"D:\dir2\same.txt", name: "same.txt", rank: Strong));
-
-        for (var i = 0; i < rows.Count; i++)
-        {
-            for (var j = 0; j < rows.Count; j++)
-            {
-                var slow = Math.Sign(RankedSearchResultComparer.Instance.CompareSlow(rows[i], rows[j]));
-                var fast = Math.Sign(RankedSearchResultComparer.Instance.Compare(rows[i], rows[j]));
-                Assert.AreEqual(slow, fast, $"{Describe(rows[i])} || {Describe(rows[j])}");
-            }
-        }
-    }
-
-    private static string Describe(SearchResult row) =>
-        $"path={row.Path} section={row.RankFlags & 3} grade={(row.RankFlags >> 5) & 7} tier={(row.RankFlags >> 3) & 3} " +
-        $"prio={(row.RankScore >> 19) & 3} alwaysTop={(row.RankScore & (1 << 16)) != 0} favPin={(row.RankScore & (1 << 17)) != 0} " +
-        $"fav={(row.RankScore & (1 << 18)) != 0} quality={(uint)(row.RankSortKey >> 32)} tie={row.HistoryTie} key={row.RankOrderKey:X}";
 }

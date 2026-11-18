@@ -25,6 +25,11 @@ public class LocalDriveSettingsViewModel : ViewModelBase
     private string _drivesPlaceholderText = "";
     private bool _isBusy;
     private bool _isDriveCheckboxEnabled;
+    private bool _isUserAdmin;
+    private bool _isDisposed;
+    private bool _refreshInFlight;
+    private LocalDriveRefreshRequest? _pendingRefresh;
+    private Task _refreshTask = Task.CompletedTask;
 
     public LocalDriveSettingsViewModel(SearchService searchService, Action onTriggerFastRefresh)
     {
@@ -86,7 +91,7 @@ public class LocalDriveSettingsViewModel : ViewModelBase
         set => SetProperty(ref _drivesPlaceholderText, value);
     }
 
-    public bool IsUserAdmin => ElevationHelper.IsUserAdmin();
+    public bool IsUserAdmin => _isUserAdmin;
     internal bool HasPendingEdits { get; private set; }
     internal void ResetPendingEdits() => HasPendingEdits = false;
 
@@ -96,27 +101,86 @@ public class LocalDriveSettingsViewModel : ViewModelBase
         set => SetProperty(ref _isDriveCheckboxEnabled, value);
     }
 
-    public void UpdateStatus(UsnIndexer.IndexerStatus status, MachineSettings settings)
+    public Task UpdateStatusAsync(UsnIndexer.IndexerStatus status, MachineSettings settings)
     {
+        _pendingRefresh = LocalDriveRefreshRequest.Capture(status, settings);
+        if (_refreshInFlight)
+            return _refreshTask;
+
+        _refreshInFlight = true;
+        return _refreshTask = RunRefreshLoopAsync();
+    }
+
+    private async Task RunRefreshLoopAsync()
+    {
+        try
+        {
+            while (!_isDisposed && _pendingRefresh is { } request)
+            {
+                _pendingRefresh = null;
+                try
+                {
+                    var prepared = await Task.Run(() => PrepareStatus(request));
+                    if (!_isDisposed)
+                        ApplyStatus(prepared);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[LocalDriveSettings] Status refresh failed: {ex.Message}", LogLevel.Error);
+                }
+            }
+        }
+        finally
+        {
+            _refreshInFlight = false;
+        }
+    }
+
+    private static PreparedLocalDriveStatus PrepareStatus(LocalDriveRefreshRequest request)
+    {
+        var drives = new List<PreparedLocalDrive>(request.Drives.Count);
+        foreach (var drive in request.Drives)
+        {
+            var isPresent = drive.State != "unavailable";
+            var driveId = isPresent ? VolumeHelper.GetVolumeId(drive.Drive) ?? string.Empty : string.Empty;
+            var hasCache = !string.IsNullOrWhiteSpace(drive.CachePath) && File.Exists(drive.CachePath);
+            drives.Add(new PreparedLocalDrive(
+                drive,
+                driveId,
+                isPresent && request.EnabledDriveIds.Contains(driveId),
+                hasCache));
+        }
+
+        return new PreparedLocalDriveStatus(
+            request.State,
+            request.TotalFiles,
+            request.TotalDirs,
+            request.IsMaintenanceBusy,
+            drives,
+            ElevationHelper.IsUserAdmin());
+    }
+
+    private void ApplyStatus(PreparedLocalDriveStatus status)
+    {
+        _isUserAdmin = status.IsUserAdmin;
         if (status.State == "error")
         {
             CanRebuild = IsDriveCheckboxEnabled = false;
             foreach (var item in LocalDrives) item.CanRunRowAction = item.CanEditEnabled = false;
             return; // Keep unsaved checkboxes while the service is unavailable.
         }
-        foreach (var drive in status.Drives.OrderBy(d => d.Drive))
+        foreach (var driveStatus in status.Drives)
         {
+            var drive = driveStatus.Source;
             var item = LocalDrives.FirstOrDefault(d => d.Drive.Equals(drive.Drive, StringComparison.OrdinalIgnoreCase));
-            var isPresent = drive.State != "unavailable";
-            var driveId = VolumeHelper.GetVolumeId(drive.Drive) ?? string.Empty;
-            var appliedEnabled = isPresent && settings.IsLocalDriveEnabled(driveId);
+            var appliedEnabled = driveStatus.AppliedEnabled;
             var isEnabled = item?.IsEnabled ?? appliedEnabled;
             if (item == null)
             {
                 item = new LocalDriveSettingsItem
                 {
                     Drive = drive.Drive,
-                    Id = driveId,
+                    Id = driveStatus.DriveId,
                     Name = $"{drive.Drive}:",
                     IsEnabled = isEnabled
                 };
@@ -124,10 +188,9 @@ public class LocalDriveSettingsViewModel : ViewModelBase
                 item.PropertyChanged += OnLocalDriveItemChanged;
                 LocalDrives.Add(item);
             }
-            item.Id = driveId;
+            item.Id = driveStatus.DriveId;
 
-            var hasCache = !string.IsNullOrWhiteSpace(drive.CachePath) && File.Exists(drive.CachePath);
-            TrackPendingRebuild(drive);
+            TrackPendingRebuild(drive.Drive, drive.State);
 
             // A journal-backed (true NTFS/$MFT) rebuild has no cancellation support -- MftIndexScanner is a
             // raw $MFT parse, not a walk, with no natural interruption point. Every other kind (ReFS, the
@@ -135,10 +198,10 @@ public class LocalDriveSettingsViewModel : ViewModelBase
             // read here BEFORE it gets overwritten with its translated display form below.
             var canStop = drive.State == "indexing" && !string.Equals(drive.Kind, "NTFS", StringComparison.OrdinalIgnoreCase);
             item.RowAction = canStop ? LocalDriveRowAction.Stop
-                : appliedEnabled ? LocalDriveRowAction.Rebuild : hasCache ? LocalDriveRowAction.Delete : LocalDriveRowAction.None;
+                : appliedEnabled ? LocalDriveRowAction.Rebuild : driveStatus.HasCache ? LocalDriveRowAction.Delete : LocalDriveRowAction.None;
             item.CanRunRowAction = item.RowAction == LocalDriveRowAction.Stop
                 || (_pendingRowRebuilds.Count == 0 && (item.RowAction == LocalDriveRowAction.Delete || CanRebuild && item.RowAction == LocalDriveRowAction.Rebuild));
-            item.CanEditEnabled = isPresent && IsDriveCheckboxEnabled;
+            item.CanEditEnabled = driveStatus.Source.State != "unavailable" && IsDriveCheckboxEnabled;
             item.CachePath = drive.CachePath;
             item.Kind = drive.Kind == "LocalNtfs" ? TranslationManager.Instance["Local_KindLocalNtfs"] : drive.Kind;
             item.Strategy = appliedEnabled ? TranslationManager.Instance["Local_StrategyMftUsn"] : TranslationManager.Instance["Local_StrategyDisabled"];
@@ -148,7 +211,7 @@ public class LocalDriveSettingsViewModel : ViewModelBase
 
         for (var i = LocalDrives.Count - 1; i >= 0; i--)
         {
-            if (!status.Drives.Any(d => d.Drive.Equals(LocalDrives[i].Drive, StringComparison.OrdinalIgnoreCase)))
+            if (!status.Drives.Any(d => d.Source.Drive.Equals(LocalDrives[i].Drive, StringComparison.OrdinalIgnoreCase)))
             {
                 LocalDrives[i].PropertyChanged -= OnLocalDriveItemChanged;
                 LocalDrives.RemoveAt(i);
@@ -158,7 +221,7 @@ public class LocalDriveSettingsViewModel : ViewModelBase
         IsLocalDrivesEmpty = LocalDrives.Count == 0;
         var isServiceReady = status.State != "error";
         var hasPendingRebuild = _pendingRowRebuilds.Count > 0;
-        var hasBusyDrive = status.Drives.Any(d => d.State is "indexing" or "pending");
+        var hasBusyDrive = status.Drives.Any(d => d.Source.State is "indexing" or "pending");
         var isBusy = status.IsMaintenanceBusy || status.State is "indexing" or "loading-cache" or "pending" || hasPendingRebuild || hasBusyDrive;
         _isBusy = isBusy;
         CanRebuild = IsUserAdmin && isServiceReady && (status.State is "ready" or "idle") && !status.IsMaintenanceBusy && !hasPendingRebuild && !hasBusyDrive;
@@ -182,10 +245,10 @@ public class LocalDriveSettingsViewModel : ViewModelBase
         else if (isBusy)
         {
             var busyState = status.State == "indexing" ? TranslationManager.Instance["Local_StateIndexing"] : TranslationManager.Instance["Local_Rebuilding"];
-            IndexSummary = string.Format(TranslationManager.Instance["Local_SummaryTemplate"], busyState, status.Drives.Count(d => d.Enabled), status.TotalFiles + status.TotalDirs);
+            IndexSummary = string.Format(TranslationManager.Instance["Local_SummaryTemplate"], busyState, status.Drives.Count(d => d.Source.Enabled), status.TotalFiles + status.TotalDirs);
         }
         else
-            IndexSummary = string.Format(TranslationManager.Instance["Local_SummaryTemplate"], LocalDriveSettingsHelper.TranslateState(status.State), status.Drives.Count(d => d.Enabled), status.TotalFiles + status.TotalDirs);
+            IndexSummary = string.Format(TranslationManager.Instance["Local_SummaryTemplate"], LocalDriveSettingsHelper.TranslateState(status.State), status.Drives.Count(d => d.Source.Enabled), status.TotalFiles + status.TotalDirs);
     }
 
     private async void Rebuild()
@@ -303,26 +366,73 @@ public class LocalDriveSettingsViewModel : ViewModelBase
             (drive.CanRunRowAction, drive.CanEditEnabled) = (!isBusy && drive.CanRunRowAction, !isBusy && drive.CanEditEnabled);
     }
 
-    private void TrackPendingRebuild(UsnIndexer.DriveIndexStatus drive)
+    private void TrackPendingRebuild(string drive, string state)
     {
-        if (!_pendingRowRebuilds.Contains(drive.Drive))
+        if (!_pendingRowRebuilds.Contains(drive))
             return;
 
-        if (drive.State == "indexing")
+        if (state == "indexing")
         {
-            _observedRowRebuilds.Add(drive.Drive);
+            _observedRowRebuilds.Add(drive);
         }
-        else if (drive.State is "ready" or "failed" or "disabled" or "unavailable" or "cached")
+        else if (state is "ready" or "failed" or "disabled" or "unavailable" or "cached")
         {
-            _pendingRowRebuilds.Remove(drive.Drive);
-            _observedRowRebuilds.Remove(drive.Drive);
+            _pendingRowRebuilds.Remove(drive);
+            _observedRowRebuilds.Remove(drive);
         }
-        else if (_observedRowRebuilds.Contains(drive.Drive))
+        else if (_observedRowRebuilds.Contains(drive))
         {
-            _pendingRowRebuilds.Remove(drive.Drive);
-            _observedRowRebuilds.Remove(drive.Drive);
+            _pendingRowRebuilds.Remove(drive);
+            _observedRowRebuilds.Remove(drive);
         }
     }
 
-    public void Cleanup() => TranslationManager.Instance.PropertyChanged -= _translationHandler;
+    public void Cleanup()
+    {
+        _isDisposed = true;
+        _pendingRefresh = null;
+        TranslationManager.Instance.PropertyChanged -= _translationHandler;
+    }
+
+    private sealed record LocalDriveRefreshRequest(
+        string State,
+        int TotalFiles,
+        int TotalDirs,
+        bool IsMaintenanceBusy,
+        IReadOnlyList<UsnIndexer.DriveIndexStatus> Drives,
+        HashSet<string> EnabledDriveIds)
+    {
+        public static LocalDriveRefreshRequest Capture(UsnIndexer.IndexerStatus status, MachineSettings settings)
+        {
+            var drives = status.Drives
+                .OrderBy(d => d.Drive)
+                .Select(d => new UsnIndexer.DriveIndexStatus
+                {
+                    Drive = d.Drive,
+                    Enabled = d.Enabled,
+                    Kind = d.Kind,
+                    State = d.State,
+                    Files = d.Files,
+                    Dirs = d.Dirs,
+                    CachePath = d.CachePath
+                })
+                .ToList();
+            var enabledDriveIds = settings.LocalDrives.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return new(status.State, status.TotalFiles, status.TotalDirs, status.IsMaintenanceBusy, drives, enabledDriveIds);
+        }
+    }
+
+    private sealed record PreparedLocalDrive(
+        UsnIndexer.DriveIndexStatus Source,
+        string DriveId,
+        bool AppliedEnabled,
+        bool HasCache);
+
+    private sealed record PreparedLocalDriveStatus(
+        string State,
+        int TotalFiles,
+        int TotalDirs,
+        bool IsMaintenanceBusy,
+        IReadOnlyList<PreparedLocalDrive> Drives,
+        bool IsUserAdmin);
 }

@@ -10,6 +10,8 @@ namespace Lertaro.App;
 
 public partial class SearchBoxControl : UserControl
 {
+    private const double CategoryRestOpacity = 0.45;
+    private const int CategoryTransitionMs = 150;
     // Raised when either the left- or right-docked status icon is right-clicked. Purely a passthrough --
     // this control doesn't know what a right-click means for whichever window hosts it (the quick popup
     // window resets its own saved position with it, the full search window centers itself, the inline card
@@ -37,6 +39,10 @@ public partial class SearchBoxControl : UserControl
     // shown, so it is where the state is worth being able to flip.
     public event Action? IconMiddleClicked;
 
+    // Raised when the mouse wheel is used over the category label. Delta is -1 for the previous category
+    // and +1 for the next; hosts without a category leave the label hidden and this event unsubscribed.
+    public event Action<int>? CategoryWheeled;
+
     // Screen-space (not element-relative) so a real drag's own re-layout of this control underneath the
     // cursor can't skew the distance measurement mid-gesture.
     private System.Windows.Point? _iconPressScreenPoint;
@@ -46,8 +52,25 @@ public partial class SearchBoxControl : UserControl
     // Window.DragMove(), since DragMove()'s native move loop can't be constrained to vertical-only
     // movement, or even queried, once Ctrl is pressed/released mid-drag.
     private Helpers.Visuals.WindowDragTracker? _iconDragTracker;
+    private int _categoryAnimationVersion;
+    private int _pendingCategoryDirection = 1;
 
     private void Icon_MouseRightButtonUp(object sender, MouseButtonEventArgs e) => IconRightClicked?.Invoke();
+
+    private void CategoryLabel_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Delta == 0)
+            return;
+
+        CategoryWheeled?.Invoke(e.Delta > 0 ? -1 : 1);
+        e.Handled = true;
+    }
+
+    internal void PrepareCategoryChange(int direction)
+    {
+        if (direction != 0)
+            _pendingCategoryDirection = direction;
+    }
 
     // WPF has no middle-button event of its own, so this is the general MouseUp filtered down to it.
     // Deliberately not gated on IsIconClickable, unlike the left-click menu: that gate exists because a
@@ -165,6 +188,7 @@ public partial class SearchBoxControl : UserControl
         // fractional size more often than not, and the app renders with Display metrics, which snap glyph
         // advances to whole pixels -- a fractional size turns that into visibly uneven letter spacing.
         FontSize = Services.AppTypography.SnapFontSize(Math.Clamp(height * 0.4, 12.0, 36.0));
+        UpdateCategoryFontSize();
 
         // Vertical Padding:
         // Keep horizontal padding fixed at 21, scale vertical padding dynamically (e.g. 70px -> 7px, 50px -> 5px)
@@ -176,6 +200,141 @@ public partial class SearchBoxControl : UserControl
 
     public TextBox SearchTextBox => TxtSearch;
     public TextBlock PlaceholderTextBlock => TxtPlaceholder;
+    public TextBlock CategoryTextBlock => TxtCategoryCurrent;
+
+    public static readonly DependencyProperty CategoryTextProperty = DependencyProperty.Register(
+        nameof(CategoryText), typeof(string), typeof(SearchBoxControl),
+        new PropertyMetadata(string.Empty, OnCategoryTextChanged));
+
+    public string CategoryText
+    {
+        get => (string)GetValue(CategoryTextProperty);
+        set => SetValue(CategoryTextProperty, value);
+    }
+
+    public static readonly DependencyProperty IsCategoryVisibleProperty = DependencyProperty.Register(
+        nameof(IsCategoryVisible), typeof(bool), typeof(SearchBoxControl),
+        new PropertyMetadata(true, (d, _) => ((SearchBoxControl)d).UpdateCategoryTextVisibility()));
+
+    public bool IsCategoryVisible
+    {
+        get => (bool)GetValue(IsCategoryVisibleProperty);
+        set => SetValue(IsCategoryVisibleProperty, value);
+    }
+
+    private static void OnCategoryTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is SearchBoxControl control)
+            control.AnimateCategoryText((string?)e.NewValue ?? string.Empty);
+    }
+
+    private void AnimateCategoryText(string next)
+    {
+        if (CategoryWheel is null)
+            return;
+
+        UpdateCategoryTextVisibility();
+        if (!IsLoaded || CategoryWheel.Visibility != Visibility.Visible || string.IsNullOrWhiteSpace(next))
+        {
+            SetCategoryTextImmediate(next);
+            return;
+        }
+
+        var version = ++_categoryAnimationVersion;
+        var direction = _pendingCategoryDirection >= 0 ? 1 : -1;
+        TxtCategoryCurrent.BeginAnimation(OpacityProperty, null);
+        CategoryCurrentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+        TxtCategoryIncoming.BeginAnimation(OpacityProperty, null);
+        CategoryIncomingTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+
+        var duration = TimeSpan.FromMilliseconds(CategoryTransitionMs);
+        var ease = new System.Windows.Media.Animation.CubicEase
+        {
+            EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
+        };
+
+        TxtCategoryIncoming.Text = next;
+        TxtCategoryIncoming.Visibility = Visibility.Visible;
+        TxtCategoryIncoming.Opacity = 0;
+        CategoryIncomingTransform.Y = 10d * direction;
+
+        var incomingOpacity = new System.Windows.Media.Animation.DoubleAnimation(0, CategoryRestOpacity, duration)
+        {
+            EasingFunction = ease,
+        };
+        incomingOpacity.Completed += (_, _) =>
+        {
+            if (version != _categoryAnimationVersion)
+                return;
+
+            TxtCategoryCurrent.Text = next;
+            TxtCategoryCurrent.BeginAnimation(OpacityProperty, null);
+            CategoryCurrentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+            TxtCategoryCurrent.Opacity = CategoryRestOpacity;
+            CategoryCurrentTransform.Y = 0;
+            TxtCategoryIncoming.BeginAnimation(OpacityProperty, null);
+            CategoryIncomingTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+            TxtCategoryIncoming.Text = string.Empty;
+            TxtCategoryIncoming.Opacity = 0;
+            TxtCategoryIncoming.Visibility = Visibility.Collapsed;
+            CategoryIncomingTransform.Y = 0;
+        };
+
+        TxtCategoryCurrent.BeginAnimation(
+            OpacityProperty,
+            new System.Windows.Media.Animation.DoubleAnimation(TxtCategoryCurrent.Opacity, 0, duration)
+            {
+                EasingFunction = ease,
+            });
+        CategoryCurrentTransform.BeginAnimation(
+            System.Windows.Media.TranslateTransform.YProperty,
+            new System.Windows.Media.Animation.DoubleAnimation(CategoryCurrentTransform.Y, -10d * direction, duration)
+            {
+                EasingFunction = ease,
+            });
+        TxtCategoryIncoming.BeginAnimation(OpacityProperty, incomingOpacity);
+        CategoryIncomingTransform.BeginAnimation(
+            System.Windows.Media.TranslateTransform.YProperty,
+            new System.Windows.Media.Animation.DoubleAnimation(10d * direction, 0, duration)
+            {
+                EasingFunction = ease,
+            });
+    }
+
+    private void UpdateCategoryTextVisibility()
+    {
+        if (CategoryWheel is null)
+            return;
+
+        CategoryWheel.Visibility = IsCategoryVisible && !IsInActionsMode && !string.IsNullOrWhiteSpace(CategoryText)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void SetCategoryTextImmediate(string text)
+    {
+        TxtCategoryCurrent.BeginAnimation(OpacityProperty, null);
+        CategoryCurrentTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+        TxtCategoryIncoming.BeginAnimation(OpacityProperty, null);
+        CategoryIncomingTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
+        TxtCategoryCurrent.Text = text;
+        TxtCategoryCurrent.Opacity = CategoryRestOpacity;
+        CategoryCurrentTransform.Y = 0;
+        TxtCategoryIncoming.Text = string.Empty;
+        TxtCategoryIncoming.Opacity = 0;
+        TxtCategoryIncoming.Visibility = Visibility.Collapsed;
+        CategoryIncomingTransform.Y = 0;
+    }
+
+    private void UpdateCategoryFontSize()
+    {
+        if (TxtCategoryCurrent is null || TxtCategoryIncoming is null)
+            return;
+
+        var size = Services.AppTypography.SnapFontSize(Math.Clamp(FontSize * 0.62, 11.0, 18.0));
+        TxtCategoryCurrent.FontSize = size;
+        TxtCategoryIncoming.FontSize = size;
+    }
 
     // IsDynamicScalingEnabled DependencyProperty
     public static readonly DependencyProperty IsDynamicScalingEnabledProperty = DependencyProperty.Register(
@@ -270,7 +429,7 @@ public partial class SearchBoxControl : UserControl
     // IsInActionsMode DependencyProperty
     public static readonly DependencyProperty IsInActionsModeProperty = DependencyProperty.Register(
         nameof(IsInActionsMode), typeof(bool), typeof(SearchBoxControl),
-        new PropertyMetadata(false));
+        new PropertyMetadata(false, (d, _) => ((SearchBoxControl)d).UpdateCategoryTextVisibility()));
 
     public bool IsInActionsMode
     {

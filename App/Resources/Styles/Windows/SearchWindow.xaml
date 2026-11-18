@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:helpers="clr-namespace:Lertaro.App.Helpers.Visuals"
                     xmlns:services="clr-namespace:Lertaro.App.Services">
     <ResourceDictionary.MergedDictionaries>
         <ResourceDictionary Source="../Tokens/Colors.xaml"/>
@@ -123,6 +124,7 @@
 
     <!-- ═══════════ Result Item Style (light) ═══════════ -->
     <Style x:Key="SearchResultItemStyle" TargetType="ListViewItem">
+        <Setter Property="helpers:ResultRowFade.IsEnabled" Value="True"/>
         <Setter Property="Padding" Value="0"/>
         <Setter Property="Margin" Value="0"/>
         <Setter Property="Height" Value="{x:Static services:UiMetrics.ListItemHeight}"/>

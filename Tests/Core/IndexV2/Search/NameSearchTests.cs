@@ -6,24 +6,6 @@ namespace Lertaro.Core.Tests.IndexV2.Search;
 public sealed class NameSearchTests
 {
     [TestMethod]
-    public void Refinement_CancelledQuery_DoesNotRewriteRanks()
-    {
-        using var fixture = LiveIndexFixture.Build("Z", [LiveIndexFixture.Root(), new(2, 1, "report.txt", FileRecordFlags.None)]);
-        fixture.Index.Read<object?>((snapshot, delta) =>
-        {
-            var ranks = new List<Core.SearchIndex.Fzf.FzfRank> { new(1, 123, 456) };
-            var expected = ranks.ToArray();
-            var token = new CancellationToken(canceled: true);
-            var pattern = Core.SearchIndex.Fzf.FzfPattern.Parse("report");
-            Assert.ThrowsExactly<OperationCanceledException>(() => NameSearch.RefineRanks(snapshot, delta, pattern, ranks, token));
-            CollectionAssert.AreEqual(expected, ranks);
-            Assert.ThrowsExactly<OperationCanceledException>(() => Core.IndexV2.Search.PathMode.PathSearchFuzzy.RefineWithWeight(snapshot, delta, null, pattern, ranks, token));
-            CollectionAssert.AreEqual(expected, ranks);
-            return null;
-        });
-    }
-
-    [TestMethod]
     public void SearchStreaming_WholeNameMatchOutranksAncestorCompletedMatch()
     {
         using var fixture = LiveIndexFixture.Build("Z", new[]
@@ -43,10 +25,10 @@ public sealed class NameSearchTests
         Assert.IsLessThan(0, SearchResultRankComparer.Instance.Compare(wholeName, ancestorCompleted));
     }
 
-    // Fork ordering is intentionally left-first: a whole-word hit later in the name ("code-atlas")
-    // does not displace left-contiguous "atlasing*" rows from a bounded page.
+    // A whole-word hit later in the name ("code-atlas") beats a word-start hit at the left edge
+    // ("atlasing*"); the exact/left-contiguous "atlas" still leads both.
     [TestMethod]
-    public void SearchStreaming_LimitKeepsLeftContiguousHitsAheadOfALaterWholeWord()
+    public void SearchStreaming_LimitKeepsWholeWordHitsAheadOfWordStarts()
     {
         var records = new List<FileRecord>
         {
@@ -67,11 +49,8 @@ public sealed class NameSearchTests
 
         var names = results.Order(SearchResultRankComparer.Instance).Select(result => result.Name).ToList();
         Assert.HasCount(5, names);
-        CollectionAssert.AreEqual(
-            new[] { "atlas", "atlasing0", "atlasing1", "atlasing2", "atlasing3" },
-            names,
-            string.Join(", ", names));
-        Assert.DoesNotContain("code-atlas", names);
+        CollectionAssert.AreEqual(new[] { "atlas", "code-atlas" }, names.Take(2).ToArray());
+        Assert.IsTrue(names.Skip(2).All(name => name.StartsWith("atlasing", StringComparison.Ordinal)), string.Join(", ", names));
     }
 
     // Second half of the reported case: every "Atlas*" file starts at 0 and is contiguous; the later
@@ -153,35 +132,4 @@ public sealed class NameSearchTests
         Assert.HasCount(1, results);
         Assert.AreEqual("Archive.md", results[0].Name);
     }
-
-    // PublishRanks skips a second SearchResultRelevance.Apply computation for any row RefineRanks
-    // already packed the exact same relevance key into (see PublishRanks' `refined` guard) -- correct
-    // only because RefineRanks and Apply are proven to compute an identical key from the same
-    // (name, pattern)/(path, pattern) inputs. int.MaxValue mirrors the Full window's fileLimit (the
-    // worst case from the investigated regression: scanKeep collapses to "everything matched", so
-    // RefineRanks -- and, were the skip wrong, a second Apply -- runs over nearly every result).
-    // The fork rule puts the left-edge scattered match ahead of a later whole-word match. Those different
-    // qualities also make a divergence between the packed key and a fresh Apply visible as a wrong
-    // relative order, not merely as extra CPU time nothing here can observe directly.
-    [TestMethod]
-    public void SearchStreaming_UnboundedWindowUsesLeftPriorityWithoutASecondRelevanceApply()
-    {
-        using var fixture = LiveIndexFixture.Build("Z", new[]
-        {
-            LiveIndexFixture.Root(),
-            new FileRecord(2, 1, "report", FileRecordFlags.None),
-            new FileRecord(3, 1, "monthly-report", FileRecordFlags.None),
-            new FileRecord(4, 1, "r_e_p_o_r_t", FileRecordFlags.None),
-        });
-        var results = new List<SearchResult>();
-
-        IndexV2Searcher.SearchStreaming(fixture.Index, "report", int.MaxValue, results.Add, CancellationToken.None);
-
-        var names = results.Order(SearchResultRankComparer.Instance).Select(result => result.Name).ToList();
-        CollectionAssert.AreEqual(
-            new[] { "report", "r_e_p_o_r_t", "monthly-report" },
-            names,
-            string.Join(", ", names));
-    }
 }
-

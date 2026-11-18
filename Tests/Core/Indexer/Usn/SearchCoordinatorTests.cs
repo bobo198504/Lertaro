@@ -151,6 +151,32 @@ public sealed class SearchCoordinatorTests
     }
 
     [TestMethod]
+    public void ProgressiveBoundedSearch_EmitsPreviewRowsBeforeTheFinalRows()
+    {
+        using var dir = new TempDirectory();
+        using var c = LoadMany(dir, "C", 10);
+        using var d = LoadMany(dir, "D", 10);
+        var drives = new Dictionary<string, LiveIndex> { ["C"] = c, ["D"] = d };
+        var previews = new ConcurrentBag<SearchResult>();
+        var finals = new ConcurrentBag<SearchResult>();
+
+        SearchCoordinator.SearchStreaming(
+            drives,
+            new object(),
+            "report",
+            limit: 3,
+            finals.Add,
+            CancellationToken.None,
+            directoryFilter: null,
+            progressive: true,
+            onPreview: previews.Add);
+
+        Assert.IsNotEmpty(previews);
+        Assert.IsTrue(previews.All(row => row.Name.StartsWith("report", StringComparison.OrdinalIgnoreCase)));
+        Assert.IsTrue(finals.All(row => row.Name.StartsWith("report", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
     public void ShortcutFileNameFilter_PreservesCrossDriveShortcutsUnderBoundedLimit()
     {
         using var dir = new TempDirectory();

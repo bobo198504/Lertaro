@@ -14,6 +14,7 @@
                 <ColumnDefinition Width="Auto"/><!-- Left Icon Column -->
                 <ColumnDefinition Width="Auto"/><!-- Actions Label Column -->
                 <ColumnDefinition Width="*"/><!-- TextBox Column -->
+                <ColumnDefinition Width="Auto"/><!-- Category Label Column -->
                 <ColumnDefinition Width="Auto"/><!-- Right Icon Column -->
             </Grid.ColumnDefinitions>
 
@@ -178,11 +179,50 @@
                 </TextBlock.Style>
             </TextBlock>
 
+            <Grid x:Name="CategoryWheel"
+                  Grid.Column="3"
+                  Width="64"
+                  Margin="10,0,10,0"
+                  Visibility="Collapsed"
+                  VerticalAlignment="Center"
+                  ClipToBounds="True"
+                  Background="Transparent"
+                  Cursor="Hand"
+                  PreviewMouseWheel="CategoryLabel_PreviewMouseWheel">
+                <TextBlock x:Name="TxtCategoryCurrent"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"
+                           TextAlignment="Right"
+                           TextTrimming="CharacterEllipsis"
+                           FontFamily="{Binding FontFamily, ElementName=root}"
+                           Foreground="{DynamicResource TextSecondary}"
+                           Opacity="0.45"
+                           IsHitTestVisible="False">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform x:Name="CategoryCurrentTransform"/>
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+                <TextBlock x:Name="TxtCategoryIncoming"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"
+                           TextAlignment="Right"
+                           TextTrimming="CharacterEllipsis"
+                           FontFamily="{Binding FontFamily, ElementName=root}"
+                           Foreground="{DynamicResource TextSecondary}"
+                           Opacity="0"
+                           Visibility="Collapsed"
+                           IsHitTestVisible="False">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform x:Name="CategoryIncomingTransform"/>
+                    </TextBlock.RenderTransform>
+                </TextBlock>
+            </Grid>
+
             <!-- Right Icon Grid (Visible only when IsIconOnLeft is False) -->
             <!-- MouseUp rather than a middle-specific event, because WPF has none: the handler checks
                  ChangedButton itself. Only this icon carries it, matching the indicator above: Stay Open
                  is a quick-window feature and this is the logo that window shows. -->
-            <Grid Grid.Column="3" Margin="11,0,0,0" VerticalAlignment="Center"
+            <Grid Grid.Column="4" Margin="11,0,0,0" VerticalAlignment="Center"
                   MouseRightButtonUp="Icon_MouseRightButtonUp"
                   MouseLeftButtonDown="Icon_MouseLeftButtonDown" MouseLeftButtonUp="Icon_MouseLeftButtonUp" MouseMove="Icon_MouseMove"
                   MouseUp="Icon_MouseUp"

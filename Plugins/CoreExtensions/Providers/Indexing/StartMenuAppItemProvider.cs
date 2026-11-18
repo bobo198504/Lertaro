@@ -242,6 +242,10 @@ public class StartMenuAppItemProvider : ISearchableItemProvider, IDisposable
     private static void AppendAppsFolderApps(List<SearchableItem> list, IEnumerable<string> alreadyIndexedNames)
     {
         var existingNames = new HashSet<string>(alreadyIndexedNames, StringComparer.OrdinalIgnoreCase);
+        var existingByName = list
+            .Where(item => !string.IsNullOrWhiteSpace(item.Title))
+            .GroupBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var appDesc = TranslationService.Get("Search_ResultApp");
 
         List<AppsFolderEnumerator.AppEntry> apps;
@@ -257,8 +261,17 @@ public class StartMenuAppItemProvider : ISearchableItemProvider, IDisposable
 
         foreach (var app in apps)
         {
-            if (string.IsNullOrWhiteSpace(app.Name) || !existingNames.Add(app.Name))
-                continue; // already covered by a Start Menu shortcut (classic app), or a duplicate name
+            if (string.IsNullOrWhiteSpace(app.Name))
+                continue;
+            if (!existingNames.Add(app.Name))
+            {
+                // A classic shortcut can shadow the same packaged entry by name while resolving to no
+                // target and therefore carrying no executable alias. Keep one row, but merge the packaged
+                // app's stable name aliases into it.
+                if (app.Aumid.Contains('!') && existingByName.TryGetValue(app.Name, out var existing))
+                    MergePackagedAliases(existing, app.Aumid);
+                continue;
+            }
 
             var aumid = app.Aumid;
             // Packaged apps launch by AUMID via shell:AppsFolder; a classic entry may expose a real
@@ -266,7 +279,7 @@ public class StartMenuAppItemProvider : ISearchableItemProvider, IDisposable
             var looksLikePath = aumid.Length > 2 && aumid[1] == ':';
             var launchTarget = looksLikePath ? aumid : $"shell:AppsFolder\\{aumid}";
 
-            list.Add(new SearchableItem
+            var item = new SearchableItem
             {
                 Title = app.Name,
                 Description = appDesc,
@@ -292,7 +305,21 @@ public class StartMenuAppItemProvider : ISearchableItemProvider, IDisposable
                         PluginSdk.Logger.Log($"[StartMenuAppItemProvider] Failed to launch app '{app.Name}' ({aumid}): {ex.Message}", PluginSdk.LogLevel.Error);
                     }
                 }
-            });
+            };
+            list.Add(item);
+            existingByName[app.Name] = item;
         }
+    }
+
+    internal static void MergePackagedAliases(SearchableItem item, string aumid)
+    {
+        if (!aumid.Contains('!'))
+            return;
+
+        var merged = item.Aliases
+            .Concat(StartMenuAppAliasBuilder.FromPackage(item.Title, aumid))
+            .DistinctBy(alias => alias.Text, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        item.Aliases = merged;
     }
 }

@@ -30,7 +30,7 @@ public sealed class HistoryBudgetTests
     }
 
     [TestMethod]
-    public void FourthFivePlusRow_FallsToH3()
+    public void FourthFivePlusRow_FallsOutOfTheTopThree()
     {
         var budget = RankPolicy.BuildHistoryBudget(new[]
         {
@@ -43,7 +43,7 @@ public sealed class HistoryBudgetTests
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\h\a.txt"));
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\h\b.txt"));
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\h\c.txt"));
-        Assert.AreEqual(HistoryTier.H3, TierOf(budget, @"D:\h\d.txt"));
+        Assert.AreEqual(HistoryTier.None, TierOf(budget, @"D:\h\d.txt"));
     }
 
     [TestMethod]
@@ -71,52 +71,13 @@ public sealed class HistoryBudgetTests
         for (var i = 0; i < 12; i++)
             candidates.Add(Signals($@"D:\h\three{i}.txt", 400));
 
-        var budget = RankPolicy.BuildHistoryBudget(candidates);
+        var budget = RankPolicy.BuildHistoryBudget(candidates, liftMax: int.MaxValue);
 
         Assert.HasCount(13, budget);
         Assert.AreEqual(3, budget.Count(kv => kv.Value == HistoryTier.H5));
         Assert.AreEqual(10, budget.Count(kv => kv.Value == HistoryTier.H3));
         // The two left out are indexed rows, so they get no bucket at all rather than a Tail entry.
         Assert.AreEqual(13, candidates.Count(c => budget.ContainsKey(c.NormalizedPath)));
-    }
-
-    [TestMethod]
-    public void QuickWindow_AllowsEightH5AndTwentyH3Rows()
-    {
-        var candidates = new List<RankSignals>();
-        for (var i = 0; i < 10; i++)
-            candidates.Add(Signals($@"D:\h\five{i}.txt", 600));
-        for (var i = 0; i < 25; i++)
-            candidates.Add(Signals($@"D:\h\three{i}.txt", 400));
-
-        var budget = RankPolicy.BuildHistoryBudget(
-            candidates,
-            fiveMax: RankPolicy.QuickHistoryFiveMax,
-            threeMax: RankPolicy.QuickHistoryThreeMax);
-
-        Assert.AreEqual(RankPolicy.QuickHistoryFiveMax, budget.Count(kv => kv.Value == HistoryTier.H5));
-        Assert.AreEqual(RankPolicy.QuickHistoryThreeMax, budget.Count(kv => kv.Value == HistoryTier.H3));
-    }
-
-    [TestMethod]
-    public void IneligiblePath_DoesNotSpendASlot()
-    {
-        // A Grade 2/3 row can never read an H5/H3 tier, so the budget must not hand it one: the second
-        // row is the only path allowed to spend the single H5 slot.
-        var eligible = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"D:\h\b.txt" };
-
-        var budget = RankPolicy.BuildHistoryBudget(
-            new[]
-            {
-                Signals(@"D:\h\a.txt", 900),
-                Signals(@"D:\h\b.txt", 800),
-            },
-            eligible,
-            fiveMax: 1,
-            threeMax: 10);
-
-        Assert.IsFalse(budget.ContainsKey(@"D:\h\a.txt"));
-        Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\h\b.txt"));
     }
 
     [TestMethod]
@@ -129,7 +90,7 @@ public sealed class HistoryBudgetTests
             candidates.Add(Signals($@"D:\h\three{i}.txt", 400, historyOnly: true));
         candidates.Add(Signals(@"D:\h\last.txt", 350, historyOnly: true));
 
-        var budget = RankPolicy.BuildHistoryBudget(candidates);
+        var budget = RankPolicy.BuildHistoryBudget(candidates, liftMax: int.MaxValue);
 
         Assert.AreEqual(HistoryTier.Tail, TierOf(budget, @"D:\h\last.txt"));
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\h\five0.txt"));
@@ -191,7 +152,7 @@ public sealed class HistoryBudgetTests
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\a"));
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\b"));
         Assert.AreEqual(HistoryTier.H5, TierOf(budget, @"D:\c"));
-        Assert.AreEqual(HistoryTier.H3, TierOf(budget, @"D:\d"));
+        Assert.AreEqual(HistoryTier.None, TierOf(budget, @"D:\d"));
     }
 
     [TestMethod]

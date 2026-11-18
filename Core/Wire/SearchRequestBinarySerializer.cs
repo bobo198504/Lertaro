@@ -11,11 +11,11 @@ public static class SearchRequestBinarySerializer
     private const int Magic = 0x51504C53; // SLPQ
     // v5: Search/SearchDir gained ExactMatch; v6: EnumerateDir; v7: in-memory space entries; v8: file-name filtering.
     // v9: Search/SearchDir gained OrFirstPrecedence. v10: ApplyUpdate. v11: GetSpaceEntries gained filters.
-// v12: Search/SearchDir gained Category (SearchCategoryFilter).
+    // v12: Search/SearchDir gained Category (SearchCategoryFilter). v13: Search/SearchDir gained Progressive.
     // A new id that carries no payload needs no bump: older peers explicitly return Error for an unknown
     // id, while their existing operations still work. Never reuse an id or change its payload in place;
     // a changed frame/payload requires a new protocol version.
-    private const int VersionSearchRequest = 12;
+    private const int VersionSearchRequest = 13;
 
     public static async Task WriteSearchRequestAsync(Stream stream, SearchRequestMessage msg, CancellationToken token = default)
     {
@@ -34,10 +34,10 @@ public static class SearchRequestBinarySerializer
                 payloadSize += GetStringByteCount(msg.Drive) + 5 + 1;
                 break;
             case SearchRequestId.Search:
-                payloadSize += 8 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 3;
+                payloadSize += 8 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 4;
                 break;
             case SearchRequestId.SearchDir:
-                payloadSize += 8 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 3;
+                payloadSize += 8 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + SearchRequestValueCodec.CalculateStringListSize(msg.DisabledAliasComponents) + 5 + GetStringByteCount(msg.FileNameFilter) + 4;
                 break;
             case SearchRequestId.EnumerateDir:
                 payloadSize += 4 + GetStringByteCount(msg.DirectoryFilter) + 5 + GetStringByteCount(msg.Query) + 5 + 1;
@@ -93,6 +93,7 @@ public static class SearchRequestBinarySerializer
                     span[offset++] = (byte)(msg.ExactMatch ? 1 : 0);
                     span[offset++] = (byte)(msg.OrFirstPrecedence ? 1 : 0);
                     span[offset++] = (byte)msg.Category;
+                    span[offset++] = (byte)(msg.Progressive ? 1 : 0);
                     break;
                 case SearchRequestId.SearchDir:
                     BinaryPrimitives.WriteInt32LittleEndian(span.Slice(offset), msg.Limit);
@@ -106,6 +107,7 @@ public static class SearchRequestBinarySerializer
                     span[offset++] = (byte)(msg.ExactMatch ? 1 : 0);
                     span[offset++] = (byte)(msg.OrFirstPrecedence ? 1 : 0);
                     span[offset++] = (byte)msg.Category;
+                    span[offset++] = (byte)(msg.Progressive ? 1 : 0);
                     break;
                 case SearchRequestId.EnumerateDir:
                     BinaryPrimitives.WriteInt32LittleEndian(span.Slice(offset), msg.Limit);
@@ -195,6 +197,7 @@ public static class SearchRequestBinarySerializer
                 msg.ExactMatch = payload[offset++] != 0;
                 msg.OrFirstPrecedence = payload[offset++] != 0;
                 msg.Category = (SearchCategoryFilter)payload[offset++];
+                msg.Progressive = payload[offset++] != 0;
                 break;
             case SearchRequestId.SearchDir:
                 msg.Limit = BinaryPrimitives.ReadInt32LittleEndian(payload.AsSpan(offset));
@@ -208,6 +211,7 @@ public static class SearchRequestBinarySerializer
                 msg.ExactMatch = payload[offset++] != 0;
                 msg.OrFirstPrecedence = payload[offset++] != 0;
                 msg.Category = (SearchCategoryFilter)payload[offset++];
+                msg.Progressive = payload[offset++] != 0;
                 break;
             case SearchRequestId.EnumerateDir:
                 msg.Limit = BinaryPrimitives.ReadInt32LittleEndian(payload.AsSpan(offset));

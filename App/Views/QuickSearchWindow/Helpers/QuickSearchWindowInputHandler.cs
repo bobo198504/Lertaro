@@ -48,24 +48,25 @@ public class QuickSearchWindowInputHandler
 
     public void HandleWindowPreviewKeyDown(KeyEventArgs e)
     {
-        // The category filter bar is cycled by a key of the user's own (Tab by default) once there is
-        // something to filter. Before any input it is left to
-        // the code below, and this has to run BEFORE HandleCommonSearchKeys because that method claims bare
-        // Tab unconditionally: it calls EnterSubMenu and then marks the key handled and returns. Left behind
-        // that call, the category switch below would never run.
+        // The category wheel is cycled by Tab / Shift+Tab even before a query exists. This has to run BEFORE
+        // HandleCommonSearchKeys because that method claims bare Tab unconditionally.
         //
         // Actions mode keeps its own Tab: there the list really does hold ActionMenuItem entries, so
         // EnterSubMenu descends into a submenu (ActionsMenuNavigator) and swallowing the key would take that
         // away whenever the search box still holds the query -- which is always, in this window.
         //
-        // Gated on the box having text: before any input the card belongs to the launch panel, and the wheel
-        // over the bar is not what a user there is reaching for.
-        //
         // An empty setting stands this whole branch down: the key then reaches HandleCommonSearchKeys, which
         // is what it did before the filter bar existed.
-        var cycleDelta = !_window.IsInActionsMode && _window.HasSearchText
-            ? CategoryCycleDelta(UserSettings.Load().Hotkeys.CycleCategoryHotkey, Keyboard.Modifiers, WpfUiHelper.GetActualKey(e))
+        var actualKey = WpfUiHelper.GetActualKey(e);
+        var cycleDelta = !_window.IsInActionsMode && _window.ViewModel.Search.ShowCategoryBar
+            ? CategoryCycleDelta(UserSettings.Load().Hotkeys.CycleCategoryHotkey, Keyboard.Modifiers, actualKey)
             : 0;
+        if (cycleDelta == 0
+            && !_window.IsInActionsMode
+            && _window.ViewModel.Search.ShowCategoryBar
+            && actualKey == Key.Tab
+            && Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Shift)
+            cycleDelta = Keyboard.Modifiers == ModifierKeys.Shift ? -1 : 1;
         if (cycleDelta != 0)
         {
             _window.CycleCategory(cycleDelta);
@@ -78,19 +79,6 @@ public class QuickSearchWindowInputHandler
 
         if (SearchInputHelper.HandleCommonSearchKeys(e, _window, _window.MenuPresenter))
             return;
-
-        // Tab / Shift+Tab cycle the category filter, but only while the bar is on screen. The bar is hidden
-        // whenever the result list is, so Tab has to mean nothing then -- claiming it unconditionally would
-        // take the key away from whatever else may want it (the actions submenu among others) even in the
-        // state where there is no bar to move.
-        if ((e.Key == Key.Tab || e.Key == Key.System && e.SystemKey == Key.Tab)
-            && (Keyboard.Modifiers == ModifierKeys.None || Keyboard.Modifiers == ModifierKeys.Shift)
-            && _window.CategoryBar.Visibility == Visibility.Visible)
-        {
-            _window.ViewModel.CycleCategory(Keyboard.Modifiers == ModifierKeys.Shift ? -1 : 1);
-            e.Handled = true;
-            return;
-        }
 
         if (e.Key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
         {
@@ -123,7 +111,6 @@ public class QuickSearchWindowInputHandler
                 return;
             }
         }
-        var actualKey = WpfUiHelper.GetActualKey(e);
         if (WpfUiHelper.MatchesHotkey(settings.KeywordHistoryPreviousHotkey, Keyboard.Modifiers, actualKey))
         {
             _window.KeywordHistoryController.Navigate(previous: true);
@@ -297,8 +284,7 @@ public class QuickSearchWindowInputHandler
             SearchHistoryStore.Record(
                 SearchResultHelper.HistoryKeywordOf(result, _window.TxtSearch.Text),
                 result.FullPath,
-                SearchResultHelper.HistoryKindOf(result),
-                SearchResultHelper.IsLearnedRecall(result));
+                SearchResultHelper.HistoryKindOf(result));
         }
         if (result.IsPluginSearchAction)
         {

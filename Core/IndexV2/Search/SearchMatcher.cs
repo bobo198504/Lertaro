@@ -170,7 +170,8 @@ internal static partial class SearchMatcher
         List<UniqueMatch> merged,
         CancellationToken token = default,
         string[]? fileNamePatterns = null,
-        IReadOnlyList<int>? candidateUids = null)
+        IReadOnlyList<int>? candidateUids = null,
+        Func<UniqueMatch, bool>? onHit = null)
     {
         var ctx = BuildContext(pattern);
         merged.Clear();
@@ -321,7 +322,21 @@ internal static partial class SearchMatcher
                 {
                     merged.AddRange(worker.Hits);
                 }
-                ReturnWorker(worker);
+                try
+                {
+                    if (onHit != null)
+                    {
+                        foreach (var hit in worker.Hits)
+                        {
+                            if (!onHit(hit))
+                                break;
+                        }
+                    }
+                }
+                finally
+                {
+                    ReturnWorker(worker);
+                }
             });
     }
 

@@ -70,6 +70,11 @@ echo App Version: %APP_VER% (PE Version: %APP_VER_4%)
 :: workflow share. The sweep below clears the leftovers of a run that died halfway.
 echo.
 echo Decoding the signing key...
+if defined LERTARO_ALLOW_UNSIGNED (
+    echo [Warning] Building an unsigned fork release: signatures will be explicit placeholders.
+    set "SIGN_KEY="
+    goto :signing_key_ready
+)
 if not defined LERTARO_SIGNING_KEY (
     echo [Error] LERTARO_SIGNING_KEY is not set. It must hold the key file as one base64 line, for example
     echo         the output of:  openssl base64 -A -in lertaro-release.key
@@ -83,6 +88,7 @@ if not exist "%SIGN_KEY%" (
     exit /b 1
 )
 
+:signing_key_ready
 
 :: Two architectures, same steps, and separate artifacts rather than one combined installer: BrowserData
 :: carries a native library and only one architecture's copy fits its flat, deps.json-less load directory.
@@ -107,7 +113,7 @@ if errorlevel 1 exit /b 1
 echo.
 echo Cleaning up temporary publish folder...
 rmdir /s /q "%ROOT%publish" >nul 2>&1
-del /q "%SIGN_KEY%" >nul 2>&1
+if defined SIGN_KEY del /q "%SIGN_KEY%" >nul 2>&1
 
 echo.
 echo ==========================================
@@ -192,11 +198,21 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Sign the portable ZIP: the updater verifies an ECDSA P-256 signature over the whole archive and refuses
-:: an unsigned package, so signing belongs here rather than to a separate release step.
+:: Sign the portable ZIP: the updater verifies an ECDSA P-256 signature over the whole archive. Fork releases
+:: may deliberately set LERTARO_ALLOW_UNSIGNED=1 and publish the explicit unsigned placeholder instead.
 set "SIGN_ZIP=%DIST%\Lertaro-Portable%ARCHSUFFIX%.zip"
 
 echo Signing %SIGN_ZIP%...
+if defined LERTARO_ALLOW_UNSIGNED (
+    set "LERTARO_UNSIGNED_SIG=%SIGN_ZIP%.sig"
+    powershell -NoProfile -Command "if (Test-Path -LiteralPath $env:LERTARO_UNSIGNED_SIG) { Remove-Item -LiteralPath $env:LERTARO_UNSIGNED_SIG -Force }; [IO.File]::WriteAllBytes($env:LERTARO_UNSIGNED_SIG, [Text.Encoding]::ASCII.GetBytes('unsigned'))"
+    if errorlevel 1 (
+        echo [Error] Writing the unsigned signature placeholder failed.
+        exit /b 1
+    )
+    goto :eof
+)
+
 :: OpenSSL is preferred: its output can be checked with the command published in the release notes. It is
 :: not always on PATH, so the two usual Windows install locations are probed too.
 set "OPENSSL="

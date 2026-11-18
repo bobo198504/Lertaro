@@ -18,7 +18,7 @@ public static class UiMetrics
     public const double BaseSearchResultItemHeight = 51;
     public const double BaseListItemHeight = 34;
     public const double BaseSearchSectionHeaderHeight = 28;
-    public const int QuickSearchMaxVisibleResultRows = 9;
+    public const int QuickSearchMaxVisibleResultRows = 10;
     public const double LaunchPanelHorizontalPadding = 24;
     public const double LaunchPanelItemMinimumWidth = 108;
 

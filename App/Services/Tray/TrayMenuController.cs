@@ -32,7 +32,6 @@ internal sealed class TrayMenuController : IDisposable
     private MenuItem? _send;
     private MenuItem? _toggleHotkeys;
     private MenuItem? _settings;
-    private MenuItem? _about;
     private MenuItem? _cleanExit;
     private MenuItem? _exit;
     private Window? _anchor;
@@ -145,7 +144,6 @@ internal sealed class TrayMenuController : IDisposable
         _send = Item("\uE709", ShowSendWindow);
         _toggleHotkeys = Item(string.Empty, ToggleHotkeys);
         _settings = Item("\uE713", () => App.ShowSettingsWindow());
-        _about = Item("\uE946", () => App.ShowSettingsWindow("About"));
         _cleanExit = Item("\uE74D", () => TrayCleanExitHelper.CleanExit());
         _exit = Item("\uF3B1", () => Application.Current.Shutdown());
 
@@ -154,8 +152,6 @@ internal sealed class TrayMenuController : IDisposable
         _menu.Items.Add(QuickNavigationMenu.CreateSeparator());
         _menu.Items.Add(_toggleHotkeys);
         _menu.Items.Add(_settings);
-        _menu.Items.Add(QuickNavigationMenu.CreateSeparator());
-        _menu.Items.Add(_about);
         _menu.Items.Add(QuickNavigationMenu.CreateSeparator());
         _menu.Items.Add(_cleanExit);
         _menu.Items.Add(_exit);
@@ -253,7 +249,6 @@ internal sealed class TrayMenuController : IDisposable
         _showWindow!.Header = TranslationManager.Instance["Tray_ShowWindow"];
         _send!.Header = TranslationManager.Instance["Tray_SendToOtherDevices"];
         _settings!.Header = TranslationManager.Instance["Tray_Settings"];
-        _about!.Header = TranslationManager.Instance["Tray_About"];
         _cleanExit!.Header = TranslationManager.Instance["Tray_CleanExit"];
         _exit!.Header = TranslationManager.Instance["Tray_Exit"];
         UpdateHotkeyState();

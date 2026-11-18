@@ -84,6 +84,26 @@ public sealed class SearchRequestBinarySerializerTests
     }
 
     [TestMethod]
+    public async Task RoundTrip_Search_PreservesProgressivePreviewFlag()
+    {
+        foreach (var id in new[] { SearchRequestId.Search, SearchRequestId.SearchDir })
+        {
+            var result = await RoundTripAsync(new SearchRequestMessage
+            {
+                Id = id,
+                Query = "report",
+                DirectoryFilter = @"C:\docs",
+                Limit = 51,
+                Progressive = true,
+            });
+
+            Assert.IsTrue(result.Progressive, $"{id} lost the progressive flag");
+            Assert.AreEqual("report", result.Query);
+            Assert.AreEqual(51, result.Limit);
+        }
+    }
+
+    [TestMethod]
     public async Task RoundTrip_EnumerateDir_PreservesDirectoryFilterPatternAndRecursion()
     {
         var result = await RoundTripAsync(new SearchRequestMessage

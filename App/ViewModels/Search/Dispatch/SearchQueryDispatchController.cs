@@ -470,7 +470,7 @@ internal sealed class SearchQueryDispatchController
             return;
 
         var rows = new List<AppSearchResult>();
-        foreach (var (result, _, _) in SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow: false))
+        foreach (var (result, _) in SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow: false))
         {
             var category = SearchCategoryClassifier.Categorize(result);
             if (category is not { } declared || !selectedCategories.Contains(declared))

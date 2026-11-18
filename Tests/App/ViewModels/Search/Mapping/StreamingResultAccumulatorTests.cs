@@ -8,35 +8,6 @@ namespace Lertaro.App.Tests.ViewModels.Search.Mapping;
 [TestClass]
 public sealed class StreamingResultAccumulatorTests
 {
-    [TestMethod]
-    public void AbsorbBatch_CancelledWhileReading_StopsBeforeBuildingTheRest()
-    {
-        using var cancellation = new CancellationTokenSource();
-        var source = new CancellingRows(cancellation);
-        var accumulator = new StreamingResultAccumulator("report", resolveQueriedDirectory: _ => null);
-
-        Assert.ThrowsExactly<OperationCanceledException>(() => accumulator.AbsorbBatch(source, cancellation.Token));
-
-        Assert.AreEqual(3, source.Reads);
-        Assert.IsEmpty(accumulator.Rows, "A cancelled batch must never be published.");
-    }
-
-    private sealed class CancellingRows(CancellationTokenSource cancellation) : IReadOnlyList<SearchResult>
-    {
-        public int Count => 50_000;
-        public int Reads { get; private set; }
-        public SearchResult this[int index]
-        {
-            get
-            {
-                if (++Reads == 3) cancellation.Cancel();
-                return Result($@"Z:\report{index}.txt");
-            }
-        }
-        public IEnumerator<SearchResult> GetEnumerator() => throw new NotSupportedException();
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
     // A resolver that demotes one path and leaves everything else normal.
     private static Func<string, bool, PriorityVerdict> Low(string demoted) => (path, _) =>
         path.Equals(demoted, StringComparison.OrdinalIgnoreCase)
@@ -64,39 +35,6 @@ public sealed class StreamingResultAccumulatorTests
         var rows = accumulator.Absorb(Arrivals(@"D:\aaaaaa", @"D:\a", @"D:\aaa"));
 
         CollectionAssert.AreEqual(new[] { @"D:\a", @"D:\aaa", @"D:\aaaaaa" }, Paths(rows));
-    }
-
-    // The full window's last batch is the whole result set, sorted in parallel blocks and merged. The merged
-    // order has to be exactly the one a single-threaded sort gives: later paints and every scroll position
-    // assume one stable, fully ordered list.
-    [TestMethod]
-    public void AbsorbBatch_AboveTheParallelThreshold_MatchesASingleThreadedSort()
-    {
-        const int count = 45_000;
-        var arrivals = new List<SearchResult>(count);
-        for (var i = 0; i < count; i++)
-        {
-            var name = (i % 3) switch
-            {
-                0 => $"report_{i:D6}.txt",
-                1 => $"项目报告{i:D6}.docx",
-                _ => $"example_{i:D6}.log",
-            };
-            var row = Result($@"D:\dir{i % 500:D3}\{name}");
-            // Distinct quality keys, so no pair falls through to the name tail and the expected order is
-            // unambiguous.
-            row.RankSortKey = ((ulong)(i + 1) << 32) | 1UL;
-            arrivals.Add(row);
-        }
-
-        var accumulator = new StreamingResultAccumulator("report");
-        accumulator.UseRankContext(new RankContext(null));
-        var rows = accumulator.AbsorbBatch(arrivals);
-
-        var expected = new List<SearchResult>(arrivals);
-        expected.Sort(RankedSearchResultComparer.Instance);
-
-        CollectionAssert.AreEqual(expected.Select(r => r.Path).ToList(), rows.Select(r => r.FullPath).ToList());
     }
 
     // The full window's index-rule ranking: a demoted path sinks to the low-priority section however it

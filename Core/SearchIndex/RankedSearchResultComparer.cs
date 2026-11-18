@@ -1,10 +1,17 @@
 namespace Lertaro.Core.SearchIndex;
 
 /// <summary>
-/// Full-window V3 ordering over pre-decorated <see cref="SearchResult"/> rows. Mirrors
-/// <see cref="RankKeyComparer"/> exactly (with <c>TypeRank = 0</c> and <c>IsHistoryOnly = false</c>) so the
-/// quick and full windows preserve pairwise order across shared candidates.
+/// The full window's ordering, the equivalent of <see cref="RankKeyComparer"/> over rows that carry their
+/// keys in fields instead of a copied key array. The key order is deliberately the same one the quick
+/// window uses, and both read it from <see cref="RankPolicy.CompareSectionRank"/> and
+/// <see cref="RankPolicy.CompareCommonTail"/>, so one query cannot produce two file orders.
 /// </summary>
+/// <remarks>
+/// Two differences follow from what this window has: no display type layer (TypeRank is always 0), and no
+/// history-tail rows, because the window adds no history rows of its own -- history only lifts a row it
+/// found, and only through the threshold tier <see cref="SearchResultRanking"/> wrote.
+/// Reads only decorated fields, so a row that was never decorated compares as a weak normal-priority row.
+/// </remarks>
 public sealed class RankedSearchResultComparer : IComparer<SearchResult>
 {
     public static readonly RankedSearchResultComparer Instance = new();
@@ -28,139 +35,84 @@ public sealed class RankedSearchResultComparer : IComparer<SearchResult>
         if ((sectionX == RankSection.HistoryTail) != (sectionY == RankSection.HistoryTail))
             return sectionX == RankSection.HistoryTail ? 1 : -1;
 
-        return CompareSlow(x, y);
-    }
-
-    // The original field-by-field ordering. Kept as the definition of what RankOrderKey packs, and the
-    // path every pair takes when a row carries a history tie.
-    internal int CompareSlow(SearchResult x, SearchResult y)
-    {
-        var sectionX = SectionOf(x);
-        var sectionY = SectionOf(y);
-        var c = ((byte)sectionX).CompareTo((byte)sectionY);
-        if (c != 0)
-            return c;
-
-        var gradeX = SearchResultRanking.GradeOf(x);
-        var gradeY = SearchResultRanking.GradeOf(y);
         var tierX = (HistoryTier)((x.RankFlags >> 3) & 3);
         var tierY = (HistoryTier)((y.RankFlags >> 3) & 3);
         var tieX = RankPolicy.HistoryTie(isHistoryOnly: false, tierX, x.HistoryScoreX100);
         var tieY = RankPolicy.HistoryTie(isHistoryOnly: false, tierY, y.HistoryScoreX100);
-        var prioX = PriorityOrderOf(x);
-        var prioY = PriorityOrderOf(y);
-        // Fork: the left edge, contiguity and coverage lead the keys inside a section, so they have to reach
-        // the kernel. All three live in the high 32 bits the engine packed (start << 24, coverage at 13..21,
-        // contiguity at 5..12); unpack them here instead of widening the signal fields, so the packed key
-        // stays the single source of truth.
+
+        // Owner's final ladder, mirrored from RankKeyComparer: favorites, lifted history, left placement,
+        // file/folder, then the remaining match quality.
+        var xFavorite = x.RankScore == RankPolicy.FavoriteStrongScore;
+        var yFavorite = y.RankScore == RankPolicy.FavoriteStrongScore;
+        if (xFavorite != yFavorite)
+            return xFavorite ? -1 : 1;
+
         var rankX = new SectionRank(
             x.RankScore,
-            RankPolicy.HistoryTie(isHistoryOnly: false, tierX, x.HistoryScoreX100),
+            tieX,
             0,
             (int)((x.RankSortKey >> 56) & 0x7F),
             CoverageOf(x.RankSortKey),
             ContiguityOf(x.RankSortKey));
         var rankY = new SectionRank(
             y.RankScore,
-            RankPolicy.HistoryTie(isHistoryOnly: false, tierY, y.HistoryScoreX100),
+            tieY,
             0,
             (int)((y.RankSortKey >> 56) & 0x7F),
             CoverageOf(y.RankSortKey),
             ContiguityOf(y.RankSortKey));
 
-        // Match quality first, then the section -- see RankKeyComparer for why: a demoted path must lose to an
-        // equally good row, not to one whose letters were scattered across the name.
-        var byStart = rankX.Start.CompareTo(rankY.Start);
-        if (byStart != 0)
-            return byStart;
+        var historyTierX = sectionX == RankSection.Low ? HistoryTier.None : tierX;
+        var historyTierY = sectionY == RankSection.Low ? HistoryTier.None : tierY;
+        var xHistoryLifted = historyTierX >= HistoryTier.H3;
+        var yHistoryLifted = historyTierY >= HistoryTier.H3;
+        if (xHistoryLifted != yHistoryLifted)
+            return xHistoryLifted ? -1 : 1;
 
-        var byContiguity = rankY.Contiguity.CompareTo(rankX.Contiguity);
-        if (byContiguity != 0)
-            return byContiguity;
+        var c = historyTierY.CompareTo(historyTierX);
+        if (c != 0)
+            return c;
 
-        var compare = ((byte)sectionX).CompareTo((byte)sectionY);
+        var xLeftContiguous = rankX.Start == 0 && rankX.Contiguity >= 1;
+        var yLeftContiguous = rankY.Start == 0 && rankY.Contiguity >= 1;
+        if (xLeftContiguous != yLeftContiguous)
+            return xLeftContiguous ? -1 : 1;
+
+        var xHistory = sectionX == RankSection.Low ? 0 : tieX;
+        var yHistory = sectionY == RankSection.Low ? 0 : tieY;
+        c = yHistory.CompareTo(xHistory);
+        if (c != 0)
+            return c;
+
+        var compare = x.IsDir.CompareTo(y.IsDir);
         if (compare != 0)
             return compare;
 
-        switch (sectionX)
-        {
-            case RankSection.Pinned:
-                var pinX = (x.RankScore & SearchResultRanking.FlagAlwaysTop) != 0 ? 1 : 0;
-                var pinY = (y.RankScore & SearchResultRanking.FlagAlwaysTop) != 0 ? 1 : 0;
-                c = pinY.CompareTo(pinX);
-                if (c != 0)
-                    return c;
-                var favPinX = (x.RankScore & SearchResultRanking.FlagFavoritePin) != 0 ? 1 : 0;
-                var favPinY = (y.RankScore & SearchResultRanking.FlagFavoritePin) != 0 ? 1 : 0;
-                c = favPinY.CompareTo(favPinX);
-                if (c != 0)
-                    return c;
-                c = gradeX.CompareTo(gradeY);
-                if (c != 0)
-                    return c;
-                c = prioX.CompareTo(prioY);
-                if (c != 0)
-                    return c;
-                c = tierY.CompareTo(tierX);
-                if (c != 0)
-                    return c;
-                c = tieY.CompareTo(tieX);
-                if (c != 0)
-                    return c;
-                break;
+        compare = rankY.Contiguity.CompareTo(rankX.Contiguity);
+        if (compare != 0)
+            return compare;
 
-            case RankSection.Low:
-                c = gradeX.CompareTo(gradeY);
-                if (c != 0)
-                    return c;
-                c = tierY.CompareTo(tierX);
-                if (c != 0)
-                    return c;
-                c = tieY.CompareTo(tieX);
-                if (c != 0)
-                    return c;
-                break;
+        compare = rankY.Coverage.CompareTo(rankX.Coverage);
+        if (compare != 0)
+            return compare;
 
-            default:
-                c = gradeX.CompareTo(gradeY);
-                if (c != 0)
-                    return c;
-                var favX = (x.RankScore & SearchResultRanking.FlagFavorite) != 0;
-                var favY = (y.RankScore & SearchResultRanking.FlagFavorite) != 0;
-                if (favX != favY)
-                    return favX ? -1 : 1;
-                c = prioX.CompareTo(prioY);
-                if (c != 0)
-                    return c;
-                c = tierY.CompareTo(tierX);
-                if (c != 0)
-                    return c;
-                c = tieY.CompareTo(tieX);
-                if (c != 0)
-                    return c;
-                break;
-        }
+        compare = tierX.CompareTo(tierY);
+        if (compare != 0)
+            return compare;
 
-        // Packed quality, best first ("smaller is better" in high 32 bits; 0 means unpacked/worst).
-        var keyX = x.RankSortKey == 0 ? uint.MaxValue : (uint)(x.RankSortKey >> 32);
-        var keyY = y.RankSortKey == 0 ? uint.MaxValue : (uint)(y.RankSortKey >> 32);
-        c = keyX.CompareTo(keyY);
-        if (c != 0)
-            return c;
+        compare = ((byte)sectionX).CompareTo((byte)sectionY);
+        if (compare != 0)
+            return compare;
+
+        compare = ((uint)(x.RankSortKey >> 32)).CompareTo((uint)(y.RankSortKey >> 32));
+        if (compare != 0)
+            return compare;
 
         return RankPolicy.CompareCommonTail(TailOf(x), TailOf(y));
     }
 
-    private static RankSection SectionOf(SearchResult result) =>
-        result.RankFlags == 0 && result.RankScore == 0
-            ? RankSection.Boosted
-            : (RankSection)(result.RankFlags & 3);
-
-    private static int PriorityOrderOf(SearchResult result) =>
-        result.RankFlags == 0 && result.RankScore == 0
-            ? RankPolicy.PriorityOrder(IndexRuleEffect.Normal)
-            : (result.RankScore >> SearchResultRanking.PriorityShift) & 3;
-
+    // Trailing separator trimmed, exactly as the window's own comparer has always done: folder rows arrive
+    // spelled both ways, and a tie that depends on which one a caller happened to use is not an order.
     private static RankTail TailOf(SearchResult result)
     {
         var path = result.Path.Length > 3 && result.Path[^1] == '\\'

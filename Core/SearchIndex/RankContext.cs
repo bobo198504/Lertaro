@@ -3,7 +3,11 @@ using PriorityVerdict = Lertaro.Core.ExclusionRuleSet.PriorityVerdict;
 namespace Lertaro.Core.SearchIndex;
 
 /// <summary>
-/// Per-query ranking inputs shared across quick, inline and full search windows.
+/// Everything one query resolves once and hands to the kernel: the index-rule verdict per path, the
+/// decayed history score per path, and the favorite paths. Favorites are handed over as a set because
+/// only the full window's index rows have to discover them; the quick window reads
+/// <c>RankedCandidate.IsFavorite</c> instead and never looks at this field, so there is no second source
+/// of truth for a row that already carries the flag.
 /// </summary>
 public sealed class RankContext
 {
@@ -15,30 +19,38 @@ public sealed class RankContext
         IReadOnlySet<string>? favoritePaths = null,
         int historyFiveMax = RankPolicy.HistoryFiveMax,
         int historyThreeMax = RankPolicy.HistoryThreeMax,
-        string? query = null,
-        bool demoteDirectoryIdentity = true)
+        int historyLiftMax = RankPolicy.HistoryLiftMax,
+        string? query = null)
     {
         PriorityResolver = priorityResolver;
         HistoryScoreX100 = historyScoreX100 ?? NoScores;
         FavoritePaths = favoritePaths;
         HistoryFiveMax = Math.Max(0, historyFiveMax);
         HistoryThreeMax = Math.Max(0, historyThreeMax);
+        HistoryLiftMax = Math.Max(0, historyLiftMax);
         Query = query;
-        DemoteDirectoryIdentity = demoteDirectoryIdentity;
     }
 
     public Func<string, bool, PriorityVerdict>? PriorityResolver { get; }
-    public IReadOnlyDictionary<string, int> HistoryScoreX100 { get; }
-    public IReadOnlySet<string>? FavoritePaths { get; }
-    public int HistoryFiveMax { get; }
-    public int HistoryThreeMax { get; }
 
-    /// <summary>Clean query string used by full-window decoration to detect ExactIdentity stem matches.</summary>
-    public string? Query { get; }
+    /// <summary>Effective history score times 100, keyed by normalized path; empty when the caller has none.</summary>
+    public IReadOnlyDictionary<string, int> HistoryScoreX100 { get; }
+
+    /// <summary>Normalized paths the user starred; null when the caller has no favorites to hand over.</summary>
+    public IReadOnlySet<string>? FavoritePaths { get; }
 
     /// <summary>
-    /// Whether an exact-named directory is capped at DirectStrong. True (today's behaviour) unless the
-    /// caller established that the file bucket is the user's top-ranked type; see RankPolicy.GradeForRanking.
+    /// How many rows may reach H5 / H3. Only the quick-window path reads them, through
+    /// <see cref="RankPolicy.BuildHistoryBudget"/>; the full window derives its tier from the thresholds
+    /// alone and never consults a budget, so these say nothing there.
     /// </summary>
-    public bool DemoteDirectoryIdentity { get; }
+    public int HistoryFiveMax { get; }
+
+    public int HistoryThreeMax { get; }
+
+    /// <summary>Total top-history rows across both H5 and H3. Defaults to three.</summary>
+    public int HistoryLiftMax { get; }
+
+    /// <summary>The clean query, when the caller has one, for exact-identity grading.</summary>
+    public string? Query { get; }
 }

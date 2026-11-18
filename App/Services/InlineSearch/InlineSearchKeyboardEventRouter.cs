@@ -38,7 +38,7 @@ internal sealed class InlineSearchKeyboardEventRouter
                     return;
                 }
                 _onCharacterTyped(ch);
-            }));
+            }), System.Windows.Threading.DispatcherPriority.Input);
 
 
 
@@ -56,7 +56,7 @@ internal sealed class InlineSearchKeyboardEventRouter
                     return;
                 }
                 _onBackspacePressed();
-            }));
+            }), System.Windows.Threading.DispatcherPriority.Input);
 
         _keyboardHook.OnEscapePressed += () => Application.Current.Dispatcher.BeginInvoke(new Action(() =>
             {

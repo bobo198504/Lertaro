@@ -98,7 +98,7 @@ public static class SearchStreamPump
 
                     var __engStart = Lertaro.Core.SearchIndex.PerfTrace.Begin();
                     engine?.SearchStreaming(msg.Query ?? string.Empty, msg.Limit, msg.AppLimit, directory, Emit, queryToken,
-                        msg.FileNameFilter, msg.Category);
+                        msg.FileNameFilter, msg.Category, msg.Progressive);
                     Lertaro.Core.SearchIndex.PerfTrace.Mark("svc.engine", __engStart);
                     channel.Writer.TryComplete();
                 }

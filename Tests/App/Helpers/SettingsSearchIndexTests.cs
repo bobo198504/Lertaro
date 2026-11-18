@@ -24,7 +24,7 @@ public sealed class SettingsSearchIndexTests
 
         foreach (var file in SettingsXamlFiles())
         {
-            foreach (Match match in Regex.Matches(File.ReadAllText(file), @"x:Name=""(Row[A-Za-z0-9_]*)"""))
+            foreach (Match match in Regex.Matches(WithoutXmlComments(File.ReadAllText(file)), @"x:Name=""(Row[A-Za-z0-9_]*)"""))
             {
                 var anchor = match.Groups[1].Value;
                 if (!indexed.Contains(anchor))
@@ -43,7 +43,7 @@ public sealed class SettingsSearchIndexTests
     public void NoIndexEntryPointsAtAnAnchorThatNoLongerExists()
     {
         var anchors = SettingsXamlFiles()
-            .SelectMany(f => Regex.Matches(File.ReadAllText(f), @"x:Name=""(Row[A-Za-z0-9_]*)""")
+            .SelectMany(f => Regex.Matches(WithoutXmlComments(File.ReadAllText(f)), @"x:Name=""(Row[A-Za-z0-9_]*)""")
                 .Select(m => m.Groups[1].Value))
             .ToHashSet(StringComparer.Ordinal);
 
@@ -155,6 +155,8 @@ public sealed class SettingsSearchIndexTests
         Assert.AreEqual("TabGlobal/RowStayOpen", entry.TargetElementName);
     }
 
+    // Quick Launch disabled.
+    /*
     [TestMethod]
     public void TheQuickLaunchItemsTitleSelectsTheItemsSubsection()
     {
@@ -183,6 +185,14 @@ public sealed class SettingsSearchIndexTests
         Assert.IsNotNull(entry!.Activate, "the quick-launch source title does not select its subsection");
         Assert.AreEqual("RowQuickLaunchSourceTitle", entry.TargetElementName);
     }
+    */
+
+    [TestMethod]
+    public void DisabledQuickLaunchAndQuickPanelHaveNoSearchEntries()
+    {
+        Assert.IsFalse(SettingsSearchIndex.Entries.Any(e => e.Section is "QuickLaunch" or "QuickPanel"));
+        Assert.IsFalse(SettingsSearchIndex.Entries.Any(e => e.LabelKey == "Hotkeys_QuickPanel"));
+    }
 
     // Every segment of every reveal path. The paths are "outer/inner" hops resolved one FindName at a
     // time (see SettingsSearchEntry), so a nested anchor only ever appears as a trailing segment.
@@ -202,6 +212,11 @@ public sealed class SettingsSearchIndexTests
 
         var settings = Path.Combine(dir!.FullName, "App", "Views", "Settings");
         Assert.IsTrue(Directory.Exists(settings), $"expected the settings pages at {settings}");
-        return Directory.EnumerateFiles(settings, "*.xaml", SearchOption.AllDirectories);
+        return Directory.EnumerateFiles(settings, "*.xaml", SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}QuickLaunch{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !file.Contains($"{Path.DirectorySeparatorChar}QuickPanel{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
     }
+
+    private static string WithoutXmlComments(string xaml) =>
+        Regex.Replace(xaml, "<!--.*?-->", string.Empty, RegexOptions.Singleline);
 }

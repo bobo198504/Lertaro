@@ -277,7 +277,8 @@ public class HotkeySettingsViewModel : ViewModelBase
         hotkeys.OpenFullWindowHotkey = OpenFullWindowHotkey;
         hotkeys.LocalSendSendWindowHotkey = LocalSendSendWindowHotkey;
         hotkeys.StayOpenHotkey = StayOpenHotkey;
-        hotkeys.QuickPanelHotkey = QuickPanelHotkey;
+        // Quick Panel disabled.
+        // hotkeys.QuickPanelHotkey = QuickPanelHotkey;
         hotkeys.QuickNavigationHotkey = QuickNavigationHotkey;
 
         var pluginActionHotkeys = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
@@ -329,7 +330,8 @@ public class HotkeySettingsViewModel : ViewModelBase
 
         ToggleHotkeyValue = ProbeGlobalCombination(ToggleHotkeyValue, defaults.ToggleWindowHotkey, taken);
         QuickSwitchComboHotkey = ProbeGlobalCombination(QuickSwitchComboHotkey, defaults.QuickSwitchHotkey, taken);
-        QuickPanelHotkey = ProbeGlobalCombination(QuickPanelHotkey, defaults.QuickPanelHotkey, taken);
+        // Quick Panel disabled.
+        // QuickPanelHotkey = ProbeGlobalCombination(QuickPanelHotkey, defaults.QuickPanelHotkey, taken);
         QuickNavigationHotkey = ProbeGlobalCombination(QuickNavigationHotkey, defaults.QuickNavigationHotkey, taken);
         return taken;
     }

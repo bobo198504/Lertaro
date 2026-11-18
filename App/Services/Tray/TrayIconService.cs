@@ -10,6 +10,7 @@ public class TrayIconService : IDisposable
     private readonly TrayMenuController _menu;
     private NotifyIcon? _notifyIcon;
     private bool _trayIconVisibleSetting = true;
+    private long _lastLeftClickTicks;
 
     public static TrayIconService? Instance { get; private set; }
 
@@ -37,6 +38,11 @@ public class TrayIconService : IDisposable
         {
             if (e.Button == MouseButtons.Left)
             {
+                var now = Environment.TickCount64;
+                if (!ShouldHandleLeftClick(now, _lastLeftClickTicks, SystemInformation.DoubleClickTime))
+                    return;
+                _lastLeftClickTicks = now;
+
                 // The same summon the global hotkey performs, not a second toggle of its own.
                 //
                 // It used to call ToggleVisibility, which decides through DetermineToggleAction: show,
@@ -57,6 +63,9 @@ public class TrayIconService : IDisposable
             }
         };
     }
+
+    internal static bool ShouldHandleLeftClick(long nowTicks, long previousTicks, int doubleClickTimeMs) =>
+        previousTicks == 0 || nowTicks - previousTicks > doubleClickTimeMs;
 
     private void UpdateTrayIcon()
     {

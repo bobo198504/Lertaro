@@ -38,8 +38,9 @@ public class SettingsViewModel : ViewModelBase
         Blacklist = new BlacklistSettingsViewModel(_userSettings);
         Hotkeys = new HotkeySettingsViewModel(_userSettings, Blacklist);
         Favorites = new FavoritesSettingsViewModel(_userSettings);
-        QuickLaunch = new QuickLaunchSettingsViewModel(_userSettings);
-        QuickPanel = new QuickPanel.QuickPanelSettingsViewModel(_userSettings);
+        // Quick Launch and Quick Panel are disabled; their page view models stay lazy and unused.
+        // QuickLaunch = new QuickLaunchSettingsViewModel(_userSettings);
+        // QuickPanel = new QuickPanel.QuickPanelSettingsViewModel(_userSettings);
         LocalSend = new LocalSend.LocalSendSettingsViewModel(_userSettings);
         RefreshCommand = new RelayCommand(Refresh);
         ApplyCommand = new RelayCommand(Apply, () => CanApply);
@@ -61,8 +62,9 @@ public class SettingsViewModel : ViewModelBase
     private void OnLanguageChanged(object? sender, PropertyChangedEventArgs e)
     {
         ApplyUiState();
-        QuickPanel.NotifyLanguageChanged();
-        QuickLaunch.NotifyLanguageChanged();
+        // Quick Launch and Quick Panel are disabled.
+        // QuickPanel.NotifyLanguageChanged();
+        // QuickLaunch.NotifyLanguageChanged();
         _deferred.ExistingHistory?.NotifyLanguageChanged();
     }
 
@@ -86,14 +88,16 @@ public class SettingsViewModel : ViewModelBase
     public HotkeySettingsViewModel Hotkeys { get; }
     public BlacklistSettingsViewModel Blacklist { get; }
     public FavoritesSettingsViewModel Favorites { get; }
-    public QuickLaunchSettingsViewModel QuickLaunch { get; }
+    private QuickLaunchSettingsViewModel? _quickLaunch;
+    public QuickLaunchSettingsViewModel QuickLaunch => _quickLaunch ??= new QuickLaunchSettingsViewModel(_userSettings);
     public LocalSend.LocalSendSettingsViewModel LocalSend { get; }
 
     /// <summary>
     /// The floating panel's own page. Its "tabs" are workspaces, which is not what a tab means in the
     /// panel's own strip -- see QuickPanelSettingsViewModel.
     /// </summary>
-    public QuickPanel.QuickPanelSettingsViewModel QuickPanel { get; }
+    private QuickPanel.QuickPanelSettingsViewModel? _quickPanel;
+    public QuickPanel.QuickPanelSettingsViewModel QuickPanel => _quickPanel ??= new QuickPanel.QuickPanelSettingsViewModel(_userSettings);
     public ICommand RefreshCommand { get; }
     public ICommand ApplyCommand { get; }
     public bool RequiresPluginRestart => PluginManager.Instance.RequiresPluginRestart;
@@ -230,8 +234,9 @@ public class SettingsViewModel : ViewModelBase
             // purely to write back what it already read.
             _deferred.ExistingHistory?.Save();
             Favorites.Save();
-            QuickLaunch.Save();
-            QuickPanel.Save();
+            // Quick Launch and Quick Panel are disabled.
+            // QuickLaunch.Save();
+            // QuickPanel.Save();
             LocalSend.Apply();
             if (!_userSettings.Save())
                 throw new IOException($"Could not save settings to {UserSettings.SettingsPath}.");
@@ -333,7 +338,7 @@ public class SettingsViewModel : ViewModelBase
         var networkStatuses = _statusMonitor.LatestNetworkStatuses;
         var isServiceReady = status.State != "error";
         Service.UpdateStatus(status);
-        LocalDrive.UpdateStatus(status, settings);
+        _ = LocalDrive.UpdateStatusAsync(status, settings);
         // Network settings come from UserSettings.Load() (a separate local file, read once at startup)
         // and network indexing is its own subsystem -- neither depends on the local USN indexer's own
         // lifecycle. The only thing that legitimately blocks network settings from a "service"

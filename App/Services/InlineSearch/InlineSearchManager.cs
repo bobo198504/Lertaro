@@ -35,6 +35,7 @@ public class InlineSearchManager : IDisposable
     public KeyboardHookService KeyboardHook => _keyboardHook;
     public MouseHookService MouseHook => _mouseHook;
     public string SearchText => _searchText;
+    internal bool IsCardParked { get; set; }
     internal InlineSearchWindow? Window { get => _window; set => _window = value; }
     internal IntPtr CurrentHostHwnd { get => _currentHostHwnd; set => _currentHostHwnd = value; }
 
@@ -65,6 +66,23 @@ public class InlineSearchManager : IDisposable
         Logger.Log("[InlineSearchManager] Services started.", LogLevel.Debug);
     }
 
+    /// <summary>
+    /// Builds and paints the card once while the app is idle. The first real summon then pays only for
+    /// placing a warm parked window instead of constructing its view model, visual tree and first frame.
+    /// </summary>
+    public void PrewarmCard()
+    {
+        try
+        {
+            if (_windowSummon.Prewarm())
+                Logger.Log("[InlineSearchManager] Inline card prewarmed.", LogLevel.Info);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"[InlineSearchManager] Inline card prewarm failed: {ex}", LogLevel.Warn);
+        }
+    }
+
     // MouseHookService evaluates this on the hook's IPC thread, where reading a WPF property throws --
     // so only the Win32 point test runs here and the window's own visibility is decided in
     // WireUpMouseEvents, back on the UI thread.
@@ -81,11 +99,13 @@ public class InlineSearchManager : IDisposable
 
                 if (_explorerTracker.IsActiveWindowDialog)
                 {
+                    // File dialogs keep Ctrl+G and the automatic jump-on-window-switch path in the Hook.
+                    // They deliberately do not summon the inline card.
                     CloseInlineSearch("ExplorerActivated (Dialog)");
-                    SummonWindow();
+                    // SummonWindow();
                     // The window exists and knows its folder, but the user has not typed yet -- start
                     // reading that folder now so the first character does not have to wait for the walk.
-                    PrewarmActiveFolderListing();
+                    // PrewarmActiveFolderListing();
                 }
                 else
                 {
@@ -99,7 +119,7 @@ public class InlineSearchManager : IDisposable
 
         _explorerTracker.OnPathCaptured += (path, _, _) => Application.Current.Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_window is { IsVisible: true })
+                if (_window is { IsVisible: true } activeWindow && !IsCardParked)
                 {
                     // In a dialog host the baseline is the folder the user was last working in, resolved by the very
                     // same logic Ctrl+G uses, so "switch to the folder I came from" and "search from the folder I
@@ -109,10 +129,10 @@ public class InlineSearchManager : IDisposable
                     var scope = _explorerTracker.IsActiveWindowDialog
                         ? Core.Hook.InlineSearch.QuickSwitchTargetResolver.Resolve(_explorerTracker, PluginSdk.Services.ExplorerPathService.GetOpenedFolderPaths()) ?? path
                         : path;
-                    var oldScope = _window.ViewModel.SearchScope;
+                    var oldScope = activeWindow.ViewModel.SearchScope;
                     if (oldScope != scope)
                     {
-                        _window.ViewModel.SearchScope = scope;
+                        activeWindow.ViewModel.SearchScope = scope;
                         Logger.Log($"[InlineSearchManager] Updated SearchScope dynamically to: {scope}", LogLevel.Debug);
 
                         // Re-run with the text as it stands, not only when the box is empty. The scope just
@@ -125,13 +145,13 @@ public class InlineSearchManager : IDisposable
                         // has been handled, but while an IME is composing the box is already ahead of it, and
                         // re-running with the older text would compute the delayed scope against a query the
                         // user has moved on from.
-                        _window.ViewModel.Search.PerformSearch(_window.SearchBox.SearchText ?? string.Empty);
+                        activeWindow.ViewModel.Search.PerformSearch(activeWindow.SearchBox.SearchText ?? string.Empty);
                     }
                 }
-                else if (_explorerTracker.IsActiveWindowDialog)
-                {
-                    SummonWindow();
-                }
+                // else if (_explorerTracker.IsActiveWindowDialog)
+                // {
+                //     SummonWindow();
+                // }
 
                 // Covers both branches above: a scope just changed, or a card just summoned for a dialog
                 // host. Either way the folder is known before anything is typed.
@@ -218,7 +238,7 @@ public class InlineSearchManager : IDisposable
         _window?.ViewModel.Search.InvalidateDirectoryListing(scope);
         // A hidden window keeps the invalidation only: the next summon runs a query anyway, and re-running
         // for an invisible card would walk a folder nobody is looking at.
-        if (_window is not { IsVisible: true })
+        if (!IsInlineSearchActive)
             return;
 
         _window!.ViewModel.Search.PerformSearch(_window.SearchBox.SearchText ?? string.Empty);
@@ -236,8 +256,8 @@ public class InlineSearchManager : IDisposable
         timer.Tick += (_, _) =>
         {
             timer.Stop();
-            if (_window is { IsVisible: true })
-                _window.ViewModel.Search.PerformSearch(_window.SearchBox.SearchText ?? string.Empty);
+            if (_window is { IsVisible: true } activeWindow && !IsCardParked)
+                activeWindow.ViewModel.Search.PerformSearch(activeWindow.SearchBox.SearchText ?? string.Empty);
         };
         return timer;
     }
@@ -255,7 +275,7 @@ public class InlineSearchManager : IDisposable
                                                      // the hook delivers this on its IPC thread, and the
                                                      // InvalidOperationException it threw there used to kill
                                                      // the click-outside dismissal for every click.
-                                                     if (_window == null || !_window.IsVisible) return;
+                                                     if (_window == null || !_window.IsVisible || IsCardParked) return;
                                                      if (_explorerTracker.IsActiveWindowDialog)
                                                          return;
                                                      CloseInlineSearch("ClickOutside");
@@ -272,23 +292,23 @@ public class InlineSearchManager : IDisposable
                 {
                     _searchText += ch;
                 }
-                SummonWindow();
-                _window?.UpdateSearchDisplay(_searchText);
+                if (!SummonWindow(_searchText))
+                    _window?.UpdateSearchDisplay(_searchText);
             },
             onBackspacePressed: () =>
             {
                 if (_searchText.Length > 0)
                 {
                     _searchText = _searchText.Substring(0, _searchText.Length - 1);
-                    SummonWindow();
-                    _window?.UpdateSearchDisplay(_searchText);
+                    if (!SummonWindow(_searchText))
+                        _window?.UpdateSearchDisplay(_searchText);
                 }
             });
 
         router.Wire();
     }
 
-    private void SummonWindow() => _windowSummon.Summon();
+    private bool SummonWindow(string initialText) => _windowSummon.Summon(initialText);
 
     public bool IsExecuting { get; set; }
 
@@ -303,7 +323,7 @@ public class InlineSearchManager : IDisposable
     // Which dialog was foreground at the tick is therefore logged, not guessed at.
     private void ScheduleCloseOnExplorerDeactivated()
     {
-        if (_window == null) return;
+        if (_window == null || IsCardParked) return;
         var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(200) };
         timer.Tick += (s, e) =>
         {
@@ -333,6 +353,9 @@ public class InlineSearchManager : IDisposable
     // keeps looking "active").
     private void CloseInlineSearch(string reason, DateTime? deferUntil)
     {
+        if (IsCardParked)
+            return;
+
         if (_window == null)
         {
             // Win32 destroys the card together with the dialog that owned it (see
@@ -396,6 +419,7 @@ public class InlineSearchManager : IDisposable
         win.RestoreKeyboardLayout();
         win.Hide();
         WindowParking.Park(win);
+        IsCardParked = true;
         // Hand the foreground back to the window the card was docked to. Hiding a foreground window makes
         // the OS pick whatever comes next in z-order, and the next window in z-order is not necessarily
         // the one the user was working in -- this is the "another window jumped in front of Explorer the
@@ -439,20 +463,20 @@ public class InlineSearchManager : IDisposable
         _searchText = string.Empty;
     }
 
-    public bool IsInlineSearchActive => _window is { IsVisible: true };
+    public bool IsInlineSearchActive => _window is { IsVisible: true } && !IsCardParked;
 
     public void FocusSearchBox()
     {
-        if (_window is { IsVisible: true })
+        if (_window is { IsVisible: true } activeWindow && !IsCardParked)
         {
             if (_explorerTracker.IsActiveWindowDialog
-                && _window.SearchBox.SearchTextBox.IsKeyboardFocusWithin
-                && string.IsNullOrEmpty(_window.SearchText))
+                && activeWindow.SearchBox.SearchTextBox.IsKeyboardFocusWithin
+                && string.IsNullOrEmpty(activeWindow.SearchText))
             {
-                _window.ResetInlineSearchAndFocusDialog();
+                activeWindow.ResetInlineSearchAndFocusDialog();
                 return;
             }
-            _window.ActivateAndFocusSearchBox();
+            activeWindow.ActivateAndFocusSearchBox();
         }
     }
 

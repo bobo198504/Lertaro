@@ -130,8 +130,7 @@ public static class InlineSearchNavigator
             SearchHistoryStore.Record(
                 SearchResultHelper.HistoryKeywordOf(result, window.SearchText),
                 result.FullPath,
-                SearchResultHelper.HistoryKindOf(result),
-                SearchResultHelper.IsLearnedRecall(result));
+                SearchResultHelper.HistoryKindOf(result));
 
         // Trust result.IsDir for *which kind* it is (that's already known from the index), but still
         // confirm the path actually still exists right now -- a search result can go stale between when it

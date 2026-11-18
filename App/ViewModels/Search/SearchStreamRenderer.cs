@@ -289,12 +289,13 @@ internal sealed class SearchStreamRenderer
             {
                 foreach (var category in categoryList)
                 {
+                    var progressive = resultMapperConsumesBatches || appLimit > 0;
                     await _searchService.SearchStreamingAsync(query, categoryLimit, appLimit, searchScope,
                         Accumulate, token, () => _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(new Action(() =>
                         {
                             if (!token.IsCancellationRequested && searchVersion == _getSearchVersion())
                                 onLocalServiceUnavailable?.Invoke();
-                        })), bypassExclusions, category: category).ConfigureAwait(false);
+                        })), bypassExclusions, category: category, progressive: progressive).ConfigureAwait(false);
                 }
             }
 

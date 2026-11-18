@@ -44,8 +44,9 @@ public partial class SettingsWindow : Window
     private PluginManagementSettingsPage? _pagePlugins;
     private HistorySettingsPage? _pageHistory;
     private FavoritesSettingsPage? _pageFavorites;
-    private Views.Settings.QuickLaunch.QuickLaunchSettingsPage? _pageQuickLaunch;
-    private Views.Settings.QuickPanel.QuickPanelSettingsPage? _pageQuickPanel;
+    // Quick Launch and Quick Panel settings pages are disabled.
+    // private Views.Settings.QuickLaunch.QuickLaunchSettingsPage? _pageQuickLaunch;
+    // private Views.Settings.QuickPanel.QuickPanelSettingsPage? _pageQuickPanel;
     private Views.Settings.LocalSend.LocalSendSettingsPage? _pageLocalSend;
     private AboutSettingsPage? _pageAbout;
     private FrameworkElement? _currentPage;
@@ -64,8 +65,9 @@ public partial class SettingsWindow : Window
     internal PluginManagementSettingsPage PagePlugins => _pagePlugins ??= AddPage(new PluginManagementSettingsPage { DataContext = ((SettingsViewModel)DataContext).Plugins });
     internal HistorySettingsPage PageHistory => _pageHistory ??= AddPage(new HistorySettingsPage { DataContext = ((SettingsViewModel)DataContext).History });
     internal FavoritesSettingsPage PageFavorites => _pageFavorites ??= AddPage(new FavoritesSettingsPage { DataContext = ((SettingsViewModel)DataContext).Favorites });
-    internal Views.Settings.QuickLaunch.QuickLaunchSettingsPage PageQuickLaunch => _pageQuickLaunch ??= AddPage(new Views.Settings.QuickLaunch.QuickLaunchSettingsPage { DataContext = ((SettingsViewModel)DataContext).QuickLaunch });
-    internal Views.Settings.QuickPanel.QuickPanelSettingsPage PageQuickPanel => _pageQuickPanel ??= AddPage(new Views.Settings.QuickPanel.QuickPanelSettingsPage { DataContext = ((SettingsViewModel)DataContext).QuickPanel });
+    // Quick Launch and Quick Panel settings pages are disabled.
+    // internal Views.Settings.QuickLaunch.QuickLaunchSettingsPage PageQuickLaunch => _pageQuickLaunch ??= AddPage(new Views.Settings.QuickLaunch.QuickLaunchSettingsPage { DataContext = ((SettingsViewModel)DataContext).QuickLaunch });
+    // internal Views.Settings.QuickPanel.QuickPanelSettingsPage PageQuickPanel => _pageQuickPanel ??= AddPage(new Views.Settings.QuickPanel.QuickPanelSettingsPage { DataContext = ((SettingsViewModel)DataContext).QuickPanel });
     internal Views.Settings.LocalSend.LocalSendSettingsPage PageLocalSend => _pageLocalSend ??= AddPage(new Views.Settings.LocalSend.LocalSendSettingsPage { DataContext = ((SettingsViewModel)DataContext).LocalSend });
     internal AboutSettingsPage PageAbout => _pageAbout ??= AddPage(new AboutSettingsPage());
 

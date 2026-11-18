@@ -379,11 +379,12 @@ public sealed class HookProcess : IDisposable
             _keyboardHook = new KeyboardHookService(_explorerTracker);
             _keyboardHook.AppProcessId = _appProcessId;
             _keyboardHook.IsHotkeysDisabledTemporarily = _isHotkeysDisabledTemporarily;
-            _keyboardHook.OnQuickPanelHotkey += () =>
-            {
-                Logger.Log("[HookProcess] Quick panel hotkey detected.", LogLevel.Debug);
-                _ipcServer.SendQuickPanelHotkey();
-            };
+            // Quick Panel disabled: do not forward its hotkey over IPC.
+            // _keyboardHook.OnQuickPanelHotkey += () =>
+            // {
+            //     Logger.Log("[HookProcess] Quick panel hotkey detected.", LogLevel.Debug);
+            //     _ipcServer.SendQuickPanelHotkey();
+            // };
             _keyboardHook.OnQuickNavigationHotkey += () => _ipcServer.SendQuickNavigationHotkey();
             _keyboardHook.OnQuickSwitchRequested += dialogHwnd =>
             {

@@ -248,6 +248,7 @@
                                     <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_History]}" Style="{StaticResource SidebarNavigationLabel}"/>
                                 </StackPanel>
                             </ListBoxItem>
+                            <!-- Quick Launch and Quick Panel are disabled. Keep their declarations for restoration.
                             <ListBoxItem Tag="QuickLaunch" ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_QuickLaunch]}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE768;" FontFamily="{DynamicResource AppIconFontFamily}" Style="{StaticResource SidebarNavigationIcon}"/>
@@ -260,6 +261,7 @@
                                     <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_QuickPanel]}" Style="{StaticResource SidebarNavigationLabel}"/>
                                 </StackPanel>
                             </ListBoxItem>
+                            -->
                             <ListBoxItem Tag="LocalSend" ToolTip="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[Settings_LocalSend_Title]}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE898;" FontFamily="{DynamicResource AppIconFontFamily}" Style="{StaticResource SidebarNavigationIcon}"/>

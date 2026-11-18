@@ -1,6 +1,7 @@
 using System.Windows.Interop;
 using System.Windows.Threading;
 using Lertaro.App.ViewModels.Search;
+using Lertaro.App.Helpers.Visuals;
 using Lertaro.Core;
 using Lertaro.Core.Hook;
 using Lertaro.Core.Hook.InlineSearch;
@@ -20,8 +21,26 @@ internal sealed class InlineSearchWindowSummonSupport
 
     public InlineSearchWindowSummonSupport(InlineSearchManager manager) => _manager = manager;
 
+    /// <summary>Builds and paints the card once at the parking row while startup is idle.</summary>
+    public bool Prewarm()
+    {
+        if (_manager.Window != null)
+            return false;
+
+        var window = Create();
+        _manager.Window = window;
+        // Mark parked before Show so visibility callbacks do not treat this as an active inline session.
+        _manager.IsCardParked = true;
+        window.ShowActivated = false;
+        new WindowInteropHelper(window).EnsureHandle();
+        WindowParking.Park(window);
+        window.Show();
+        window.ParkAfterPrewarm();
+        return true;
+    }
+
     /// <summary>Brings the card up for whichever window the tracker is on now.</summary>
-    public void Summon()
+    public bool Summon(string initialText)
     {
         PowerThrottlingHelper.WindowShowing("inline");
         // Cancels any idle trim armed by CloseInlineSearch: trimming just before a summon is strictly
@@ -33,10 +52,11 @@ internal sealed class InlineSearchWindowSummonSupport
 
         // The card is already on screen: this is a keystroke after the first one, and re-summoning would wipe
         // what the user has typed into it. The create-per-summon version got the same early exit by existing.
-        if (_manager.Window is { IsVisible: true }) return;
+        if (_manager.Window is { IsVisible: true } && !_manager.IsCardParked) return false;
 
         _manager.Window ??= Create();
         var window = _manager.Window;
+        _manager.IsCardParked = false;
 
         // Before the dock: ownership is a property of the HWND, and a card built just above does not have one
         // yet, so the order here decided whether its first session was docked at all.
@@ -54,7 +74,10 @@ internal sealed class InlineSearchWindowSummonSupport
         // Show from the mirror immediately. IsInlineWindowOnScreen above asks the Hook's paced poller
         // for a fresh path; its normal PathCaptured event repairs this scope and re-runs the current query.
         window.ViewModel.SearchScope = tracker.ActivePath;
-        window.UpdateSearchDisplay(string.Empty);
+        // The first typed character is what summoned this card. Put it into the box before the sizing
+        // and reveal passes, so the first visible frame is already the real query instead of an empty
+        // box followed by a second query and layout pass one dispatcher turn later.
+        window.UpdateSearchDisplay(initialText);
 
         // Sized before it is shown, not from its Loaded handler like every later pass: the window is opaque
         // now, so the card's height has to be the window's height before the first frame or the frame that
@@ -111,6 +134,7 @@ internal sealed class InlineSearchWindowSummonSupport
         }
 
         Logger.Log($"[InlineSearchManager] Card shown. Scope: {window.ViewModel.SearchScope}", LogLevel.Debug);
+        return true;
     }
 
     // The one place the card's own view model is built, so the scope it starts reading from and the inline

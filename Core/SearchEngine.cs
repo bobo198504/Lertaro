@@ -27,12 +27,6 @@ public class SearchEngine : IDisposable
     // Drives whose saved pages have already been loaded this run, so the restore pass stays idempotent
     // while the rest are still coming up.
 
-    // How long the service must sit idle before it hands its working set back to the OS. The trim
-    // drops the index's mapped pages, so the next query re-reads them: measured, a query after a pause
-    // costs tens to a couple of hundred milliseconds more than one on resident pages. That is a small
-    // delay at the start of a query, not the stall users reported -- that one held the UI thread and
-    // came from the result list, so this stays at the upstream window and the service keeps a small
-    // working set when nobody is searching.
     private const long IdleTrimAfterMs = 3_000;
     private readonly IdleTrimGate _idleTrim = new(IdleTrimAfterMs, Environment.TickCount64);
     private readonly Timer? _idleTimer;
@@ -165,7 +159,8 @@ public class SearchEngine : IDisposable
         Action<SearchResult> onResult,
         CancellationToken requestToken = default,
         string? fileNameFilter = null,
-        SearchCategoryFilter category = SearchCategoryFilter.All)
+        SearchCategoryFilter category = SearchCategoryFilter.All,
+        bool progressive = false)
     {
         // Marked in flight for the duration, and stamped again on the way out: this method blocks until
         // the whole search is done, so a query taking longer than the idle window would otherwise look
@@ -173,7 +168,8 @@ public class SearchEngine : IDisposable
         _idleTrim.SearchStarted(Environment.TickCount64);
         try
         {
-            return SearchStreamingCore(query, fileLimit, appLimit, directoryFilter, onResult, requestToken, fileNameFilter, category);
+            return SearchStreamingCore(query, fileLimit, appLimit, directoryFilter, onResult, requestToken,
+                fileNameFilter, category, progressive);
         }
         finally
         {
@@ -189,7 +185,8 @@ public class SearchEngine : IDisposable
         Action<SearchResult> onResult,
         CancellationToken requestToken,
         string? fileNameFilter,
-        SearchCategoryFilter category)
+        SearchCategoryFilter category,
+        bool progressive)
     {
         if (string.IsNullOrWhiteSpace(query))
             return true;
@@ -224,7 +221,9 @@ public class SearchEngine : IDisposable
             {
                 searchToken.ThrowIfCancellationRequested();
                 onResult(result);
-            }, searchToken, directoryFilter, fileNameFilter, category);
+            }, searchToken, directoryFilter, fileNameFilter, category,
+                progressive: progressive,
+                onPreview: progressive ? onResult : null);
 
             return true;
         }

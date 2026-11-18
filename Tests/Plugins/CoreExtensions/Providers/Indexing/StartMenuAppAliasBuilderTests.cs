@@ -54,4 +54,18 @@ public sealed class StartMenuAppAliasBuilderTests
         Assert.IsTrue(aliases.All(alias => alias.Kind == SearchableItemAliasKind.ProductMetadata));
         Assert.IsEmpty(StartMenuAppAliasBuilder.FromPackage("PixPin", @"C:\Apps\PixPin.exe"));
     }
+
+    [TestMethod]
+    public void MergePackagedAliases_AddsExplorerAliasToClassicSameNameRow()
+    {
+        var item = new SearchableItem { Title = "File Explorer" };
+
+        StartMenuAppItemProvider.MergePackagedAliases(
+            item,
+            "Microsoft.Windows.Explorer_8wekyb3d8bbwe!App");
+
+        CollectionAssert.Contains(
+            item.Aliases.Select(alias => alias.Text).ToList(),
+            "Explorer");
+    }
 }

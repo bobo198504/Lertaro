@@ -74,11 +74,10 @@ internal sealed class QuickSearchWindowShowSupport
         // the DPI context of the monitor the summon belongs to, so the frame is composed for that scale, and
         // the move down into place changes neither its size nor its scale.
         _controller.PositionWindow();
+        _controller.PrepareShowFade();
 
-        // No fade-in, deliberately: the whole window is opaque now, and fading means showing the content at
-        // zero opacity for the length of the animation, which on an opaque window is a black rectangle
-        // rather than a see-through one (NotificationWindowManager reached the same conclusion for cards).
-        // What is left of this window's motion is everything that never touches the Window's own opacity.
+        // The native fade prepares at alpha zero before the parked show, then begins only after the card
+        // has reached its real position. WPF keeps its opaque rendering path and ClearType throughout.
         window.SuppressPositioning();
         WindowParking.ShowThenPlace(window, RevealAtPlacedPosition);
 
@@ -86,6 +85,7 @@ internal sealed class QuickSearchWindowShowSupport
         {
             window.AllowPositioning();
             window.PositionWindow();
+            _controller.FadeIn();
         }
 
         _controller.ForegroundWatcher.Start();
@@ -93,12 +93,13 @@ internal sealed class QuickSearchWindowShowSupport
         // overwrites it, so the window still reads as a fresh search box.
         _controller.ActivateAndFocus(useClipboardText || keepSearchText, caretAtEnd);
 
+        // Quick Launch disabled: do not probe disk or plugin providers while showing the window.
         // The launch panel's sources are read here rather than earlier in this sequence, where they used to
         // be: reading them probes the disk and asks every plugin provider, and on the show path that work
         // was the summon's own latency. Background priority puts it behind the first frame and the focus
         // grab, so the window is up and usable first and the tiles replace the last summon's own.
-        window.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background, new Action(window.ViewModel.RefreshLaunchItems));
+        // window.Dispatcher.BeginInvoke(
+        //     DispatcherPriority.Background, new Action(window.ViewModel.RefreshLaunchItems));
     }
 
     /// <summary>

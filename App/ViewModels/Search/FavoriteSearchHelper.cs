@@ -34,10 +34,7 @@ public static class FavoriteSearchHelper
     // results. A favorite is something the user deliberately named or picked; searching for it should
     // only need to match what it's actually called.
     internal static MatchRank ComputeMatch(FavoriteItemSetting fav, FuzzyQuery fuzzy)
-        => ComputeMatchWithEvidence(fav, fuzzy).Rank;
-
-    internal static MatchEvidenceResult ComputeMatchWithEvidence(FavoriteItemSetting fav, FuzzyQuery fuzzy)
-        => fuzzy.BestMatchWithEvidence(GetDisplayName(fav), MatchEvidenceField.DisplayTitle);
+        => fuzzy.BestMatch(GetDisplayName(fav));
 
     public static AppSearchResult CreateFavoriteUiResult(FavoriteItemSetting fav, string query, int index)
     {

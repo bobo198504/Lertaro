@@ -4,8 +4,6 @@ using Lertaro.Core.IndexV2.Delta;
 
 using Lertaro.Core.IndexV2.Persistence;
 using Lertaro.Core.SearchIndex.Query;
-using Lertaro.Core.Services.Plugin.DirectoryIndex;
-using Lertaro.PluginSdk.Helpers;
 namespace Lertaro.Core.IndexV2.Search.PathMode;
 
 // Path-mode search entry point + exact-path navigation, mirroring PathExtensions.SearchPath /
@@ -14,25 +12,19 @@ namespace Lertaro.Core.IndexV2.Search.PathMode;
 internal static class PathSearch
 {
     public static void SearchStreaming(Snapshot snapshot, DeltaOverlay delta, ParsedSearchQuery parsed, int limit,
-        Action<SearchResult> onResult, CancellationToken token, string? directoryFilterLower,
-        string[]? fileNamePatterns = null, SearchCategoryFilter category = SearchCategoryFilter.All,
-        Func<int, long>? getDirectorySize = null)
+        Action<SearchResult> onResult, CancellationToken token, string? directoryFilterLower)
     {
-        if (TryDirectoryChildren(snapshot, delta, parsed, limit, onResult, token, directoryFilterLower,
-                fileNamePatterns, category, getDirectorySize))
+        if (TryDirectoryChildren(snapshot, delta, parsed, limit, onResult, token))
             return;
 
         if (parsed.TargetDrive != null && !parsed.TargetDrive.Equals(snapshot.SourceKey, StringComparison.OrdinalIgnoreCase))
             return;
 
-        PathSearchFuzzy.SearchStreaming(snapshot, delta, parsed.PathPatternLower ?? string.Empty, limit, onResult,
-            token, directoryFilterLower, fileNamePatterns, category, getDirectorySize);
+        PathSearchFuzzy.SearchStreaming(snapshot, delta, parsed.PathPatternLower ?? string.Empty, limit, onResult, token, directoryFilterLower);
     }
 
     // "t:\a\b\" lists children; "t:\a\b\pre" filters them by the last segment as a name prefix query.
-    private static bool TryDirectoryChildren(Snapshot snapshot, DeltaOverlay delta, ParsedSearchQuery parsed, int limit,
-        Action<SearchResult> onResult, CancellationToken token, string? directoryFilterLower,
-        string[]? fileNamePatterns, SearchCategoryFilter category, Func<int, long>? getDirectorySize)
+    private static bool TryDirectoryChildren(Snapshot snapshot, DeltaOverlay delta, ParsedSearchQuery parsed, int limit, Action<SearchResult> onResult, CancellationToken token)
     {
         if (parsed.ExactPathLower == null || parsed.TargetDrive == null)
             return false;
@@ -43,7 +35,7 @@ internal static class PathSearch
         var keep = (int)Math.Min((long)Math.Max(limit, 8) * 8, snapshot.Count + delta.Added.Count);
         var matches = new FzfTopN(keep);
 
-        if (childPrefix.Length == 0 && !DirectoryFilterResolver.IsVisiblyDeleted(snapshot, delta, current) && Admits(current))
+        if (childPrefix.Length == 0 && !DirectoryFilterResolver.IsVisiblyDeleted(snapshot, delta, current))
         {
             matches.Add(FzfResultRank.ForDefaultScheme(current, DirectoryFilterResolver.GetName(snapshot, delta, current), new FzfPatternResult(0, 0, 0, 0, false)));
         }
@@ -57,10 +49,8 @@ internal static class PathSearch
         {
             foreach (var child in snapshot.ChildrenOf(current))
             {
-                token.ThrowIfCancellationRequested();
                 if (snapshot.IsDeleted(child) || delta.IsSuperseded(child))
                     continue;
-                if (!Admits(child)) continue;
                 AddBaseMatch(child);
             }
         }
@@ -73,24 +63,10 @@ internal static class PathSearch
                 : deltaChildren.ChildrenOfFrn(delta.Added[current - snapshot.Count].Id);
             foreach (var child in children)
             {
-                token.ThrowIfCancellationRequested();
                 if (DirectoryFilterResolver.IsSuperseded(snapshot, delta, child))
                     continue;
-                if (!Admits(child)) continue;
                 AddDeltaMatch(child);
             }
-        }
-
-        bool Admits(int child)
-        {
-            if (fileNamePatterns == null && category == SearchCategoryFilter.All && directoryFilterLower == null) return true;
-            var flags = child >= snapshot.Count ? delta.Added[child - snapshot.Count].Flags
-                : delta.BaseOverrides.TryGetValue(child, out var record) ? record.Flags : snapshot.Flags[child];
-            if (!FilterPatternHelper.MatchesSearchResult(DirectoryFilterResolver.GetName(snapshot, delta, child),
-                (flags & (ushort)FileRecordFlags.Directory) != 0, fileNamePatterns, category)) return false;
-            if (directoryFilterLower == null) return true;
-            var path = child >= snapshot.Count ? delta.GetFullPath(delta.Added[child - snapshot.Count]) : delta.GetFullPath(child);
-            return path.StartsWith(directoryFilterLower, StringComparison.OrdinalIgnoreCase);
         }
 
         void AddBaseMatch(int child)
@@ -127,7 +103,7 @@ internal static class PathSearch
             token.ThrowIfCancellationRequested();
             if (!seen.Add(rank.EntryIndex))
                 continue;
-            onResult(ResultBuilder.ToResult(snapshot, delta, rank, getDirectorySize));
+            onResult(ResultBuilder.ToResult(snapshot, delta, rank));
             if (++emitted >= limit)
                 break;
         }

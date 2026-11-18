@@ -147,6 +147,10 @@ internal sealed class SearchExecutionEngine : IDisposable
             return;
         }
 
+        var sourceTracker = InlineSearchManager.Instance.ExplorerTracker;
+        var commandDirectory = isInlineSearchContext
+            ? (!string.IsNullOrWhiteSpace(searchScope) ? searchScope : sourceTracker.ActivePath ?? sourceTracker.LastActiveExplorerPath)
+            : sourceTracker.LastActiveExplorerPath;
         beforeSearch?.Invoke();
         onSearchStateChanged(true);
         var cts = new CancellationTokenSource();
@@ -161,10 +165,6 @@ internal sealed class SearchExecutionEngine : IDisposable
         // before this client can apply the priority, so an ordinary name inside a promoted folder would
         // otherwise never reach the ranking. Resolved once per search; the rule set caches per settings.
         var priorityRoots = ExclusionRuleSet.From(UserSettings.Load()).HighPriorityRoots;
-        var sourceTracker = InlineSearchManager.Instance.ExplorerTracker;
-        var commandDirectory = isInlineSearchContext
-            ? (!string.IsNullOrWhiteSpace(searchScope) ? searchScope : sourceTracker.ActivePath ?? sourceTracker.LastActiveExplorerPath)
-            : sourceTracker.LastActiveExplorerPath;
         // Providers are invoked with the box text as typed (the owner of a trigger word has to keep
         // recognising it), but their rows are highlighted against `query` -- what the file search beside
         // them was matched with, with that word (and any :token suffix) already taken off. Same split
@@ -288,14 +288,11 @@ internal sealed class SearchExecutionEngine : IDisposable
             rankRules.GetPriorityVerdict,
             SearchHistoryStore.ScoreSnapshot(DateTimeOffset.UtcNow),
             historyFiveMax: 1,
-            historyThreeMax: 3,
+            historyThreeMax: 2,
+            historyLiftMax: RankPolicy.HistoryLiftMax,
             query: query);
 
-        // The engine-side folder filter never sees these rows: history remembers files too, so the scope has
-        // to be applied here as well.
-        var learned = HistorySearchCandidateMapper.CollectLearned(FuzzyQuery.Parse(query), contextDirectory, rankContext);
-        var learnedLocalMatches = folderScope ? learned.Where(c => c.Result.IsDir).ToList() : learned;
-        var localUpdateVersion = learnedLocalMatches.Count > 0 ? 1 : 0;
+        var localUpdateVersion = 0;
         void OnLocalMatchesChanged() => Interlocked.Increment(ref localUpdateVersion);
 
         var localSearchTask = ExplorerSearchHelper.LoadDirectChildrenAsync(
@@ -321,7 +318,7 @@ internal sealed class SearchExecutionEngine : IDisposable
                 snapshot = new List<AppSearchResult>(localMatches);
             }
 
-            var built = ExplorerSearchHelper.CreateLocalSnapshot(snapshot, learnedLocalMatches, query, contextDirectory, rankContext: rankContext);
+            var built = ExplorerSearchHelper.CreateLocalSnapshot(snapshot, query, contextDirectory, rankContext: rankContext);
             cachedLocalSnapshot = built;
             cachedLocalVersion = version;
             return built;

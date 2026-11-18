@@ -3,7 +3,7 @@ using Lertaro.Core;
 
 namespace Lertaro.App.Tests.ViewModels.Settings;
 
-// The save-time probe of the four global hook hotkeys: a combination the OS refuses (the system or
+// The save-time probe of the active global hook hotkeys: a combination the OS refuses (the system or
 // another program registered it) goes back to its default and is reported, instead of saving into the
 // half-broken state where the hook only sometimes wins the keystroke.
 [TestClass]
@@ -12,10 +12,9 @@ public sealed class HotkeySettingsViewModelTests
     private static HotkeySettingsViewModel CreateViewModel(Func<uint, uint, bool>? combinationTaken)
     {
         var vm = new HotkeySettingsViewModel(new UserSettings(), new BlacklistSettingsViewModel(new UserSettings()), combinationTaken);
-        // The other three default to real combinations, which an always-taken stub would report;
+        // The other defaults are real combinations, which an always-taken stub would report;
         // emptied here so each test answers for exactly the property it sets.
         vm.QuickSwitchComboHotkey = string.Empty;
-        vm.QuickPanelHotkey = string.Empty;
         return vm;
     }
 
@@ -23,12 +22,12 @@ public sealed class HotkeySettingsViewModelTests
     public void ATakenCombination_IsResetToItsDefaultAndReported()
     {
         var vm = CreateViewModel((_, _) => true);
-        vm.QuickPanelHotkey = "Alt+Space";
+        vm.ToggleHotkeyValue = "Alt+Space";
 
         var taken = vm.ProbeGlobalCombinations();
 
         CollectionAssert.Contains(taken, "Alt+Space");
-        Assert.AreEqual("Ctrl+F2", vm.QuickPanelHotkey);
+        Assert.AreEqual("Ctrl", vm.ToggleHotkeyValue);
     }
 
     [TestMethod]

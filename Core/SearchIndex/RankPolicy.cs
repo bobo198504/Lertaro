@@ -1,15 +1,21 @@
 namespace Lertaro.Core.SearchIndex;
 
-// Shared monotonic ranking kernel (V3). The quick/inline windows sort RankKey arrays via RankKeyComparer;
-// the full window decorates SearchResult rows once via SearchResultRanking and sorts via
-// RankedSearchResultComparer. Both windows share the section, grade, band, tie-break and tail rules;
-// only the quick/inline window carries the configured result-type order:
+// The ranking kernel both search windows share: the score of one candidate, which section it lands in,
+// and the key order inside that section. Design, numbers and rationale:
+// dev-docs/search-ranking-redesign.md sections 2-5. Both windows rank through this kernel: the quick one
+// via RankKeyComparer, the full one via SearchResultRanking + RankedSearchResultComparer.
 //
-//   Section 0 Pinned       explicit High+AlwaysTop pins first, then strong user Favorites
-//   Section 1 Boosted      ordinary High/Normal textual matches (Grade 0..3: ExactIdentity .. SecondaryField)
-//   Section 2 Low          explicit Low-priority textual matches (Grade 0..3)
-//   Section 3 HistoryTail  pure learned query->path history associations (Grade 4, never jumps ahead of text)
+//   0 Pinned       the "always top" exit of a high-priority index rule
+//   1 Boosted      favorite strong matches, history H5/H3, and every normal or high priority row
+//   2 Low          demoted by an index rule and not lifted by anything above
+//   3 HistoryTail  a history-only row whose weighted score is below 3
+//
+// Pinned and Boosted rank by the exchangeable score S = 10*C + 8*P, so one priority step buys 0.8 of a
+// match step and a high-priority weak match (16) still lands below a normal-priority strong one (18).
+// Low and HistoryTail stay separate sections because no weighted sum can put the low-priority bucket
+// (10/0) above a weak history row (6) and keep the six documented tiers in order at the same time.
 
+/// <summary>The four ranking buckets, in display order. See the header above.</summary>
 public enum RankSection
 {
     Pinned = 0,
@@ -18,6 +24,11 @@ public enum RankSection
     HistoryTail = 3,
 }
 
+/// <summary>
+/// Which history bucket a row was assigned by the caller's budget (redesign 3.4). Tail means a history
+/// row whose effective score is under 3; None means no history. The budget itself is not here yet -- the
+/// caller decides the tier and passes it in.
+/// </summary>
 public enum HistoryTier
 {
     None = 0,
@@ -26,6 +37,11 @@ public enum HistoryTier
     H5 = 3,
 }
 
+/// <summary>Everything the kernel needs about one candidate, already resolved by the caller.</summary>
+/// <param name="HistoryScoreX100">Effective history score times 100, so the tie-break keeps 0.01 detail.</param>
+/// <param name="TypeRank">Display type order (quick window only); the full window passes 0.</param>
+/// <param name="NormalizedPath">Path with any trailing separator removed; the caller normalizes once.</param>
+/// <param name="EngineTie">The engine's own low bits, consulted only after every window-level key.</param>
 public readonly record struct RankSignals(
     MatchRank Match,
     bool IsHistoryOnly,
@@ -38,12 +54,9 @@ public readonly record struct RankSignals(
     string Name,
     string NormalizedPath,
     int Drive,
-    ulong EngineTie = 0,
-    bool TypeRankApplies = true,
-    // False when the caller knows nothing outranks the file bucket in the user's result-type order: an
-    // exact-named directory then keeps its ExactIdentity (see RankPolicy.GradeForRanking).
-    bool DemoteDirectoryIdentity = true);
+    ulong EngineTie = 0);
 
+/// <summary>A candidate after decoration: the three computed numbers plus every key the comparer reads.</summary>
 public readonly record struct RankKey(
     byte AlwaysTop,
     byte Section,
@@ -56,21 +69,13 @@ public readonly record struct RankKey(
     string NormalizedPath,
     int Drive,
     ulong EngineTie,
-    byte FavoritePin = 0,
-    MatchEvidenceGrade Grade = MatchEvidenceGrade.DirectStrong,
-    bool IsFavorite = false,
-    IndexRuleEffect Priority = IndexRuleEffect.Normal,
-    HistoryTier Tier = HistoryTier.None,
-    bool TypeRankApplies = true)
+    HistoryTier Tier = HistoryTier.None)
 {
+    /// <summary>The shared tail keys, read straight off this row so the comparer builds no second object.</summary>
     public RankTail Tail => new(IsDir, Name, NormalizedPath, Drive, EngineTie);
-    // The configured result-type order is a late tie-break, not a group: section, grade, priority,
-    // history band and the match placement (contiguity, shape, start) all run first; only coverage and
-    // match tier come after it. It only compares the three built-in buckets
-    // (Applications, System settings, Files); every other row shares one rank behind them.
-    public int EffectiveTypeRank => TypeRank;
 }
 
+/// <summary>Scores and sections of redesign 3.2. The constants are the only tunable numbers in the kernel.</summary>
 public static class RankPolicy
 {
     /// <summary>
@@ -78,18 +83,13 @@ public static class RankPolicy
     /// policies can be told apart afterwards. Bump it with any change to the score, the sections or the key
     /// order. It is a code constant, not a setting: a policy version that a user could edit measures nothing.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 2;
 
     public const int StrongWeight = 10;
     public const int PriorityWeight = 8;
     public const int FavoriteStrongScore = 44;
-    // A habit outranks everything a text match can earn. The owner's rule is that the thing used most
-    // often should come first, and a rarely used exact match should not jump ahead of it -- so the
-    // history tiers sit above FavoriteStrongScore (44) rather than between the match weights (26 max)
-    // and it. Previously H5 scored 34 and H3 22, which put H3 below an ordinary strong match and kept
-    // a habitual row off the top of the list.
-    public const int HistoryFiveScore = 60;
-    public const int HistoryThreeScore = 50;
+    public const int HistoryFiveScore = 34;
+    public const int HistoryThreeScore = 22;
     public const int HistoryTailScore = 6;
 
     // History buckets (redesign 3.4). The thresholds decide the tier; the caps only truncate, so a fourth
@@ -99,21 +99,14 @@ public static class RankPolicy
     public const int HistoryThreeThresholdX100 = 300;
     public const int HistoryFiveMax = 3;
     public const int HistoryThreeMax = 10;
-    // The quick window shows about fifty rows; three habitual slots were too easy to exhaust when several
-    // frequently used portable programs share a leading letter. The inline card keeps its smaller 1/3 budget.
-    public const int QuickHistoryFiveMax = 8;
-    public const int QuickHistoryThreeMax = 20;
+    public const int HistoryLiftMax = 3;
 
-    public static bool IsPreferenceEligible(MatchEvidenceGrade grade) =>
-        grade is MatchEvidenceGrade.ExactIdentity or MatchEvidenceGrade.DirectStrong;
-
-    public static int PriorityOrder(IndexRuleEffect priority) => priority switch
-    {
-        IndexRuleEffect.High => 0,
-        IndexRuleEffect.Normal => 1,
-        _ => 2,
-    };
-
+    /// <summary>
+    /// The score of one candidate, from the facts the kernel reads. A favorite only earns its bonus on a
+    /// strong match; history tiers come from the caller's budget, and only a history-only row is scored as
+    /// the tail, so an indexed row with one or two opens keeps its C/P. The full window passes
+    /// <paramref name="isHistoryOnly"/> false: it never adds history rows.
+    /// </summary>
     public static int Score(
         bool isStrong,
         bool isFavorite,
@@ -130,30 +123,46 @@ public static class RankPolicy
         if (isHistoryOnly && tier == HistoryTier.Tail)
             return HistoryTailScore;
 
-        var priorityWeight = priority switch
+        var c = isStrong ? 1 : 0;
+        var p = priority switch
         {
             IndexRuleEffect.High => 2,
             IndexRuleEffect.Normal => 1,
             _ => 0,
         };
-        return StrongWeight * (isStrong ? 1 : 0) + PriorityWeight * priorityWeight;
+        return StrongWeight * c + PriorityWeight * p;
     }
 
     public static int Score(in RankSignals s, HistoryTier tier) =>
         Score(s.Match.IsStrong, s.IsFavorite, s.IsHistoryOnly, s.Priority, tier);
 
+    /// <summary>The biggest bonus the first type in the user's result-type order earns on a strong match.</summary>
     public const int TypeBonusMax = 16;
 
+    /// <summary>
+    /// The quick window's score: the base C/P score plus the row's display-type weight. Only the base score
+    /// is weighted -- a favorite in the fifth type must stay above a strong match in the first, and the
+    /// history tiers are global by the same argument. The full window has no type layer and keeps calling
+    /// <see cref="Score(in RankSignals, HistoryTier)"/> through <c>SearchResultRanking.Decorate</c>.
+    /// </summary>
     public static int QuickScore(in RankSignals s, HistoryTier tier) =>
         UsesBaseScore(s.Match.IsStrong, s.IsFavorite, s.IsHistoryOnly, tier)
             ? Score(s, tier) + TypeBonus(s.TypeRank, s.Match)
             : Score(s, tier);
 
+    /// <summary>The rows whose score the display-type order is allowed to weight.</summary>
     public static bool UsesBaseScore(bool isStrong, bool isFavorite, bool isHistoryOnly, HistoryTier tier) =>
         !(isFavorite && isStrong)
         && tier is not (HistoryTier.H5 or HistoryTier.H3)
         && !(isHistoryOnly && tier == HistoryTier.Tail);
 
+    /// <summary>
+    /// How much the user's result-type order adds to a row's score. The first type gets enough to lift a
+    /// reasonable match over a perfect match two or three types down, and the bonus decays per position
+    /// instead of acting as a hard group. A weak match keeps only its own quality share of the bonus
+    /// (<see cref="MatchRank.Weight"/>), so a barely matching row in the first type still loses to a strong
+    /// match further down. Unlisted types (int.MaxValue) and any type past the fourth get nothing.
+    /// </summary>
     public static int TypeBonus(int typeRank, in MatchRank match)
     {
         var max = typeRank switch
@@ -166,50 +175,38 @@ public static class RankPolicy
         };
         if (max == 0 || !match.IsMatch)
             return 0;
-        return match.IsStrong
-            ? max
-            : (int)Math.Round(max * Math.Clamp(match.Weight, 0, 1), MidpointRounding.AwayFromZero);
+        if (match.IsStrong)
+            return max;
+        return (int)Math.Round(max * Math.Clamp(match.Weight, 0, 1), MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>
+    /// The section of one candidate, in the fixed order of redesign 3.2: always-top first, then anything
+    /// history or a favorite lifts (regardless of its priority bucket -- a low-priority H5 row is Boosted),
+    /// then a weak history-only row, then the low-priority bucket. A pin is only ever honored on a High
+    /// bucket, which is what the caller's verdict already guarantees.
+    /// </summary>
     public static RankSection Section(
-        IndexRuleEffect priority,
-        bool explicitAlwaysTop,
-        bool favoritePin,
+        bool isStrong,
+        bool isFavorite,
         bool isHistoryOnly,
-        MatchEvidenceGrade grade)
+        IndexRuleEffect priority,
+        bool alwaysTop,
+        HistoryTier tier)
     {
-        if (explicitAlwaysTop || favoritePin)
+        if (alwaysTop && priority == IndexRuleEffect.High)
             return RankSection.Pinned;
-        if (isHistoryOnly || grade == MatchEvidenceGrade.LearnedAlias)
+        if ((isFavorite && isStrong) || tier is HistoryTier.H5 or HistoryTier.H3)
+            return RankSection.Boosted;
+        if (isHistoryOnly && tier == HistoryTier.Tail)
             return RankSection.HistoryTail;
         if (priority == IndexRuleEffect.Low)
             return RankSection.Low;
         return RankSection.Boosted;
     }
 
-    public static RankSection Section(in RankSignals s, HistoryTier tier, in MatchEvidence evidence = default)
-    {
-        var grade = GradeForRanking(s, evidence);
-        var explicitAlwaysTop = s.AlwaysTop && s.Priority == IndexRuleEffect.High;
-        var favoritePin = !explicitAlwaysTop && s.IsFavorite && !s.IsHistoryOnly && IsPreferenceEligible(grade);
-        return Section(s.Priority, explicitAlwaysTop, favoritePin, s.IsHistoryOnly, grade);
-    }
-
-    /// <summary>Diagnostic ordinal score for trace compatibility; ordering uses the structured keys.</summary>
-    public static int DiagnosticScore(
-        RankSection section,
-        bool explicitAlwaysTop,
-        bool favoritePin,
-        MatchEvidenceGrade grade,
-        IndexRuleEffect priority,
-        HistoryTier tier) => section switch
-    {
-        RankSection.Pinned when explicitAlwaysTop => 500 - (int)grade * 10,
-        RankSection.Pinned when favoritePin => 400 - (int)grade * 10,
-        RankSection.Boosted => 300 - (int)grade * 20 + (priority == IndexRuleEffect.High ? 2 : 0) + (int)tier,
-        RankSection.Low => 100 - (int)grade * 10 + (int)tier,
-        _ => 10 + (int)tier,
-    };
+    public static RankSection Section(in RankSignals s, HistoryTier tier) =>
+        Section(s.Match.IsStrong, s.IsFavorite, s.IsHistoryOnly, s.Priority, s.AlwaysTop, tier);
 
     /// <summary>
     /// The history key, on a 0..1000 scale: how much the user actually uses this row, as the store already
@@ -228,120 +225,61 @@ public static class RankPolicy
     public static int HistoryTie(bool isHistoryOnly, HistoryTier tier, int historyScoreX100) =>
         historyScoreX100;
 
-    public static HistoryTier EffectiveHistoryTier(
-        HistoryTier tier,
-        MatchEvidenceGrade grade,
-        bool isHistoryOnly)
-    {
-        if (isHistoryOnly || grade == MatchEvidenceGrade.LearnedAlias)
-            return tier;
-        return IsPreferenceEligible(grade) && tier is HistoryTier.H5 or HistoryTier.H3
-            ? tier
-            : HistoryTier.None;
-    }
+    public static int HistoryTie(in RankSignals s, HistoryTier tier) =>
+        HistoryTie(s.IsHistoryOnly, tier, s.HistoryScoreX100);
 
-    public static int HistoryTie(
-        bool isHistoryOnly,
-        HistoryTier tier,
-        int historyScoreX100,
-        MatchEvidenceGrade grade = MatchEvidenceGrade.DirectStrong)
-    {
-        if (isHistoryOnly || grade == MatchEvidenceGrade.LearnedAlias)
-            return tier is HistoryTier.H5 or HistoryTier.H3 or HistoryTier.Tail ? historyScoreX100 : 0;
-        return IsPreferenceEligible(grade) && tier is HistoryTier.H5 or HistoryTier.H3
-            ? historyScoreX100
-            : 0;
-    }
-
-    public static RankKey BuildKey(in RankSignals s, HistoryTier tier, in MatchEvidence evidence = default)
-    {
-        var grade = GradeForRanking(s, evidence);
-        var explicitAlwaysTop = s.AlwaysTop && s.Priority == IndexRuleEffect.High;
-        var favoritePin = !explicitAlwaysTop && s.IsFavorite && !s.IsHistoryOnly && IsPreferenceEligible(grade);
-        var section = Section(s.Priority, explicitAlwaysTop, favoritePin, s.IsHistoryOnly, grade);
-        var effectiveTier = EffectiveHistoryTier(tier, grade, s.IsHistoryOnly);
-        var historyTie = HistoryTie(s.IsHistoryOnly, effectiveTier, s.HistoryScoreX100, grade);
-        var score = Score(s, effectiveTier);
-
-        return new RankKey(
-            explicitAlwaysTop ? (byte)1 : (byte)0,
-            (byte)section,
-            score,
-            historyTie,
-            s.TypeRank,
-            s.IsHistoryOnly ? MatchRank.NoMatch : s.Match,
-            s.IsDir,
-            s.Name,
-            s.NormalizedPath,
-            s.Drive,
-            s.EngineTie,
-            favoritePin ? (byte)1 : (byte)0,
-            grade,
-            s.IsFavorite,
-            s.Priority,
-            effectiveTier,
-            s.TypeRankApplies);
-    }
-
-    // Directories are containers, not identities: an exact folder name is a strong direct match but never
-    // an ExactIdentity -- as long as the user ranks the file bucket behind another type, so that the
-    // configured type order (Applications before Files) can put an app ahead of an unrelated folder with the
-    // same leading word. Once Files is the top of that order the cap has nothing left to protect, and
-    // demoting would instead strip the strongest evidence from the bucket the user ranked first: a settings
-    // row that only matched through a keyword would outrank every exact-named folder while the file bucket
-    // still led the order. Callers turn the cap off for exactly that case (RankContext.DemoteDirectoryIdentity).
-    private static MatchEvidenceGrade GradeForRanking(in RankSignals s, in MatchEvidence evidence)
-    {
-        var strong = !s.IsHistoryOnly && s.Match.IsStrong;
-        var grade = MatchEvidence.ResolveGrade(evidence, s.Match, s.IsHistoryOnly, strong);
-        return s.IsDir && s.DemoteDirectoryIdentity && grade == MatchEvidenceGrade.ExactIdentity
-            ? MatchEvidenceGrade.DirectStrong
-            : grade;
-    }
+    /// <summary>Decorates signals once so the comparer never recomputes a key, resolves a dictionary or trims a path.</summary>
+    public static RankKey BuildKey(in RankSignals s, HistoryTier tier) => new(
+        (byte)(s.AlwaysTop && s.Priority == IndexRuleEffect.High ? 1 : 0),
+        (byte)Section(s, tier),
+        Score(s, tier),
+        HistoryTie(s, tier),
+        s.TypeRank,
+        s.Match,
+        s.IsDir,
+        s.Name,
+        s.NormalizedPath,
+        s.Drive,
+        s.EngineTie,
+        tier);
 
     /// <summary>
-    /// Assigns capped H5/H3 tiers by decayed score. Only history-only or strong filename matches qualify;
-    /// remaining history-only rows become Tail. Candidate enumeration order does not affect the result.
+    /// Splits candidates into the history buckets of redesign 3.4. The thresholds decide which tier a row
+    /// gets and the caps only truncate the overflow, so the fourth 5+ row lands in H3 instead of dropping
+    /// to the tail, and a 3-5 row never fills a spare H5 slot. Only a history-only row or a strong
+    /// filename match qualifies, and every pure history row that did not make H5/H3 lands at Tail.
+    /// Paths missing from the result are <see cref="HistoryTier.None"/>. The order of the candidates
+    /// cannot change the outcome: rows are ranked by score, then by the path's ordinal order.
     /// </summary>
+    /// <param name="fiveMax">Rows allowed into H5; a 5+ row past the cap keeps its lift by falling through
+    /// to H3 (see <paramref name="threeMax"/>). The inline card passes 1 instead of the default 3.</param>
+    /// <param name="threeMax">Rows allowed into H3. At zero the only lifted rows are the H5 ones, and every
+    /// other pure history row falls to <see cref="HistoryTier.Tail"/>.</param>
+    /// <param name="liftMax">Total rows allowed to receive H5 or H3, regardless of which tier cap would
+    /// otherwise accept them. The quick and inline windows use three so history cannot fill the page.</param>
     public static IReadOnlyDictionary<string, HistoryTier> BuildHistoryBudget(
         IEnumerable<RankSignals> candidates,
         int fiveMax = HistoryFiveMax,
-        int threeMax = HistoryThreeMax) =>
-        BuildHistoryBudget(candidates, tierEligiblePaths: null, fiveMax, threeMax);
-
-    /// <summary>
-    /// Same budget, but only rows on <paramref name="tierEligiblePaths"/> may spend an H5/H3 slot.
-    /// A Grade 2/3 row cannot read a lifted tier (<see cref="EffectiveHistoryTier"/> drops it), so it
-    /// must not spend a slot whose lift it will never use. History-only rows always qualify.
-    /// </summary>
-    public static IReadOnlyDictionary<string, HistoryTier> BuildHistoryBudget(
-        IEnumerable<RankSignals> candidates,
-        IReadOnlySet<string>? tierEligiblePaths,
-        int fiveMax = HistoryFiveMax,
-        int threeMax = HistoryThreeMax)
+        int threeMax = HistoryThreeMax,
+        int liftMax = HistoryLiftMax)
     {
         fiveMax = Math.Max(0, fiveMax);
         threeMax = Math.Max(0, threeMax);
+        liftMax = Math.Max(0, liftMax);
         var tiers = new Dictionary<string, HistoryTier>(StringComparer.OrdinalIgnoreCase);
+        // One entry per path, carrying its best score, so a duplicate cannot spend two of the caps.
         var qualified = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var historyOnlyPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in candidates)
         {
             var path = s.NormalizedPath;
             if (s.IsHistoryOnly)
-            {
                 historyOnlyPaths.Add(path);
-            }
-            else if (tierEligiblePaths != null && !tierEligiblePaths.Contains(path))
-            {
-                // The row stays in the candidate set, but it cannot spend a history slot: its grade
-                // never reads the tier, so letting it qualify would only mislabel the trace and badge
-                // (or, on a tied score, take a band from a row that can use it).
-                continue;
-            }
 
             if (s.HistoryScoreX100 < HistoryThreeThresholdX100)
                 continue;
+            // A weak filename match earns no lift from history alone: the row has to be a history row or
+            // one the query genuinely explains.
             if (!s.IsHistoryOnly && !s.Match.IsStrong)
                 continue;
 
@@ -360,8 +298,12 @@ public static class RankPolicy
 
         var fiveTaken = 0;
         var threeTaken = 0;
+        var lifted = 0;
         foreach (var (path, score) in ordered)
         {
+            if (lifted >= liftMax)
+                break;
+
             if (score >= HistoryFiveThresholdX100 && fiveTaken < fiveMax)
             {
                 fiveTaken++;
@@ -372,6 +314,12 @@ public static class RankPolicy
                 threeTaken++;
                 Assign(tiers, path, HistoryTier.H3);
             }
+            else
+            {
+                continue;
+            }
+
+            lifted++;
         }
 
         foreach (var path in historyOnlyPaths)
@@ -380,6 +328,8 @@ public static class RankPolicy
         return tiers;
     }
 
+    // Strongest tier wins. HistoryTier is ordered None < Tail < H3 < H5, so a path reached twice keeps the
+    // better bucket instead of whatever the last pass wrote.
     private static void Assign(Dictionary<string, HistoryTier> tiers, string path, HistoryTier tier)
     {
         if (!tiers.TryGetValue(path, out var existing) || tier > existing)
@@ -497,6 +447,7 @@ public static class RankPolicy
         if (compare != 0)
             return compare;
 
+        // Case-only differences are still distinct rows; sorting by Ordinal keeps the order total.
         compare = string.CompareOrdinal(x.NormalizedPath, y.NormalizedPath);
         if (compare != 0)
             return compare;
@@ -504,56 +455,10 @@ public static class RankPolicy
         return x.EngineTie.CompareTo(y.EngineTie);
     }
 
+    /// <summary>Rank order for a drive spelled as its letter ("C"), or for the empty string a row with no
+    /// filesystem drive carries. The character's ordinal is what a case-insensitive string comparison of
+    /// those same spellings produced, so no row moves.</summary>
     public static int DriveRank(string? drive) => string.IsNullOrEmpty(drive) ? 0 : char.ToUpperInvariant(drive[0]);
-
-    // The full-window ordering up to (and including) the packed quality key, as one integer: section,
-    // then the fields THAT SECTION compares, then the quality key -- exactly the sequence
-    // RankedSearchResultComparer's slow path runs before the history tie. Because two rows in different
-    // sections never compare past the section bits, the section-specific slots may differ per section;
-    // a slot a section does not compare is left zero for all of its rows and therefore has no effect.
-    //
-    // History tie is deliberately absent: it is an unbounded score, and the slow path still handles every
-    // pair where it is non-zero.
-    //
-    //   bits 45-44  section
-    //   bit  43     not alwaysTop        (Pinned)
-    //   bit  42     not favoritePin      (Pinned)
-    //   bits 41-39  grade
-    //   bit  38     not favorite         (Boosted/HistoryTail)
-    //   bits 37-36  priority order
-    //   bits 35-34  not history tier
-    //   bits 33-2   packed quality key
-    public static ulong OrderKey(
-        RankSection section,
-        bool alwaysTop,
-        bool favoritePin,
-        MatchEvidenceGrade grade,
-        bool isFavorite,
-        IndexRuleEffect priority,
-        HistoryTier tier,
-        ulong rankSortKey)
-    {
-        var quality = rankSortKey == 0 ? uint.MaxValue : (uint)(rankSortKey >> 32);
-        var key = (ulong)(byte)section << 44;
-        switch (section)
-        {
-            case RankSection.Pinned:
-                key |= (alwaysTop ? 0UL : 1UL) << 43;
-                key |= (favoritePin ? 0UL : 1UL) << 42;
-                key |= (ulong)PriorityOrder(priority) << 36;
-                break;
-            case RankSection.Low:
-                break;
-            default:
-                key |= (isFavorite ? 0UL : 1UL) << 38;
-                key |= (ulong)PriorityOrder(priority) << 36;
-                break;
-        }
-
-        key |= (ulong)(int)grade << 39;
-        key |= (ulong)(3 - ((int)tier & 3)) << 34;
-        return key | ((ulong)quality << 2);
-    }
 }
 
 /// <summary>Per-section ordering inputs. See RankPolicy.CompareSectionRank for what each section reads.</summary>
@@ -571,6 +476,11 @@ public readonly record struct SectionRank(
 /// <summary>The tail every section shares, already reduced to values a comparer can read.</summary>
 public readonly record struct RankTail(bool IsDir, string Name, string NormalizedPath, int Drive, ulong EngineTie);
 
+/// <summary>
+/// The key order of redesign 3.3. Sections decide first; inside a section the sequence differs on
+/// purpose, because the display type order is an explicit user preference that outranks quality in every
+/// bucket except Low, where the owner asked for quality first.
+/// </summary>
 public sealed class RankKeyComparer : IComparer<RankKey>
 {
     public static readonly RankKeyComparer Instance = new();
@@ -589,82 +499,74 @@ public sealed class RankKeyComparer : IComparer<RankKey>
         if ((xSection == RankSection.HistoryTail) != (ySection == RankSection.HistoryTail))
             return xSection == RankSection.HistoryTail ? 1 : -1;
 
-        // Match quality FIRST: where the query sits in the name and how tightly it sits there is what the
-        // user actually typed. A row whose letters land at the start of its name is the one they meant, and
-        // it outranks a habit -- a path opened often but matching somewhere in the middle should not take the
-        // top away from a name that begins with the query.
-        var byStart = x.Match.Start.CompareTo(y.Match.Start);
-        if (byStart != 0)
-            return byStart;
+        // The owner's final ladder: favorites, at most three lifted-history rows, then result type,
+        // left placement, file/folder, and the remaining match quality. Once the history budget is used,
+        // the user's configured type order owns the rest of the list; left placement decides inside a type.
+        var xFavorite = x.Score == RankPolicy.FavoriteStrongScore;
+        var yFavorite = y.Score == RankPolicy.FavoriteStrongScore;
+        if (xFavorite != yFavorite)
+            return xFavorite ? -1 : 1;
+
+        var xTier = xSection == RankSection.Low ? HistoryTier.None : x.Tier;
+        var yTier = ySection == RankSection.Low ? HistoryTier.None : y.Tier;
+        var xHistoryLifted = xTier >= HistoryTier.H3;
+        var yHistoryLifted = yTier >= HistoryTier.H3;
+        if (xHistoryLifted != yHistoryLifted)
+            return xHistoryLifted ? -1 : 1;
+
+        if (xHistoryLifted)
+        {
+            var byTier = yTier.CompareTo(xTier);
+            if (byTier != 0)
+                return byTier;
+        }
+
+        var xLeftContiguous = x.Match.Start == 0 && x.Match.Contiguity >= 1;
+        var yLeftContiguous = y.Match.Start == 0 && y.Match.Contiguity >= 1;
+
+        if (!xHistoryLifted)
+        {
+            var byType = x.TypeRank.CompareTo(y.TypeRank);
+            if (byType != 0)
+                return byType;
+        }
+
+        if (xLeftContiguous != yLeftContiguous)
+            return xLeftContiguous ? -1 : 1;
+
+        var xHistory = xSection == RankSection.Low ? 0 : x.HistoryTie;
+        var yHistory = ySection == RankSection.Low ? 0 : y.HistoryTie;
+        var byHistory = yHistory.CompareTo(xHistory);
+        if (byHistory != 0)
+            return byHistory;
+
+        if (xHistoryLifted)
+        {
+            var byType = x.TypeRank.CompareTo(y.TypeRank);
+            if (byType != 0)
+                return byType;
+        }
+
+        var byKind = x.IsDir.CompareTo(y.IsDir);
+        if (byKind != 0)
+            return byKind;
 
         var byContiguity = y.Match.Contiguity.CompareTo(x.Match.Contiguity);
         if (byContiguity != 0)
             return byContiguity;
 
-        // A genuine habit crosses the type layer, and among habits the more-used one comes first.
-        //
-        // H3 and H5 both mean at least three effective opens. A path opened once or twice still does not
-        // overrule how well the text matched, but a frequently used portable .exe must not lose merely
-        // because the application provider gave an installed app a better type rank.
-        //
-        // Both sides are tested: if either row is habitual the comparison runs, so a habitual row known to
-        // this key wins over a non-habitual one, and two habitual rows order by score. Two ordinary rows
-        // fall through unchanged.
-        // Low is an explicit user instruction, so history never crosses the type/section decision there.
-        var xHabitual = xSection != RankSection.Low && x.Tier >= HistoryTier.H3;
-        var yHabitual = ySection != RankSection.Low && y.Tier >= HistoryTier.H3;
-        if (xHabitual || yHabitual)
-        {
-            var byHistory = y.HistoryTie.CompareTo(x.HistoryTie);
-            if (byHistory != 0)
-                return byHistory;
-        }
-
-        var byType = x.TypeRank.CompareTo(y.TypeRank);
-        if (byType != 0)
-            return byType;
-
-        // Only now does the section decide: a demoted row still ranks behind an equally good one, so the
-        // setting keeps its meaning without overriding what the user typed.
-        var compare = x.Section.CompareTo(y.Section);
+        var compare = y.Match.Coverage.CompareTo(x.Match.Coverage);
         if (compare != 0)
             return compare;
 
-        var section = xSection;
-        var rankX = new SectionRank(x.Score, x.HistoryTie, x.TypeRank, x.Match.Start, x.Match.Coverage, x.Match.Contiguity);
-        var rankY = new SectionRank(y.Score, y.HistoryTie, y.TypeRank, y.Match.Start, y.Match.Coverage, y.Match.Contiguity);
-
-        compare = RankPolicy.CompareSectionRank(section, in rankX, in rankY);
+        compare = x.Match.Tier.CompareTo(y.Match.Tier);
         if (compare != 0)
             return compare;
 
-        compare = MatchRank.CompareQuality(x.Match, y.Match);
+        compare = x.Section.CompareTo(y.Section);
         if (compare != 0)
             return compare;
 
-        // TypeRank is compared inside CompareSectionRank for every section, Low included, so it is already
-        // settled by the time this point is reached.
         return RankPolicy.CompareCommonTail(x.Tail, y.Tail);
     }
-
-    // The type order sits inside the quality ladder: after where the query sits in the name, before how much
-    // of the name it covers (see MatchRank.CompareQualityPlacement). A shorter file name must not outvote the
-    // user's "Applications first" just because the same prefix explains more of it.
-    private static int CompareQualityThenType(in RankKey x, in RankKey y)
-    {
-        var c = MatchRank.CompareQualityPlacement(x.Match, y.Match);
-        if (c != 0)
-            return c;
-        c = CompareTypeRank(x, y);
-        return c != 0 ? c : MatchRank.CompareQualityDetail(x.Match, y.Match);
-    }
-
-    // Only the three built-in buckets (Applications / System settings / Files) are ordered against each other;
-    // every other row shares one rank behind them. That shared rank cannot be "skip the comparison": with
-    // coverage after the type step, a pairwise skip makes the sort cyclic (app < file by type, file <
-    // plugin row by coverage, plugin row < app by coverage).
-    private static int CompareTypeRank(in RankKey x, in RankKey y) =>
-        CoreTypeRank(x).CompareTo(CoreTypeRank(y));
-
-    private static int CoreTypeRank(in RankKey key) => key.TypeRankApplies ? key.TypeRank : int.MaxValue;
 }

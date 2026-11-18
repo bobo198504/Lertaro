@@ -16,6 +16,7 @@ public class QuickSearchWindowController
     private readonly QuickSearchWindowPositioner _positioner;
     private readonly QuickSearchWindowForegroundWatcher _foregroundWatcher;
     private readonly QuickSearchWindowFocusHelper _focusHelper;
+    private readonly QuickSearchWindowFade _fade;
 
     internal Lertaro.App.QuickSearchWindow Window => _window;
     internal QuickSearchWindowForegroundWatcher ForegroundWatcher => _foregroundWatcher;
@@ -46,11 +47,15 @@ public class QuickSearchWindowController
         _positioner = new QuickSearchWindowPositioner(window, () => _lastActiveHwnd);
         _foregroundWatcher = new QuickSearchWindowForegroundWatcher(window, () => HideOnFocusLoss());
         _focusHelper = new QuickSearchWindowFocusHelper(window);
+        _fade = new QuickSearchWindowFade(window);
         _showSupport = new QuickSearchWindowShowSupport(this);
     }
 
     public void PositionWindow(bool keepCurrentMonitor = false) => _positioner.PositionWindow(keepCurrentMonitor);
     public void SaveWindowPosition() => _positioner.SaveWindowPosition();
+    internal void PrepareShowFade() => _fade.PrepareShow();
+    internal void FadeIn() => _fade.FadeIn();
+    public void Dispose() => _fade.Dispose();
 
     // Wired to the search box's status icon right-click -- clears the saved position and immediately
     // re-centers the window using the same fallback PositionWindow already falls back to when there's
@@ -293,10 +298,12 @@ public class QuickSearchWindowController
             IdleWorkingSetTrimmer.WindowHidden();
         }
 
-        // No fade-out: the window is opaque, and fading the content to zero opacity is exactly "nothing
-        // painted" for the length of the animation, which an opaque window shows as a black rectangle (see
-        // NotificationWindowManager's note on the same symptom). It hides instantly, the way a notification
-        // does.
-        FinishHide();
+        if (!_window.IsVisible)
+        {
+            FinishHide();
+            return;
+        }
+
+        _fade.FadeOut(FinishHide);
     }
 }

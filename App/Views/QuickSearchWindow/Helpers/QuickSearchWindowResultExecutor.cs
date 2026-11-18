@@ -49,8 +49,7 @@ public class QuickSearchWindowResultExecutor
             SearchHistoryStore.Record(
                 SearchResultHelper.HistoryKeywordOf(result, _window.TxtSearch.Text),
                 result.FullPath,
-                SearchResultHelper.HistoryKindOf(result),
-                SearchResultHelper.IsLearnedRecall(result));
+                SearchResultHelper.HistoryKindOf(result));
         }
 
         if (result.IsPluginSearchAction)

@@ -23,7 +23,9 @@ internal static class SearchCoordinator
         CancellationToken token,
         string? directoryFilter,
         string? fileNameFilter = null,
-        SearchCategoryFilter category = SearchCategoryFilter.All)
+        SearchCategoryFilter category = SearchCategoryFilter.All,
+        bool progressive = false,
+        Action<SearchResult>? onPreview = null)
     {
         var __t = Lertaro.Core.SearchIndex.PerfTrace.Begin();
         KeyValuePair<string, LiveIndex>[] drives;
@@ -38,7 +40,28 @@ internal static class SearchCoordinator
 
         if (drives.Length == 1)
         {
-            IndexV2Searcher.SearchStreaming(drives[0].Value, query, limit, onResult, token, directoryFilter, fileNameFilter, category);
+            IndexV2Searcher.SearchStreaming(drives[0].Value, query, limit, onResult, token,
+                directoryFilter, fileNameFilter, category, progressive, onPreview);
+            return;
+        }
+
+        if (progressive && limit < int.MaxValue)
+        {
+            // The quick/inline surface wants rows while the query is still running. Each drive keeps its
+            // own bounded top-N and the App performs the final cross-drive ranking, so emitting before the
+            // slowest drive finishes can only change display order, never hide a candidate.
+            Parallel.For(0, drives.Length, ParallelOptionsFor(drives.Length, token), i =>
+            {
+                try
+                {
+                    IndexV2Searcher.SearchStreaming(drives[i].Value, query, limit, onResult, token,
+                        directoryFilter, fileNameFilter, category, progressive, onPreview);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.Log($"[SearchCoordinator] Progressive search of drive {drives[i].Key} failed; its rows are left out: {ex.Message}", LogLevel.Error);
+                }
+            });
             return;
         }
 
@@ -65,7 +88,8 @@ internal static class SearchCoordinator
                 var rows = buffered[i] = new List<SearchResult>();
                 try
                 {
-                    IndexV2Searcher.SearchStreaming(drives[i].Value, query, limit, rows.Add, token, directoryFilter, fileNameFilter, category);
+                    IndexV2Searcher.SearchStreaming(drives[i].Value, query, limit, rows.Add, token,
+                        directoryFilter, fileNameFilter, category);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -93,7 +117,8 @@ internal static class SearchCoordinator
             // consumer task writing the response -- but the callback is reachable concurrently, which is
             // why SearchStreamPump.CreateResultChannel sets SingleWriter = false. Cross-drive arrival order
             // is not meaningful: consumers merge by the shared RankSortKey.
-            IndexV2Searcher.SearchStreaming(drives[i].Value, query, limit, onResult, token, directoryFilter, fileNameFilter, category));
+            IndexV2Searcher.SearchStreaming(drives[i].Value, query, limit, onResult, token,
+                directoryFilter, fileNameFilter, category));
     }
 
     private static ParallelOptions ParallelOptionsFor(int driveCount, CancellationToken token) => new()

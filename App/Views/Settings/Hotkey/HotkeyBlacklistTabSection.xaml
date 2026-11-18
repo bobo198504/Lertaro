@@ -37,8 +37,7 @@
             </StackPanel>
         </Border>
 
-        <!-- The quick panel's own additions to the list above. Here rather than on its own page: this
-             is where a user comes to say "not in this app", and the panel reads both lists together. -->
+        <!-- Quick Panel disabled. Keep the card declaration for restoration.
         <Border Style="{StaticResource SettingsCard}" Margin="0,15,0,0">
             <StackPanel>
                 <TextBlock Text="{Binding Source={x:Static services:TranslationManager.Instance}, Path=[QuickPanel_BlacklistTitle]}"
@@ -50,5 +49,6 @@
                                 ContentTemplate="{StaticResource ProcessListEditorTemplate}"/>
             </StackPanel>
         </Border>
+        -->
     </StackPanel>
 </UserControl>

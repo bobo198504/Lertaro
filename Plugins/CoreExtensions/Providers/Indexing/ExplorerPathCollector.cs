@@ -281,5 +281,6 @@ public class ExplorerPathCollector : IActivePathCollector
 
         return null;
     }
+
     #endregion
 }

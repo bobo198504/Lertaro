@@ -244,8 +244,7 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
         get => _resultsPanelVisibility;
         set
         {
-            if (SetProperty(ref _resultsPanelVisibility, value))
-                OnPropertyChanged(nameof(CategoryBarVisibility));
+            SetProperty(ref _resultsPanelVisibility, value);
         }
     }
 
@@ -258,17 +257,9 @@ public class SearchExecutionViewModel : ViewModelBase, IDisposable
         get => _showCategoryBar;
         private set
         {
-            if (SetProperty(ref _showCategoryBar, value))
-                OnPropertyChanged(nameof(CategoryBarVisibility));
+            SetProperty(ref _showCategoryBar, value);
         }
     }
-
-    /// <summary>
-    /// The bar's own visibility: with the results panel, and only while the user wants the bar. The panel's
-    /// visibility is left alone -- the results, the separator and the launch panel all read it.
-    /// </summary>
-    public Visibility CategoryBarVisibility
-        => _showCategoryBar ? _resultsPanelVisibility : Visibility.Collapsed;
 
     public Visibility ResultsSeparatorVisibility
     {

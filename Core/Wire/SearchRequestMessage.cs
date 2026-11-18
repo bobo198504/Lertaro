@@ -102,6 +102,10 @@ public struct SearchRequestMessage
     // that forgets it must fall back to the AND-first reading, which is the product default.
     public bool OrFirstPrecedence { get; set; }
 
+    // Search/SearchDir: allow early preview rows before the final globally ranked answer. The GUI search
+    // surfaces opt in; CLI callers leave it false so their documented result limit stays exact.
+    public bool Progressive { get; set; }
+
     // Search/SearchDir: restrict the answer to one kind of entry (see SearchCategoryFilter). Carried per
     // request for the same identity reason as the flags above, and defaulting to All so a caller that does
     // not set it keeps the historical behaviour of receiving every kind.

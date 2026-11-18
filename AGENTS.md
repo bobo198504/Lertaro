@@ -90,13 +90,287 @@ Not lazy about: input validation at trust boundaries, error handling that preven
   要让测试真正可用，必须先让 `Tests/**` 编译通过（对齐 fork 实现），否则任何"跑测试"都是空谈。
 
 ## 部署（本机便携安装 `D:\App protable\Lertaro`）
-- `Deploy-Local.ps1 -Full` 只 publish App，**不会重建、也不会拷贝 `Plugins/`**。
-  改到任何插件时必须：① 逐个 `dotnet build Plugins\**\*.csproj -c Release`；② 把 `App\bin\Release\net10.0-windows\Plugins\*.dll` 复制进 `publish\x64\Lertaro\Plugins\`；③ 再跑部署。
-  否则安装里仍是旧 DLL（已踩过，用哈希对比才发现）。
-- 启动 App 一律 `Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $exe + '"')`（脱离工具进程树、普通完整性级别）。
-- **App 启动后会自己确保服务启动**：`AppStartupServiceBootstrapper.EnsureServiceStarted()` 会 ping、启动已注册服务或静默安装。部署后只启动 App，不要先手动 `Start-Service`；等 App 拉起服务后再核对状态。
-- 停进程**只能按可执行文件完整路径**判定，禁止按名字或命令行子串批量终止。
-- 改完直接部署，不必请示；部署后必须核对：安装 ProductVersion、服务 Status、install 与 publish 哈希、app.log 有无异常。
+
+### 唯一正确入口（不要再手抄插件/服务步骤）
+
+在仓库根目录执行：
+
+```powershell
+$env:NUGET_CONFIG_FILE = 'D:\Projects\Code\_tools\nuget.config'
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.slnx -c Release --nologo -v:q
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.Plugins.slnx -c Release --nologo -v:q
+& '.\Deploy-Local.ps1' -Full -Publish
+```
+
+- `Deploy-Local.ps1 -Full` 会自动弹 UAC，不需要先手工开管理员终端。
+- `Deploy-Local.ps1` 按既有规则由 `.git/info/exclude` 设为**本机工具，不进 Git**。部署在
+  `D:\Projects\Code\Lertaro` 主工作区执行，不要进入临时 worktree 后因文件不存在又重新写一份。
+- `-Publish` 现在分别 publish `Lertaro.slnx` 和 `Lertaro.Plugins.slnx`；后者不能再漏。`Lertaro.slnx`
+  不含插件工程，App 也不会自动把全部插件带出来。
+- 脚本按完整路径停 App、停服务、复制文件，再通过 `explorer.exe` 以普通完整性级别启动 App；
+  App 的 `AppStartupServiceBootstrapper.EnsureServiceStarted()` 会自己拉起服务。**不要手工先 `Start-Service`。**
+- 新版把部分插件及依赖放在 `Plugins\<AssemblyName>\`。旧的根目录 DLL 会抢先加载；脚本会把 publish
+  根目录不存在的旧 DLL 移到同级的 `Lertaro.stale-plugins-<时间>`，不删除且不碰 `Data\`。
+- 停进程只能按可执行文件完整路径判定；禁止按名字或命令行子串批量终止。
+- 改完直接部署，不必请示。部署后以 `deploy-local.log` 最后一行的 `done (all checks passed)` 为准；
+  若失败，先看同文件的 copy/plugin/service FAIL，不要在不稳定状态上继续叠改。
+
+### 部署后必须核对
+
+1. `deploy-local.log` 无 FAIL；安装版 `Lertaro.App.dll` 的 ProductVersion 是目标版本。
+2. `Lertaro.App` 进程正在运行，`LertaroService` 为 `Running`，且存在本安装目录的 `Lertaro.Service.exe --hook`
+   子进程。
+3. 最新用户日志 `Data\Users\<SID哈希>\logs\app.log`、`hook.log` 和 `Data\Machine\logs\service.log`
+   有本次启动时间线，无 Error/Unhandled/CRITICAL。**工具进程的用户和桌面 App 用户可能不同**：不要用工具
+   自己的 SID 去找日志，也不要用 `C:\Users\<工具用户>\AppData` 猜测；按目录最后写入时间找最新用户。
+4. `service.log` 应出现 `Loaded N/N per-drive caches`，Hook 应出现 `Hooks and ExplorerTracker initialized successfully`。
+5. 关键文件 `Lertaro.App.dll/.exe`、`Lertaro.Service.dll/.exe`、`Lertaro.Core.dll`、`Lertaro.PluginSdk.dll`
+   的 install 与 `publish\x64\Lertaro` SHA-256 必须一致；只数 DLL 数量不足以证明版本正确。
+
+本机常见错误与处理：
+
+- `Cannot open LertaroService`：这次部署没有管理员权限；重新走上面的入口，让脚本自己弹 UAC。
+- `plugin count mismatch`：旧根目录 DLL 还在。查看 `deploy-local.log` 中 quarantined 的路径；
+  确认新版插件确实位于各自子目录后重跑，不要用手工删除整个 `Plugins`。
+- `app pid` 为空但 `Lertaro.App` 进程存在：旧脚本读错了 `ProcessId` 属性；现在日志应显示 `Id`。
+  判断运行状态始终看进程路径，不要只看窗口是否可见。
+
+## fork 更新、打包发布与上游 PR（新对话先看这里）
+
+### 远端、分支和权限边界
+
+- fork：`origin = https://github.com/bobo198504/Lertaro.git`，主线是 `local/main`。
+- 上游：`upstream = https://github.com/Lertaro/Lertaro.git`，主分支是 `main`。
+- GitLab 远端是历史遗留，不是 fork 的更新或发布目标；自动更新只认 `bobo198504/Lertaro`。
+- 所有 `gh` 命令都显式带 `--repo bobo198504/Lertaro` 或 `--repo Lertaro/Lertaro`。不要依赖当前目录推断，
+  本机曾把 fork 的 Release 命令解析到上游仓库。
+- `git commit`、`git push`、创建 tag、创建/修改 Release、向上游提 PR，都必须由 owner 在本轮明确授权。
+  构建、测试、本地部署不需要另行确认。
+- 开始合并或发版前先看 `git status`。工作区有其它未收口改动时，不要直接在坏/脏状态上 merge、bump 或打包；
+  先让 owner 处理，或使用隔离 worktree。
+
+### 1. 选择性同步上游到 fork
+
+**本 fork 不再整版合并上游 Release。** 默认只吸收明确有价值、经过审查的修复或功能；上游新增或重新接回的功能
+不会因为出现在新 Release 中就被自动接受。只有 owner 在本轮明确要求恢复，才可改变本节的永久禁用项。
+
+1. 确认当前版本、分支和未提交改动：
+
+```powershell
+git status --short --branch
+git log -5 --oneline --decorate
+```
+
+2. 获取 fork 与上游 tag，切到 fork 主线并快进：
+
+```powershell
+git fetch origin --prune
+git fetch upstream --tags --prune
+git switch local/main
+git pull --ff-only origin local/main
+```
+
+3. 先列出目标上游 Release 相对 fork 的候选提交和差异，再逐条决定是否吸收：
+
+```powershell
+$upstreamTag = gh release view --repo Lertaro/Lertaro --json tagName --jq '.tagName'
+git log --oneline HEAD..$upstreamTag
+git diff --stat HEAD..$upstreamTag
+```
+
+   - 审查提交的目的、行为变化、冲突面和相关测试；没有明确收益的提交默认不收。
+   - 只 cherry-pick 或手工移植选中的提交；不要执行整版 `git merge` 默认接受全部上游内容。
+   - 上游提交依赖大范围重构时，优先最小手工移植；不要为了拿到一个小修复而吞入无关模块。
+
+4. 以下 fork 契约永久保留，任何上游更新都不得接回；对应源码即使保留，也只能处于注释或不可达状态：
+
+   - **打开/保存等文件对话框不自动弹出内联搜索卡片**。Ctrl+G 和切换窗口自动跳转必须保留；
+   - **快速启动面板永久禁用**，包括启动项、数据源、空状态展示及设置页；
+   - **快速面板永久禁用**，包括窗口、管理器、热键、进程黑名单及设置页；
+   - 左侧优先、历史权重、便携应用召回排序；
+   - 128 位名称掩码及查询实际使用半区的扫描；
+   - 连续前缀快路径与查询页缓存增强；
+   - 鼠标平滑滚动和自定义应用搜索目录；
+   - `App/Services/Update/UpdateChecker.cs` 只检查
+     `https://api.github.com/repos/bobo198504/Lertaro/releases/latest`。
+
+   `Tests/App/Helpers/ForkDisabledFeaturesTests.cs` 是前三项的合并守卫；运行 `Tests/App/App.csproj` 时必须通过。
+   同步后还要逐文件核对本节的其它契约，不能只看编译是否通过。
+
+5. 版本号规则：上游 `X.Y.Z` 对应的 fork 首版是 `X.Y.Z.1`；同一上游基线上的后续 fork 修订递增为 `.2`、`.3`。
+   只改 `App/App.csproj` 的 `<Version>`，不要改上游版本语义。这里只借用上游基线的版本层级，不代表整版内容全部进入 fork。
+
+6. 在 `CHANGELOG.md` 最上方增加对应版本段，保持现有中英双栏结构：
+
+   - `上游：` 只写本版实际审查并吸收的上游条目；不是当前 Release 的全部条目，`bump: version ...` 不写；
+   - `本fork：` 写当前仍存在的全部 fork 差异；三项永久禁用功能作为 fork 契约保留记录；
+   - 每个 fork 版本必须有 `+ 保留鼠标平滑滚动` / `+ Keeps the smooth wheel scrolling`；
+   - 每个 fork 版本必须有 `+ 自动更新只检查本仓库的发行` /
+     `+ Auto-update only checks this repository's releases`。
+
+7. 构建、测试、部署，确认稳定后才进入发版。不能把“候选提交已移植”当成“可发布”。
+
+### 2. 打包并发布 fork
+
+只在 `local/main` 的发布提交上执行；`dist/` 会被 `make.bat` 整体重建。下面命令保持在同一 PowerShell
+会话，`$tag` 会在创建 tag 时从 `App.csproj` 生成。
+
+1. 构建两个解决方案：
+
+```powershell
+$env:NUGET_CONFIG_FILE = 'D:\Projects\Code\_tools\nuget.config'
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.slnx -c Release --nologo -v:q
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.Plugins.slnx -c Release --nologo -v:q
+```
+
+2. 用 unsigned 模式生成 x64/ARM64 安装包和 ZIP。fork 不处理真实签名，`.sig` 是 8 字节 `unsigned` 占位：
+
+```powershell
+$oldPath = $env:PATH
+$env:PATH = "D:\Projects\Code\_tools\dotnet10;$env:PATH"
+$env:LERTARO_ALLOW_UNSIGNED = '1'
+cmd /c make.bat
+$env:PATH = $oldPath
+Remove-Item Env:LERTARO_ALLOW_UNSIGNED
+```
+
+3. 必须存在且上传六个资产：
+
+```
+dist/Lertaro-Setup.exe
+dist/Lertaro-Portable.zip
+dist/Lertaro-Portable.zip.sig
+dist/Lertaro-Setup-arm64.exe
+dist/Lertaro-Portable-arm64.zip
+dist/Lertaro-Portable-arm64.zip.sig
+```
+
+   发布前至少核对两个 ZIP 内的 `Lertaro.App.dll` ProductVersion、App/Service exe 架构为 x64/ARM64，
+   以及四个主资产 SHA-256。不要上传 `publish/`、`bin/` 或安装后的 `Data/`。
+
+4. 创建并推送 tag。tag 必须是四段 fork 版本，不能复用上游三段 tag：
+
+```powershell
+[xml]$project = Get-Content App/App.csproj
+$tag = 'v' + $project.Project.PropertyGroup.Version
+git tag -a $tag -m "Lertaro fork $tag"
+git push origin local/main
+git push origin "refs/tags/$tag"
+```
+
+5. tag 触发的 `Build and Release` 有 36 小时节流；`build-and-release` 被 skipped 很正常。先检查 Release：
+
+```powershell
+gh release view $tag --repo bobo198504/Lertaro
+```
+
+   若自动构建因 fork 没有上游 `SIGNING_KEY` 而失败，不要修改应用的签名验证来绕过；按本机 unsigned
+   流程手动发布即可。
+
+   不存在时手动发布已校验的本地产物：
+
+```powershell
+gh release create $tag --repo bobo198504/Lertaro `
+  --title $tag --verify-tag --latest `
+  --notes 'Release notes are generated from CHANGELOG.md.' `
+  dist/Lertaro-Setup.exe dist/Lertaro-Portable.zip dist/Lertaro-Portable.zip.sig `
+  dist/Lertaro-Setup-arm64.exe dist/Lertaro-Portable-arm64.zip dist/Lertaro-Portable-arm64.zip.sig
+```
+
+6. 手动建立的 Release 不会自动补正文。运行固定工作流：
+
+```powershell
+gh workflow run 'Fork Release Notes' --repo bobo198504/Lertaro --ref main -f "tag=$tag"
+$runId = gh run list --repo bobo198504/Lertaro --workflow 'Fork Release Notes' --limit 1 `
+  --json databaseId --jq '.[0].databaseId'
+gh run watch $runId --repo bobo198504/Lertaro --compact --exit-status --interval 10
+```
+
+   如果 `workflow_run` 自动实例在手动 Release 之前启动，会报 `release not found`；这正是重跑
+   `workflow_dispatch` 的原因，不要删 Release 或重新打 tag。
+
+7. 最终验收：
+
+```powershell
+gh release view $tag --repo bobo198504/Lertaro --json url,isDraft,isPrerelease,body,assets
+gh api repos/bobo198504/Lertaro/releases/latest `
+  --jq '{tag_name,html_url,draft,prerelease,published_at}'
+```
+
+   Release 必须非 draft、非 prerelease、正好六个资产；正文必须来自 `CHANGELOG.md` 且带本 Release
+   四个主资产的 SHA-256。unsigned 包会被自动更新拒绝，这是 owner 已接受的行为，使用本版需手动替换。
+
+### 3. 向上游提 PR
+
+1. 只提交适合上游的改动。用户历史、机器路径、特定应用名、私人文件名、实际查询词、日志数值都不能进 PR；
+   对外文字规则见下面同名章节。
+
+   - 一个 PR 只解决一个主题；独立的修复/性能优化分开提，方便上游逐条接受或拒绝。
+   - 上游 PR 默认不带 fork 的版本号、`CHANGELOG.md` fork 段、`AGENTS.md`、本机部署脚本、
+     fork 更新源和 fork 专属排序/滚动；除非上游明确要求。
+
+2. 从 `upstream/main` 建临时分支，不要从带 fork 私有行为的 `local/main` 直接开 PR：
+
+```powershell
+git fetch upstream --prune
+git switch -c codex/<short-name> upstream/main
+```
+
+   主工作区有未收口改动时，用独立 worktree 从 `upstream/main` 开分支，不要覆盖当前工作。
+
+3. 最小改动 + 对应测试；默认同时验证：
+
+```powershell
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.slnx -c Release --nologo -v:q
+& 'D:\Projects\Code\_tools\dotnet10\dotnet.exe' build Lertaro.Plugins.slnx -c Release --nologo -v:q
+```
+
+   再跑受影响的 `Tests/**` 工程。`dotnet test Lertaro.slnx` 是空跑，不算测试证据；testhost 的已知限制见
+   下文环境章节。
+
+4. 提交信息用中性、可搜索的 conventional 格式；不要带入本机数据。推送临时分支：
+
+```powershell
+git push -u origin HEAD
+```
+
+5. PR 指向 `Lertaro/Lertaro:main`，head 是 fork 的临时分支；标题和正文用中文，正文至少包含：
+   问题、根因、改动、验证、兼容性/性能影响。不要让 `--fill` 代替人工检查：
+
+```markdown
+## 问题
+## 根因
+## 改动
+## 验证
+## 兼容性与性能
+```
+
+```powershell
+gh pr create --repo Lertaro/Lertaro --base main `
+  --head bobo198504:<short-name> `
+  --title '<中文标题>' --body-file <中文正文文件>
+```
+
+6. 评审要求修改时，只在 PR 临时分支继续修；推送后检查 review/comments：
+
+```powershell
+gh pr view <number> --repo Lertaro/Lertaro --comments
+gh pr view <number> --repo Lertaro/Lertaro --json reviews,reviewDecision,statusCheckRollup
+```
+
+   PR 分支可以 `git commit --amend` 后 `git push --force-with-lease`；已经发版并被 tag 锁定的主线提交不要改。
+
+7. PR 被拒绝或未采纳时，先读具体理由再决定：能改成上游可接受的通用修复就继续；明确属于 fork
+   使用习惯的改动可以保留在 fork，但不要把它伪装成上游已采纳，也不要因此删除 fork 的既有行为。
+
+8. PR 推送完成后立刻切回 fork 主线：
+
+```powershell
+git switch local/main
+```
+
+   上游合并后再把实际合入的上游提交 cherry-pick/同步回 fork；不要假设 PR 内容已经进入
+   `upstream/main`。fork 专属的滚动、排序和更新源不要顺手提交给上游。
 
 ## 搜索语义（已与 owner 逐条确认，**不要擅自"优化"**）
 - 排序梯子（2026-10-25 定稿，**两侧同序**）：`历史/收藏`（有效分降序，`Count` 为主、时间只占 15% 且永不归零）→ **以下按匹配质量** `左侧连续`（Start==0 且连续度>=1）→ `Contiguity` → `覆盖率`（Weight/Contiguity）→ `Tier` → `TypeRank` → `IsDir` → `NameOrderComparer` → `Name.Length`（**名字长度在最后**）。
@@ -152,25 +426,6 @@ Not lazy about: input validation at trust boundaries, error handling that preven
 - 已经推出去的提交信息若要改，用 `git commit --amend` 原地重写后 `git push --force-with-lease`（PR 分支可以改；
   已被 tag 锁定的主线提交不要动，改了要重打 tag 重发，代价大于收益）。
 
-## 当前待办（2026-10-19 写入；做完一条就删掉这条，别让清单烂掉）
-
-**起点状态**：`HEAD 1bff6429` + 若干未提交改动（排序 ✓ 混拼 ✓ 探针 ✗），全量测试 exit=0，本机已部署且可用。
-**回滚点**：`git reset --hard 1bff6429`（回滚后必须重编插件再部署）。
-
-1. ✅ **已完成**：探针已挪到 `App/ViewModels/Search/Dispatch/SearchDispatchController.cs`（`DispatchSearch` 里），
-   并改为**写 `%TEMP%\lertaro-queryterms.txt`**（App 的 logger 把 Info 过滤掉了，`app.log` 一直是 0 KB ✗）。
-   实测结论：`raw=lert exe → parsed=[lert] | [exe]` ✓ **解析正确、空格没被吃** ✗。旧探针（`IndexV2Searcher`）已删 ✓。
-2. ✅ **已解决（2026-10-19 复测）**：`lert exe` / `lerta exe` / `lertar exe` 现在都能正确命中 `Lertaro.App.exe`。
-   实际原因是**排序**而不是匹配 ✗：多词查询的掩码被当成"连续命中"，含 `exe` 的行把含 `lert` 的行压到很后面，
-   看起来就像"只有 exe 生效"。待办 ③（多词 ⇒ 强制非连续）修好后自动恢复 ✓。
-   「已知异常」一节保留作历史记录 ✓，**不要再按它重开排查** ✗。
-3. ✅ **已完成（2026-10-19）**：`HighlightMask.ComputeRank` 里 `pattern.TermSets.Length > 1` 时把 `Contiguity` 置 0；
-   同档内再加"名字长度优先"（`RankedCandidateOrdering`）→ `ab` 时 `abc` 在 `abab` 前 ✓、`a` 时 `a1` 在 `aaa` 前 ✓。
-4. ✅ **已完成**：探针全部移除（`IndexV2Searcher` ✓ `SearchDispatchController` ✓）。
-5. **把插件构建写进 `Deploy-Local.ps1`**：逐个 `Plugins\**\*.csproj -c Release` 构建 + 同步
-   `App\bin\Release\net10.0-windows\Plugins\*.dll` → `publish\x64\Lertaro\Plugins\`（现在靠手工，已踩过坑）。
-6. 🔄 **进行中**：提交 + 重发 fork `5.9.7.1`（owner 已授权「收口」）（注意：本机 testhost 不可用，本轮所有"测试通过"均为空跑，发版前需用 explorer 起的独立进程真跑一次 `Tests/**`）（原发布被 owner 手动删过；版本号仍用 5.9.7.1）。
-
 ## 流程骨架（从改一行到可以发版；每一步都要给出**证据**，没有证据就写"未验证"）
 
 0. **环境自检（每次新会话第一件事，只做一次）**
@@ -190,24 +445,25 @@ Not lazy about: input validation at trust boundaries, error handling that preven
 2. **改动**：最小改一处；有语义的地方（排序/匹配/范围）先写一条会红的单测，再改到它绿。
 
 3. **编译**：`... build Lertaro.slnx -c Release --nologo -v:q` → exit 0（这是**唯一**能证明"代码能编"的证据）。
-   改到插件时另加：逐个 `Plugins\**\*.csproj -c Release` 构建 → 失败数必须为 0。
+   另跑 `Lertaro.Plugins.slnx -c Release`；`Lertaro.slnx` 不含插件工程。
 
 4. **测试**：按第 0 步的方式跑**受影响的测试工程**（`Tests/**`），给出 `total/passed/failed`。
    跑不起来 → 明确写"本机 testhost 不可用，未验证"，并说明用什么代替（人工步骤清单）。
 
-5. **部署**：插件三件套（Release 构建 → 同步进 `publish\...\Plugins` → `Deploy-Local.ps1 -Full`）。
-   证据：部署日志末行、App pid、服务 Status、安装 `ProductVersion`、install 与 publish 的 DLL 哈希是否一致。
+5. **部署**：按「部署（本机便携安装）」的唯一入口执行 `Deploy-Local.ps1 -Full -Publish`。
+   不要把旧的“手工同步插件三件套”再抄一遍。证据仍看部署日志末行、App/Service/Hook、ProductVersion 和哈希。
 
 6. **人工验证**：把"用户该看到什么"写成 3~5 条可勾选的观察项（具体到查询词与文件名），交给 owner 确认。
 
-7. **提交/发版（需 owner 明确授权）**：`App.csproj` 版本号 → `CHANGELOG.md` 中英各一条（含两条常驻行）→ tag → 等 CI → 用**下载资产的内部版本号**做决定性验收。
+7. **提交/发版（需 owner 明确授权）**：按「fork 更新、打包发布与上游 PR」执行；不要看到 tag 工作流
+   被节流就以为发布失败，也不要忘了手动运行 `Fork Release Notes`。
 
 8. **收尾**：删掉临时探针与 `%TEMP%` 草稿；把踩到的坑写回本文件（按**流程位置**写，不要按事故追加）。
 
 ## 待办补记（来自另一对话的实测，本机环境特有）
 
 - 本机 `dotnet test` 起不来的可能原因：**本会话的沙箱/作业对象限制**（另一对话环境不同、可能正常）→ 所以第 0 步必须**实测一次**再下结论，别假定不可用。
-- `Deploy-Local.ps1` 应改为**自校验**：把"插件编译 + DLL 同步 + 哈希比对 + 服务 Status"做成脚本自己的 exit code（脚本不会遗忘，人会）。
+- `Deploy-Local.ps1` 已包含插件 publish、旧 DLL 隔离、服务状态与版本自校验；不要再手工拆成多步。
 - `~/.dsh/AGENTS.md` 里那份"测试命令固定用法"应**只留指针**指向本文件，避免两处规则分叉（该文件的修改需 owner 确认）。
 - 工作区可能带着另一对话的**接缝修复**（`Core/Hook/Ipc/OpenedFolderSnapshotPublisher.cs` 的 `OrderByWindowRank/WindowRanks`）。
   它能让 `Tests/Core` 编译通过；**接受它，或先 `git checkout --` 退回再改** —— 不要在两份状态上叠改。

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using System.Windows.Controls;
 using Lertaro.App.Services;
@@ -54,13 +55,6 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         InitializeComponent();
         // Nothing between the XAML's declaration of the handle and the surface this window needs it for.
         ApplySurface();
-        ApplyCategoryBarPlacement();
-        // The filter row is a UniformGrid, so every label's position is a share of the ListBox's current
-        // width -- and that width is still settling when the window first appears. The one-shot re-aim on
-        // Loaded therefore measured a layout that no longer existed a frame later, which is why the
-        // underline started out in the wrong place and only snapped right after the first filter switch.
-        // Re-aiming whenever the bar is resized keeps it correct without waiting for the user to touch it.
-        CategoryBar.SizeChanged += (_, _) => MoveIndicatorToSelection();
         // No text-formatting override here any more: this window used to put its search box on Ideal, on
         // its own, to "smooth" the input (d7f6cd49) -- which took the one element the user actually reads
         // off the Display metrics every other element in the process renders with. Section 五 of the plan
@@ -108,6 +102,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
 
     public ShellMenuPresenter? MenuPresenter => _menuPresenter;
     public QuickSearchViewModel ViewModel => _viewModel;
+    internal FrameworkElement FadeRoot => RootGrid;
     public string SearchText => TxtSearch.Text;
     public bool IsInActionsMode
     {
@@ -147,33 +142,6 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         _layoutManager.UpdateActionsLayout();
     }
     internal void ExecuteFavorite(AppSearchResult result) => _resultExecutor.Execute(result);
-    // Where the category bar sits. A constant for now: making this a user setting later means replacing the
-    // const read in ApplyCategoryBarPlacement with a binding to a view-model property, and nothing else.
-    private const CategoryBarPlacement CategoryBarPosition = CategoryBarPlacement.AboveList;
-
-    // Re-assigns the rows the filters, separator and results occupy, so the bar can sit either directly under
-    // the search box or under the result list. Both layouts use the same five rows -- only the assignment
-    // changes -- so no other part of the window has to know which one is active.
-    private void ApplyCategoryBarPlacement()
-    {
-        var above = CategoryBarPosition == CategoryBarPlacement.AboveList;
-
-        Grid.SetRow(CategoryBarHost, above ? 1 : 3);
-
-        var separatorRow = above ? 2 : 1;
-        var resultsRow = above ? 3 : 2;
-
-        Grid.SetRow(ResultsSeparator, separatorRow);
-
-        // Spans this row and the one after it: the results plus whichever of the filters or the status bar
-        // follows them in the active layout.
-        Grid.SetRow(ResultsContentBackground, resultsRow);
-        Grid.SetRowSpan(ResultsContentBackground, 2);
-
-        Grid.SetRow(LaunchPanelControl, resultsRow);
-        Grid.SetRow(ResultsPanelControl, resultsRow);
-    }
-
     internal void RecordKeywordHistory()
     {
         try { KeywordHistoryStore.Record(_viewModel.SearchQuery); } catch { }
@@ -194,9 +162,12 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     {
         _menuPresenter = new ShellMenuPresenter(this);
         _trayService = new TrayIconService(_viewModel);
+        _viewModel.Search.PropertyChanged += OnSearchPropertyChanged;
+        ResultsPanelControl.Visibility = _viewModel.ResultsPanelVisibility;
         // Wire up event handlers to subcontrols
         SearchBox.IconRightClicked += _controller.ResetPosition;
         SearchBox.IconMiddleClicked += _controller.ToggleStayOpen;
+        SearchBox.CategoryWheeled += CycleCategory;
         // The logo is the ONLY way to move this window (#255): the card's own drag was removed rather than
         // fixed, so nothing else on this window responds to a drag. IsIconDraggable keeps the logo's
         // "drag moves the window" behavior working alongside IconLeftClicked: SearchBoxControl tells a real
@@ -252,7 +223,57 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
             }
         };
     }
-    private void OnResultsScrollChanged(object sender, ScrollChangedEventArgs e) => _layoutManager.UpdateShortcutHints();
+    private void OnResultsScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        _layoutManager.UpdateShortcutHints();
+    }
+
+    private int _resultsFadeVersion;
+
+    private void OnSearchPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SearchExecutionViewModel.ResultsPanelVisibility))
+            AnimateResultsVisibility(_viewModel.ResultsPanelVisibility);
+    }
+
+    private void AnimateResultsVisibility(Visibility visibility)
+    {
+        var version = ++_resultsFadeVersion;
+        ResultsPanelControl.BeginAnimation(OpacityProperty, null);
+
+        if (visibility == Visibility.Visible)
+        {
+            ResultsPanelControl.Opacity = 0;
+            ResultsPanelControl.Visibility = Visibility.Visible;
+            ResultsPanelControl.BeginAnimation(
+                OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(QuickSearchWindowFade.DurationMs))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                });
+            return;
+        }
+
+        if (ResultsPanelControl.Visibility != Visibility.Visible)
+            return;
+
+        var fadeOut = new DoubleAnimation(
+            ResultsPanelControl.Opacity,
+            0,
+            TimeSpan.FromMilliseconds(QuickSearchWindowFade.DurationMs))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+        };
+        fadeOut.Completed += (_, _) =>
+        {
+            if (version != _resultsFadeVersion)
+                return;
+            ResultsPanelControl.BeginAnimation(OpacityProperty, null);
+            ResultsPanelControl.Opacity = 1;
+            ResultsPanelControl.Visibility = Visibility.Collapsed;
+        };
+        ResultsPanelControl.BeginAnimation(OpacityProperty, fadeOut);
+    }
     public void UpdateShortcutHints() => _layoutManager.UpdateShortcutHints();
     // Fires as soon as the Win32 HWND exists, and again once the window has fully loaded -- see
     // QuickSearchWindowLifecycle for why each step runs when it does (hardware-acceleration opt-out,
@@ -343,249 +364,6 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     private void SaveWindowPosition() => _controller.SaveWindowPosition();
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e) => _inputHandler.HandleWindowPreviewKeyDown(e);
 
-    // Clicking a filter moves keyboard focus into the list; typing then goes to the list's own type-ahead
-    // instead of the search box. Handing focus back here is what keeps "click a filter, keep typing" working.
-    // Guarded on IsKeyboardFocusWithin so a programmatic selection (the reset on show, Alt+arrow) does not
-    // steal focus from wherever it already is.
-    //
-    // Both this and the indicator re-aim run at Background priority: the item containers are laid out by then,
-    // while a handler raised during the selection change can still see a zero-width container.
-    private void CategoryBar_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        // The binding normally writes this first, but relying on its ordering made a click move the
-        // underline while leaving the result set untouched. Assigning the same item here is a no-op when
-        // the binding won; when it has not run yet, this is what starts the new category query.
-        if (CategoryBar.SelectedItem is PluginSdk.Abstractions.Plugins.SidebarFilterItem selected &&
-            !ReferenceEquals(_viewModel.SelectedCategory, selected))
-        {
-            _viewModel.SelectedCategory = selected;
-        }
-
-        // Use the box's current text rather than the ViewModel's last dispatched query. The latter can lag
-        // the TextBox by one binding turn, which made a filter click leave the old result set untouched.
-        if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
-        {
-            _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
-        }
-
-        Dispatcher.BeginInvoke(
-            new Action(() =>
-            {
-                MoveIndicatorToSelection();
-
-                if (CategoryBar.IsKeyboardFocusWithin)
-                    SearchBox.SearchTextBox.Focus();
-            }),
-            System.Windows.Threading.DispatcherPriority.Background);
-    }
-
-    // False until the indicator has been positioned once, so the first paint snaps into place instead of
-    // sliding in from the left edge on every summon.
-    // Re-aims the indicator at the current selection with no animation, for when the window re-opens on the
-    // default filter. Called explicitly instead of relying on SelectionChanged: resetting the filter to the
-    // value it already holds is a no-op on the view model, so no selection event fires at all and the line
-    // would keep pointing at whatever the previous session left selected.
-    internal void ReaimIndicatorImmediately()
-    {
-        // Hidden first, so the slide back to the default filter is never watched: the reset causes a real
-        // selection change, and on a re-open that slide travels from wherever the last session left off,
-        // which reads as the line jumping in from the wrong place. Fading it back in after the slide has
-        // finished shows the settled result instead of the journey.
-        // The window fades in as a short cascade: the search box first, then the filter row, then the
-        // underline. Each starts before the previous one has finished, so it reads as one movement instead of
-        // three separate arrivals, and the whole thing is over in well under half a second.
-        SearchBox.BeginAnimation(OpacityProperty, null);
-        SearchBox.Opacity = 0;
-        CategoryBar.BeginAnimation(OpacityProperty, null);
-        CategoryBar.Opacity = 0;
-        CategoryIndicator.BeginAnimation(OpacityProperty, null);
-        CategoryIndicator.Opacity = 0;
-
-        SearchBox.BeginAnimation(
-            OpacityProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(
-                0, 1.0, TimeSpan.FromMilliseconds(SearchBoxFadeInMs))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(SearchBoxFadeInDelayMs),
-            });
-
-        CategoryBar.BeginAnimation(
-            OpacityProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(
-                0, 1.0, TimeSpan.FromMilliseconds(LabelFadeInMs))
-            {
-                BeginTime = TimeSpan.FromMilliseconds(LabelFadeInDelayMs),
-            });
-
-        _indicatorSettled = false;
-        var indicatorFade = new System.Windows.Media.Animation.DoubleAnimation(
-            0, IndicatorOpacity, TimeSpan.FromMilliseconds(IndicatorFadeInMs))
-        {
-            BeginTime = TimeSpan.FromMilliseconds(IndicatorFadeInDelayMs),
-        };
-        // From here on a move is something the user is meant to watch, so slides are allowed again.
-        indicatorFade.Completed += (_, _) => _indicatorSettled = true;
-        CategoryIndicator.BeginAnimation(OpacityProperty, indicatorFade);
-
-        Dispatcher.BeginInvoke(
-            new Action(() => MoveIndicatorToSelection()),
-            System.Windows.Threading.DispatcherPriority.Loaded);
-    }
-
-    // Resting opacity of the underline, kept here so the fade returns it to the same value the XAML declares.
-    private const double IndicatorOpacity = 0.55;
-
-    // Cascade timings. Delays are staggered and each fade outlasts the gap to the next one, so the three
-    // stages overlap instead of queueing; the last one finishes around 380ms after the window appears.
-    // The search box and the filter labels arrive together: staggering them made the window feel like it was
-    // loading in stages. The underline still follows on its own, once its slide has finished.
-    private const int SearchBoxFadeInDelayMs = 0;
-    private const int SearchBoxFadeInMs = 160;
-
-    private const int LabelFadeInDelayMs = 0;
-    private const int LabelFadeInMs = 160;
-
-    // The underline's slide, and its fade starts the moment that slide ends with no pause between the two.
-    private const int IndicatorSlideMs = 160;
-
-    // False while the underline is still fading in for this summon. Every re-aim in that window snaps
-    // instead of sliding: the line is not fully visible yet, so a slide would only show as it arriving
-    // from somewhere wrong -- which is exactly the "starts out offset then travels" that survived the
-    // earlier fixes. Set true when the fade completes; reset on every summon.
-    private bool _indicatorSettled;
-    private const int IndicatorFadeInDelayMs = IndicatorSlideMs;
-    private const int IndicatorFadeInMs = 180;
-
-    // First TextBlock under a container. The item template is a grid holding a separator, a presenter and
-    // the label, so the label is not at a fixed child index.
-    private static TextBlock? FindTextBlock(DependencyObject root)
-    {
-        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-        {
-            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
-            if (child is TextBlock text)
-                return text;
-            if (FindTextBlock(child) is { } nested)
-                return nested;
-        }
-
-        return null;
-    }
-
-    // Places the underline under the selected filter, sliding there when it moves.
-    //
-    // The base-value dance is load-bearing: while an animation owns a property, nothing assigns its base
-    // value, so detaching alone snaps the property back to whatever it was before the first animation ever
-    // ran. Reading the on-screen value first and writing it back right after detaching keeps the base value
-    // equal to what the user last saw, so the next slide starts from the real position instead of the origin.
-    private void MoveIndicatorToSelection(int attempt = 0)
-    {
-        if (CategoryBar.SelectedItem is not PluginSdk.Abstractions.Plugins.SidebarFilterItem category)
-            return;
-
-        if (CategoryBar.ItemContainerGenerator.ContainerFromItem(category) is not ListBoxItem container)
-        {
-            // The container generator builds items on its own schedule, so SelectedItem can already be set
-            // while no container exists yet -- and returning here left the line parked at its starting
-            // position until the user happened to switch filters, which is the "starts out in the wrong
-            // place" report. Ask again on the next loaded slot rather than giving up.
-            Retry();
-            return;
-        }
-
-        // Measured off the label itself rather than derived from the item's width minus guessed padding. The
-        // item is a grid of a separator pipe, padding and a presenter; recovering the glyph run from those
-        // numbers left the line a pixel or two off in one direction or the other depending on how the values
-        // rounded. Asking the TextBlock for its own bounds removes the guesswork entirely.
-        var label = FindTextBlock(container);
-        if (label is null && container.ActualWidth <= 0)
-        {
-            // The container exists but has not been measured, so the fallback below would compute a width
-            // from zeros and land the line somewhere wrong. Same retry as above.
-            Retry();
-            return;
-        }
-
-        System.Windows.Rect bounds;
-        if (label != null)
-        {
-            var origin = label.TransformToAncestor(CategoryBar).Transform(new System.Windows.Point(0, 0));
-            bounds = new System.Windows.Rect(origin.X, origin.Y, label.ActualWidth, label.ActualHeight);
-        }
-        else
-        {
-            // Fallback for the window between the container being created and its content being realized.
-            var offset = container.TransformToAncestor(CategoryBar).Transform(new System.Windows.Point(0, 0));
-            const double Separator = 1;
-            bounds = new System.Windows.Rect(
-                offset.X + Separator + container.Padding.Left,
-                offset.Y,
-                Math.Max(0, container.ActualWidth - Separator - container.Padding.Left - container.Padding.Right),
-                container.ActualHeight);
-        }
-
-        void Retry()
-        {
-            // Bounded: a filter row whose containers never materialize must not spin here forever.
-            if (attempt >= 5)
-                return;
-            Dispatcher.BeginInvoke(
-                new Action(() => MoveIndicatorToSelection(attempt + 1)),
-                System.Windows.Threading.DispatcherPriority.Loaded);
-        }
-
-        var targetX = bounds.X;
-        var targetWidth = bounds.Width;
-
-        var fromX = CategoryIndicatorTransform.X;
-        var fromWidth = CategoryIndicator.Width;
-
-        CategoryIndicatorTransform.BeginAnimation(
-            System.Windows.Media.TranslateTransform.XProperty, null);
-        CategoryIndicator.BeginAnimation(FrameworkElement.WidthProperty, null);
-
-        // Still fading in: place it, do not animate. This is the whole reason the first sight of the window
-        // showed the line travelling from a stale position -- the widths settle over the first few frames,
-        // and each settling step was animated even though the user had not yet seen the line at all.
-        if (!_indicatorSettled)
-        {
-            CategoryIndicatorTransform.X = targetX;
-            CategoryIndicator.Width = targetWidth;
-            return;
-        }
-
-        if (Math.Abs(fromX - targetX) < 0.5 && Math.Abs(fromWidth - targetWidth) < 0.5)
-        {
-            CategoryIndicatorTransform.X = targetX;
-            CategoryIndicator.Width = targetWidth;
-            return;
-        }
-
-        CategoryIndicatorTransform.X = fromX;
-        CategoryIndicator.Width = fromWidth;
-
-        // EaseOut: covers most of the distance early and settles, so a held arrow key keeps stacking onto a
-        // line that is already near its target instead of restarting from a standstill each time.
-        var ease = new System.Windows.Media.Animation.CubicEase
-        {
-            EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
-        };
-        var duration = TimeSpan.FromMilliseconds(IndicatorSlideMs);
-
-        CategoryIndicatorTransform.BeginAnimation(
-            System.Windows.Media.TranslateTransform.XProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(fromX, targetX, duration)
-            {
-                EasingFunction = ease,
-            });
-        CategoryIndicator.BeginAnimation(
-            FrameworkElement.WidthProperty,
-            new System.Windows.Media.Animation.DoubleAnimation(fromWidth, targetWidth, duration)
-            {
-                EasingFunction = ease,
-            });
-    }
     // The search box logo's own left-click (see SearchBox.IconLeftClicked wiring in the constructor)
     // opens the same menu the tray icon's right-click shows, anchored at the cursor rather than the tray
     // icon's dummy-window+mouse-point placement. "Show Main Window" from here additionally carries over
@@ -620,38 +398,23 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     {
         if (_scaleChangedHandler != null)
             UiMetrics.ScaleChanged -= _scaleChangedHandler;
+        _viewModel.Search.PropertyChanged -= OnSearchPropertyChanged;
+        _controller.Dispose();
         _viewModel.Dispose();
         _trayService?.Dispose();
         _menuPresenter?.Dispose();
         base.OnClosed(e);
     }
 
-    /// <summary>Whether the search box holds anything: filters have nothing to act on until it does.</summary>
-    internal bool HasSearchText => !string.IsNullOrWhiteSpace(_viewModel.SearchQuery);
-
-    /// <summary>Moves the active filter and brings the chosen row into view when the bar is wider than the card.</summary>
+    /// <summary>Moves the active type and reruns the current query under that filter.</summary>
     internal void CycleCategory(int delta)
     {
-        _viewModel.CycleCategory(delta);
-        CategoryBar.ScrollIntoView(CategoryBar.SelectedItem);
-    }
-
-    private void CategoryBar_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        if (e.Delta == 0)
+        if (!_viewModel.Search.ShowCategoryBar)
             return;
 
-        _viewModel.CycleCategory(e.Delta < 0 ? 1 : -1);
-        e.Handled = true;
+        SearchBox.PrepareCategoryChange(delta);
+        _viewModel.CycleCategory(delta);
+        if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
+            _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
     }
-}
-
-/// <summary>Where the quick window's category filter row sits.</summary>
-internal enum CategoryBarPlacement
-{
-    /// <summary>Directly under the search box, above the results.</summary>
-    AboveList = 0,
-
-    /// <summary>Under the result list, just above the status bar.</summary>
-    BelowList = 1,
 }

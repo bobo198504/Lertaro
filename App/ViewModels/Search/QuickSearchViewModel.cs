@@ -187,10 +187,6 @@ public class QuickSearchViewModel : ViewModelBase, IDisposable
         set => Search.ResultsPanelVisibility = value;
     }
 
-    // The window binds this name off its DataContext, so the facade has to carry it: bound to a property only
-    // the inner search VM has, it resolves to nothing and the bar stays at its default Visibility.
-    public Visibility CategoryBarVisibility => Search.CategoryBarVisibility;
-
     public Visibility ResultsSeparatorVisibility
     {
         get => Search.ResultsSeparatorVisibility;
@@ -240,7 +236,11 @@ public class QuickSearchViewModel : ViewModelBase, IDisposable
     }
     public void RefreshEmptyState() => Search.RefreshEmptyState();
 
-    public void RefreshLaunchSources() => _ = _launchSources.RefreshAsync();
+    // Quick Launch disabled: keep the API for the existing bindings, but never load its sources.
+    public void RefreshLaunchSources()
+    {
+        // _ = _launchSources.RefreshAsync();
+    }
     public void RefreshLaunchItems() => RefreshLaunchSources();
     public bool CanAcceptLaunchPanelDrops => _launchSources.AcceptsDrops;
     public bool IsManualLaunchSourceSelected => _launchSources.IsManualSourceSelected;
@@ -274,13 +274,15 @@ public class QuickSearchViewModel : ViewModelBase, IDisposable
     // window, not an idle "glance at the time" moment the way the Quick window's popup can be.
     public Visibility ClockVisibility => !IsInlineSearchContext && UserSettings.Load().SearchWindow.ShowClock ? Visibility.Visible : Visibility.Collapsed;
 
-    public Visibility LaunchPanelVisibility => !IsInlineSearchContext
-        && (!Search.IsActionsMode || ResultsPanelVisibility == Visibility.Visible)
-        && string.IsNullOrWhiteSpace(SearchQuery)
-        && UserSettings.Load().QuickLaunch.Enabled
-        && LaunchSources.Count > 0
-        ? Visibility.Visible
-        : Visibility.Collapsed;
+    // Quick Launch disabled. The original visibility rule is retained for later restoration.
+    public Visibility LaunchPanelVisibility => Visibility.Collapsed;
+    // public Visibility LaunchPanelVisibility => !IsInlineSearchContext
+    //     && (!Search.IsActionsMode || ResultsPanelVisibility == Visibility.Visible)
+    //     && string.IsNullOrWhiteSpace(SearchQuery)
+    //     && UserSettings.Load().QuickLaunch.Enabled
+    //     && LaunchSources.Count > 0
+    //     ? Visibility.Visible
+    //     : Visibility.Collapsed;
 
     public double LaunchPanelMaxHeight => Services.UiMetrics.ScaledQuickSearchMaxResultHeight;
 

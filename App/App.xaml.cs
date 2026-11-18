@@ -33,8 +33,9 @@ public partial class App : Application
     private System.IO.FileStream? _settingsSession;
     public static HookIpcClient? HookClient { get; private set; }
 
+    // Disabled with the Quick Panel feature. Keep the module in the tree for later restoration.
     // Held for the process lifetime so its hotkey registration and message window stay alive.
-    private Services.QuickPanel.QuickPanelManager? _quickPanelManager;
+    // private Services.QuickPanel.QuickPanelManager? _quickPanelManager;
 
     // Same reason: this owns the per-favorite global hotkeys' message-only window, and dropping the
     // instance would unregister every one of them.
@@ -182,17 +183,19 @@ public partial class App : Application
                 AppWindowManager.HandleGlobalSummonHotkey();
             }
         }));
-        HookClient.OnQuickPanelHotkey += () => Dispatcher.BeginInvoke(
-            new Action(() => _quickPanelManager?.Toggle()));
+        // Quick Panel disabled: do not subscribe its IPC hotkey.
+        // HookClient.OnQuickPanelHotkey += () => Dispatcher.BeginInvoke(
+        //     new Action(() => _quickPanelManager?.Toggle()));
         HookClient.OnQuickNavigationHotkey += () => Dispatcher.BeginInvoke(
             new Action(QuickNavigationMenu.ShowFromKeyboard));
         HookClient.Start();
         // Subscribed here rather than at first use: a hook dropped during a sleep has to be noticed by the
         // very next resume, and the launcher spends its life hidden.
         Services.HookResumeWatcher.EnsureWatching();
+        // Quick Panel disabled: do not create its manager.
         // Set up the quick panel. Built here rather than lazily on the first hotkey so the handler above always
         // has something to call; it creates no window of its own until it is first opened.
-        _quickPanelManager = new Services.QuickPanel.QuickPanelManager();
+        // _quickPanelManager = new Services.QuickPanel.QuickPanelManager();
 
         // Per-favorite global hotkeys. Registered in this process rather than through the Hook: the App
         // already pumps messages, and the file-manager window these navigate is resolved here anyway.
@@ -331,6 +334,13 @@ public partial class App : Application
                 Logger.Log("[App] InlineSearchManager started.");
             }
 
+            // The inline card's own prewarm was implemented but never scheduled. Keep it behind the first
+            // startup frame and ahead of the heavier template warm-up, so the first inline-card summon
+            // reuses a painted, laid-out window instead of paying that one-time construction cost.
+            _ = Dispatcher.BeginInvoke(
+                new Action(() => InlineSearchManager.Instance.PrewarmCard()),
+                System.Windows.Threading.DispatcherPriority.Background);
+
             // Outside the branch above on purpose: when the warm-up was nested in it, a main window of any other
             // type meant it never ran at all -- and nothing said so, because it only logged on failure.
             // The first search of a session otherwise pays the JIT and the one-time catalog/history reads on the
@@ -346,9 +356,6 @@ public partial class App : Application
             // icon getter runs the shell lookup on the UI thread, and the first search of a session
             // misses every type at once -- which is why the first keystroke could not echo.
             TypeIconWarmup.Schedule();
-
-
-
 
             if (e.Args.Length > 0 && UriRouter.IsLertaroUri(e.Args[0]))
                 UriRouter.Route(e.Args[0]);

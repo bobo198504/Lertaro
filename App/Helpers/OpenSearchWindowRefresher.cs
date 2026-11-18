@@ -19,14 +19,16 @@ internal static class OpenSearchWindowRefresher
         // Which quick-launch items exist, which sources are enabled and what a source's own config says all
         // live in settings, so a save is exactly the point at which the sources' cached answers stop being
         // answers. Dropped before the windows below re-read them.
-        QuickLaunchSourceCache.Invalidate();
+        // Quick Launch disabled.
+        // QuickLaunchSourceCache.Invalidate();
 
         foreach (Window window in System.Windows.Application.Current.Windows)
         {
             if (window.DataContext is not QuickSearchViewModel quickVm)
                 continue;
 
-            quickVm.RefreshLaunchSources();
+            // Quick Launch disabled.
+            // quickVm.RefreshLaunchSources();
             // The quick window's filter bar is the plugin's type settings, and a save is exactly when those
             // stop being what the bar shows.
             quickVm.RebuildCategoryTabs();

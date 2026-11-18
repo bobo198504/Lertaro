@@ -28,13 +28,12 @@ internal sealed class SettingsStatusMonitor
     private IReadOnlyList<NetworkIndexStatus> _latestNetworkStatuses = Array.Empty<NetworkIndexStatus>();
     private MachineSettings _latestMachineSettings = new();
 
-    // 1 while a Dispatcher.BeginInvoke(_onStatusUpdated) is queued or running, 0 otherwise -- Interlocked
-    // since ScheduleApplyUiState is called from both the UI thread and background threads (the
-    // status-stream callback, RefreshLists' Task.Run continuation). Coalesces bursts of status pushes (up
-    // to ~10/sec while a drive is actively indexing -- see UsnIndexer.NotifyProgressChanged) into at most
-    // one update in flight plus one queued, instead of one queued per push; an unthrottled queue is what
-    // made Settings tab-switching feel stuck during indexing (issue #112).
-    private int _uiUpdateScheduled;
+    // 0 idle, 1 queued, 2 running. Interlocked because status pushes arrive on the stream thread and
+    // RefreshLists' Task.Run thread as well as the UI thread. A dirty bit makes a push that lands while
+    // the UI callback is running schedule exactly one follow-up, so the final loading-cache/ready
+    // transition cannot be dropped between coalesced updates.
+    private int _uiUpdateState;
+    private int _uiUpdateDirty;
 
     public UsnIndexer.IndexerStatus LatestStatus => _latestStatus;
     public IReadOnlyList<NetworkIndexStatus> LatestNetworkStatuses => _latestNetworkStatuses;
@@ -133,16 +132,36 @@ internal sealed class SettingsStatusMonitor
 
     private void ScheduleApplyUiState()
     {
-        if (Interlocked.CompareExchange(ref _uiUpdateScheduled, 1, 0) != 0)
-            return; // already scheduled/running -- it will pick up the latest state fields once it runs
+        Interlocked.Exchange(ref _uiUpdateDirty, 1);
+        if (Interlocked.CompareExchange(ref _uiUpdateState, 1, 0) != 0)
+            return;
 
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher == null)
-            return;
-        _ = dispatcher.BeginInvoke(new Action(() =>
         {
-            try { _onStatusUpdated(); }
-            finally { Interlocked.Exchange(ref _uiUpdateScheduled, 0); }
-        }));
+            Interlocked.Exchange(ref _uiUpdateState, 0);
+            return;
+        }
+        _ = dispatcher.BeginInvoke(new Action(DrainApplyUiState), System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void DrainApplyUiState()
+    {
+        Interlocked.Exchange(ref _uiUpdateState, 2);
+        try
+        {
+            do
+            {
+                Interlocked.Exchange(ref _uiUpdateDirty, 0);
+                _onStatusUpdated();
+            }
+            while (Volatile.Read(ref _uiUpdateDirty) != 0);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _uiUpdateState, 0);
+            if (Volatile.Read(ref _uiUpdateDirty) != 0)
+                ScheduleApplyUiState();
+        }
     }
 }

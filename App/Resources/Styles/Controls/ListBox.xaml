@@ -11,6 +11,7 @@
 
     <!-- ═══════════ ListBox Item Style ═══════════ -->
     <Style x:Key="ResultItemStyle" TargetType="ListBoxItem">
+        <Setter Property="helpers:ResultRowFade.IsEnabled" Value="True"/>
         <!-- Ripple off: it wires an adorner layer plus pointer subscriptions into every row container,
              and a repaint of 20 visible rows measured 45 ms at the median (2.2 ms per row). Selection
              still animates through the ControlTemplate triggers, so the row still reads as live. -->

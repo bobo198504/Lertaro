@@ -153,7 +153,7 @@ public partial class InlineSearchWindow : Window, ISearchWindow
 
         this.IsVisibleChanged += (s, e) =>
         {
-            if (IsVisible)
+            if (IsVisible && !_manager.IsCardParked)
             {
                 _positioner.PositionWindow();
 
@@ -190,17 +190,17 @@ public partial class InlineSearchWindow : Window, ISearchWindow
                     InlineSearchWindowNativeMethods.SWP_NOMOVE | InlineSearchWindowNativeMethods.SWP_NOSIZE | InlineSearchWindowNativeMethods.SWP_SHOWWINDOW);
             }
 
-            if (IsVisible) _positioner.PositionWindow();
+            if (IsVisible && !_manager.IsCardParked) _positioner.PositionWindow();
         };
 
         this.Loaded += (s, e) =>
         {
-            if (IsVisible) _positioner.PositionWindow();
+            if (IsVisible && !_manager.IsCardParked) _positioner.PositionWindow();
         };
 
         this.SizeChanged += (s, e) =>
         {
-            if (IsVisible)
+            if (IsVisible && !_manager.IsCardParked)
             {
                 _positioner.PositionWindow();
             }
@@ -281,6 +281,8 @@ public partial class InlineSearchWindow : Window, ISearchWindow
         _activeTimer.Start();
     }
 
+    internal void ParkAfterPrewarm() => _activeTimer.Stop();
+
     /// <summary>Puts back the keyboard layout that the last summon adopted from its host.</summary>
     internal void RestoreKeyboardLayout() => _focusSupport.RestoreLayout();
 
@@ -325,7 +327,7 @@ public partial class InlineSearchWindow : Window, ISearchWindow
     public bool IsPointInsideWindowExternal(int x, int y) => InlineSearchWindowNativeMethods.IsPointInsideWindow(x, y);
     private void HandleActiveWindowMoved()
     {
-        if (IsVisible)
+        if (IsVisible && !_manager.IsCardParked)
         {
             // This is also the signal that the tracked dialog became measurable after all -- see
             // InlineSearchWindowPositioner.InvalidateDialogGeometry.

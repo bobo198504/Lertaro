@@ -14,7 +14,6 @@ public enum SearchResultCategory
     Image = 5,
     Audio = 6,
     Video = 7,
-    Archive = 8,
 }
 
 /// <summary>
@@ -65,11 +64,6 @@ public static class SearchResultCategorizer
         ".mpg", ".mpeg", ".rmvb", ".rm", ".3gp", ".vob", ".m2ts",
     };
 
-
-    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".zip", ".rar", ".7z", ".gz", ".tar", ".bz2", ".xz", ".tgz", ".cab", ".iso", ".zst", ".lz", ".lzma", ".arj", ".lzh", ".zipx", ".jar", ".war", ".pak", ".nupkg",
-    };
     /// <summary>
     /// The filter a row belongs to, or null when it belongs to none.
     /// </summary>
@@ -156,8 +150,6 @@ public static class SearchResultCategorizer
             return SearchResultCategory.Audio;
         if (VideoExtensions.Contains(extension))
             return SearchResultCategory.Video;
-        if (ArchiveExtensions.Contains(extension))
-            return SearchResultCategory.Archive;
 
         return null;
     }

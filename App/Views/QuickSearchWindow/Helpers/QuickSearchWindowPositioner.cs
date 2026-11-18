@@ -80,10 +80,18 @@ public class QuickSearchWindowPositioner
         // stays put -- saving and restoring are both window-relative, so B round trips against itself.
         var inset = _window.VisibleContentInset;
         var windowWidth = settings.SearchWindow.SearchBarWidth + inset.Left + inset.Right + 2;
+        // Center the search box, not the whole card: results grow downward from that fixed anchor.
+        var searchBoxTop = _window.SearchBox.TranslatePoint(new System.Windows.Point(0, 0), _window).Y;
+        var searchBoxHeight = _window.SearchBox.ActualHeight > 0
+            ? _window.SearchBox.ActualHeight
+            : settings.SearchWindow.SearchBarHeight;
+        var windowHeight = searchBoxTop > 0
+            ? searchBoxTop * 2 + searchBoxHeight
+            : searchBoxHeight + 64;
 
         var (targetPhysX, targetPhysY) = CalculatePhysicalPosition(
             wa.Left, wa.Top, wa.Width, wa.Height,
-            windowWidth, targetDpiScaleX,
+            windowWidth, windowHeight, targetDpiScaleX, targetDpiScaleY,
             settings.SearchWindow.RelativeLeft, settings.SearchWindow.RelativeTop);
 
         // Set WPF DIP properties first so WPF's internal logical coordinates are updated.
@@ -103,7 +111,8 @@ public class QuickSearchWindowPositioner
 
     internal static (double PhysX, double PhysY) CalculatePhysicalPosition(
         int waLeft, int waTop, int waWidth, int waHeight,
-        double windowDipWidth, double targetDpiScaleX,
+        double windowDipWidth, double windowDipHeight,
+        double targetDpiScaleX, double targetDpiScaleY,
         double? relativeLeft, double? relativeTop)
     {
         double targetPhysX;
@@ -119,8 +128,10 @@ public class QuickSearchWindowPositioner
         else
         {
             var targetPhysWidth = windowDipWidth * targetDpiScaleX;
+            var targetPhysHeight = windowDipHeight * targetDpiScaleY;
             targetPhysX = waLeft + (waWidth - targetPhysWidth) / 2.0;
-            targetPhysY = waTop + waHeight * 0.22;
+            // The caller passes the search box's centered envelope here. A saved drag position still wins.
+            targetPhysY = Math.Max(waTop, waTop + (waHeight - targetPhysHeight) / 2.0);
         }
 
         return (targetPhysX, targetPhysY);
@@ -128,12 +139,13 @@ public class QuickSearchWindowPositioner
 
     internal static (double Left, double Top) CalculatePosition(
         int waLeft, int waTop, int waWidth, int waHeight,
-        double windowDipWidth, double targetDpiScaleX, double targetDpiScaleY,
+        double windowDipWidth, double windowDipHeight,
+        double targetDpiScaleX, double targetDpiScaleY,
         double? relativeLeft, double? relativeTop)
     {
         var (physX, physY) = CalculatePhysicalPosition(
             waLeft, waTop, waWidth, waHeight,
-            windowDipWidth, targetDpiScaleX,
+            windowDipWidth, windowDipHeight, targetDpiScaleX, targetDpiScaleY,
             relativeLeft, relativeTop);
         var scaleX = targetDpiScaleX > 0 ? targetDpiScaleX : 1.0;
         var scaleY = targetDpiScaleY > 0 ? targetDpiScaleY : 1.0;
@@ -170,6 +182,7 @@ public class QuickSearchWindowPositioner
         settings.Save();
         // Right-clicking the icon of the window on screen re-centers THAT window, so this is the caller that
         // means "where am I", not a summon.
+        _window.UpdateLayout();
         PositionWindow(keepCurrentMonitor: true);
     }
 

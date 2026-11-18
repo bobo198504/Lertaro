@@ -10,133 +10,6 @@ namespace Lertaro.App.ViewModels.Search.Mapping;
 
 public static class SearchResultMapper
 {
-    private static readonly IReadOnlySet<string> EmptyTracePaths =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-    // Owned by one query's render callback. Cache per-query match evidence, normalized paths and
-    // non-file source candidates, never the final ordering: history, favorites, plugin rows and type
-    // priority still participate per paint.
-    internal readonly record struct CachedFileMatch(MatchEvidenceResult Match, string NormalizedPath);
-
-    internal sealed class QuickFileMatchCache
-    {
-        private readonly Dictionary<(string Name, string Path, bool IsDir), CachedFileMatch> _matches = new();
-        private string? _query;
-        private bool _fuzzy;
-        private bool _andFirst;
-        private long _aliasRevision;
-        private HashSet<byte>? _disabledAliases;
-        private FuzzyQuery _parsed;
-
-        internal FuzzyQuery Prepare(string query)
-        {
-            var disabled = SearchContext.DisabledAliasIds;
-            if (_query != query || _fuzzy != SearchContext.FuzzyMatchEnabled || _andFirst != SearchContext.AndFirstPrecedence
-                || _aliasRevision != AliasProviderRegistry.QueryRevision
-                || !(_disabledAliases == null ? disabled == null : disabled != null && _disabledAliases.SetEquals(disabled)))
-            {
-                _query = query;
-                _fuzzy = SearchContext.FuzzyMatchEnabled;
-                _andFirst = SearchContext.AndFirstPrecedence;
-                _aliasRevision = AliasProviderRegistry.QueryRevision;
-                _disabledAliases = disabled == null ? null : new(disabled);
-                _parsed = FuzzyQuery.Parse(query);
-                _matches.Clear();
-            }
-            return _parsed;
-        }
-
-        internal MatchEvidenceResult Match(SearchResult result, FuzzyQuery query) =>
-            MatchWithPath(result, query).Match;
-
-        internal CachedFileMatch MatchWithPath(SearchResult result, FuzzyQuery query)
-        {
-            var key = (result.Name, result.Path, result.IsDir);
-            if (_matches.TryGetValue(key, out var cached))
-                return cached;
-
-            cached = new CachedFileMatch(
-                MatchFile(result, query),
-                SearchResultHelper.NormalizePath(result.Path));
-            _matches.Add(key, cached);
-            return cached;
-        }
-    }
-
-    internal sealed record HistoricalCandidateSources(
-        List<RankedCandidate> Learned,
-        List<RankedCandidate> Related,
-        List<RankedCandidate> Frequent,
-        List<RankedCandidate> Recent);
-
-    internal sealed record SearchableCandidateSources(
-        List<(AppSearchResult Result, MatchRank Match, MatchEvidence Evidence)> Active,
-        List<SearchableItemMapper.ShadowAliasCandidate> Shadow);
-
-    internal sealed record FavoriteCandidateSources(
-        List<RankedCandidate> Active,
-        List<string> DroppedOutsideScope);
-
-    /// <summary>
-    /// Per-search cache for candidate sources that do not depend on the amount of file results already
-    /// streamed. The quick and inline windows call the mapper again for every intermediate paint; leaving
-    /// these sources uncached repeated history, Recent Items and the complete searchable-item catalog scan.
-    /// </summary>
-    internal sealed class QuickCandidatePassCache
-    {
-        private string? _query;
-        private string? _scope;
-        private bool _isInlineWindow;
-        private bool _hasFileFilterScope;
-        private bool _captureShadow;
-        private int _filesTypeRank;
-        private RankContext? _rankContext;
-        private IReadOnlyDictionary<string, int>? _historyUsage;
-
-        internal HistoricalCandidateSources? Historical { get; set; }
-        internal SearchableCandidateSources? Searchable { get; set; }
-        internal FavoriteCandidateSources? Favorites { get; set; }
-
-        internal void Prepare(
-            string query,
-            string? scope,
-            bool isInlineWindow,
-            bool hasFileFilterScope,
-            bool captureShadow,
-            int filesTypeRank,
-            RankContext? rankContext,
-            IReadOnlyDictionary<string, int> historyUsage)
-        {
-            if (_query == query
-                && string.Equals(_scope, scope, StringComparison.Ordinal)
-                && _isInlineWindow == isInlineWindow
-                && _hasFileFilterScope == hasFileFilterScope
-                && _captureShadow == captureShadow
-                && _filesTypeRank == filesTypeRank
-                && ReferenceEquals(_rankContext, rankContext)
-                && ReferenceEquals(_historyUsage, historyUsage))
-                return;
-
-            _query = query;
-            _scope = scope;
-            _isInlineWindow = isInlineWindow;
-            _hasFileFilterScope = hasFileFilterScope;
-            _captureShadow = captureShadow;
-            _filesTypeRank = filesTypeRank;
-            _rankContext = rankContext;
-            _historyUsage = historyUsage;
-            Historical = null;
-            Searchable = null;
-            Favorites = null;
-        }
-    }
-
-    private static MatchEvidenceResult MatchFile(SearchResult result, FuzzyQuery query)
-    {
-        var matched = query.RankWithEvidence(result.Name, MatchEvidenceField.FileName, isDirectory: result.IsDir);
-        return matched.Rank.IsMatch ? matched : new(query.FallbackRank(result.Path), MatchEvidence.LegacyUnknown);
-    }
-
     /// <summary>
     /// One pass over the instant-result providers and the search-action plugins, kept for the rest of a
     /// search so it runs once per keystroke instead of once per paint.
@@ -211,44 +84,18 @@ public static class SearchResultMapper
     private static readonly IReadOnlyDictionary<string, int> EmptyUsage =
         new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, QuickSearchRankingTrace? rankingTrace = null, Func<PluginSdk.Abstractions.ISearchResult, bool>? categoryFilter = null, CancellationToken cancellationToken = default, QuickFileMatchCache? fileMatchCache = null, QuickCandidatePassCache? candidatePass = null)
+    internal static List<AppSearchResult> BuildQuickResults(List<SearchResult>? fileResults, string query, string? scope, string? contextDirectory, bool isInlineWindow, string? rawQuery = null, bool skipDisplayCap = false, FileFilterScopeDirective? fileFilterScope = null, bool folderScope = false, InstantPassCache? instantPass = null, RankContext? rankContext = null, Func<PluginSdk.Abstractions.ISearchResult, bool>? categoryFilter = null)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var uiResults = new List<AppSearchResult>();
-        var engineCandidateCount = fileResults?.Count ?? 0;
-        var preRankingDrops = rankingTrace != null
-            ? new List<RankingDroppedCandidate>()
-            : null;
-        var beforeDirectoryFilter = rankingTrace != null && fileResults != null
-            ? fileResults.Select(result => result.Path).ToArray()
-            : null;
         // One pass over the plugin providers per search, not per paint. This method IS a paint callback --
         // the quick and inline windows re-run it on every intermediate paint of a streaming search, and a
         // paint cannot reach the screen until the pass below finishes. See InstantPassCache.
         instantPass ??= new InstantPassCache();
         CollectInstantPass(instantPass, rawQuery ?? query, query, isInlineWindow, contextDirectory);
-        cancellationToken.ThrowIfCancellationRequested();
         uiResults.AddRange(instantPass.Rows);
-        var prefixCount = uiResults.Count(result =>
-            !result.IsEmptyResult && !result.IsSearchSectionHeader &&
-            !string.IsNullOrWhiteSpace(result.FullPath) && result.FullPath != "__SHOW_MORE__");
+        var hasPluginSearchActions = instantPass.HasPluginSearchActions;
 
         RemoveQueriedDirectoryItself(fileResults, query);
-        if (beforeDirectoryFilter != null)
-        {
-            var remaining = new HashSet<string>(fileResults!.Select(result => result.Path), StringComparer.OrdinalIgnoreCase);
-            foreach (var path in beforeDirectoryFilter)
-            {
-                if (!remaining.Contains(path))
-                    preRankingDrops!.Add(new RankingDroppedCandidate(
-                        path,
-                        RankingCandidateSource.FileIndex,
-                        null,
-                        RankingProviderState.Unknown,
-                        0,
-                        RankingDropStage.QueriedDirectoryFilter));
-            }
-        }
 
         // A start-menu entry, a desktop shortcut and the program it points at are three rows for one thing.
         // Drop the shortcut when it merely spells its target's name, and move its history onto the target --
@@ -259,30 +106,13 @@ public static class SearchResultMapper
         if (!string.IsNullOrEmpty(scope) && fileResults != null)
         {
             var normalizedScope = SearchResultHelper.NormalizePath(scope);
-            var unscoped = fileResults;
             fileResults = fileResults.FindAll(x =>
             {
                 var normalizedPath = SearchResultHelper.NormalizePath(x.Path);
                 return SearchResultHelper.IsPathInsideScope(normalizedPath, normalizedScope)
                     && !string.Equals(normalizedPath, normalizedScope, StringComparison.OrdinalIgnoreCase);
             });
-            if (preRankingDrops != null)
-            {
-                var kept = new HashSet<string>(fileResults.Select(result => result.Path), StringComparer.OrdinalIgnoreCase);
-                foreach (var result in unscoped)
-                {
-                    if (!kept.Contains(result.Path))
-                        preRankingDrops.Add(new RankingDroppedCandidate(
-                            result.Path,
-                            RankingCandidateSource.FileIndex,
-                            null,
-                            RankingProviderState.Unknown,
-                            0,
-                            RankingDropStage.ScopeFilter));
-                }
-            }
         }
-        var afterMapperFilterCount = fileResults?.Count ?? 0;
 
         // The profile folders under the name Windows shows for them. The index only knows the on-disk name
         // (Desktop, Downloads, Music), so a query in Chinese or its pinyin could not reach them even though
@@ -331,26 +161,15 @@ public static class SearchResultMapper
 
         var historyUsage = RecentUsage();
 
-        // Quick-window-only: the user-orderable result-type order (RankedCandidate.TypeRank) is a
-        // section-local group inside RankPolicy.BuildKey/RankKeyComparer, not a group above the sections
-        // or above the evidence grade. Pinned, Boosted and Low compare it after grade, priority, history
-        // band and match placement (contiguity, shape, start) have tied, but before coverage, and only
-        // between the three built-in buckets. Every file-backed row (index files,
-        // favorites, history, Windows' Recent) starts on FilesTypeRank so those rows stay one group; a
-        // shortcut then borrows the better of that rank and the application type's (below). The inline
-        // window never consults the list at all.
+        // Quick-window-only: the user-orderable result-type order (RankedCandidate.TypeRank) is compared
+        // inside each ranking section, not above it (see RankPolicy.CompareSectionRank): before match
+        // quality everywhere except the low-priority section, where quality comes first. Every file-backed
+        // row (index files, favorites, history, Windows' Recent) starts on FilesTypeRank so those rows stay
+        // one group; a shortcut then borrows the better of that rank and the application type's (below).
+        // The inline window never consults the list at all.
         var typeOrder = isInlineWindow ? new List<string>() : UserSettings.Load().ResultTypeOrder;
         var typeRanks = SearchResultTypePriority.BuildRanks(typeOrder);
         var filesTypeRank = SearchResultTypePriority.Rank(SearchResultTypePriority.FilesTypeId, typeRanks);
-        candidatePass?.Prepare(
-            query,
-            scope,
-            isInlineWindow,
-            fileFilterScope != null,
-            rankingTrace != null,
-            filesTypeRank,
-            rankContext,
-            historyUsage);
 
         // A .lnk/.appref-ms is a file row that is also an application shortcut. Taking the better of
         // the two ranks keeps the user's "Applications first" order working for shortcuts the app provider
@@ -358,7 +177,8 @@ public static class SearchResultMapper
         // order harmless instead of silently demoting every shortcut to the file rank. A .url keeps the
         // file rank: it points at a web page, so the application type has nothing to say about it.
         var shortcutTypeRank = SearchResultTypePriority.ShortcutRank(
-            SearchResultTypePriority.RankForApplication(
+            SearchResultTypePriority.RankForResultKind(
+                SearchResultTypePriority.ApplicationResultKind,
                 PluginManager.Instance.SearchableItemProviders,
                 typeRanks),
             filesTypeRank);
@@ -391,134 +211,70 @@ public static class SearchResultMapper
         }
 
         // Favorites, history-matched files, searchable items (apps/settings), and remaining file
-        // results all compete on ONE list: section first, then that section's key chain (evidence grade,
-        // preference/type/favorite/priority/history band, quality, common tail). A better evidence grade
-        // never loses to a type order; history only tie-breaks inside the same section and grade.
+        // results all compete on ONE list now: the type grouping first (one hard group per type), then,
+        // inside a type, match quality, then favorites, then history band (5+ opens / 1-4 / none).
+        // History never overrules a better textual match, and quality never outranks a type the user put
+        // earlier.
         var candidates = new List<RankedCandidate>();
-        var shadowAliasCandidates = rankingTrace != null
-            ? new List<RankedCandidate>()
-            : null;
-        var searchableProviderHits = rankingTrace != null
-            ? new Dictionary<string, int>(StringComparer.Ordinal)
-            : null;
 
         // Parsed once for this whole result set. The file loop below runs once per file result (thousands
         // on a broad query), and the string-based ComputeMatchRank re-parsed the query on every one of
         // them -- Parse re-consults every alias provider's GetQueryForms, so with pinyin loaded that was
         // the dominant per-keystroke cost in this mapper.
-        var fuzzy = fileMatchCache?.Prepare(query) ?? FuzzyQuery.Parse(query);
+        var fuzzy = FuzzyQuery.Parse(query);
 
-        // The history entry already remembers which query opened its path. Re-introduce existing paths
-        // whose learned keyword matches this query even when the index's bounded first page omitted them.
-        // Inline results enter Global Search here; its separately scoped Current Folder tier wins the
-        // downstream path dedupe. An explicit type trigger retains its strict result domain.
+        // Re-introduce existing paths whose NAME matches this query even when the index's bounded first
+        // page omitted them. The history candidate cap keeps left matches first, then high-use misses, so
+        // a frequently opened item cannot disappear behind a crowd of merely recent entries before the
+        // shared left/history/type ranking gets to see it. An explicit type trigger retains its strict
+        // result domain.
         if (triggeredTypeId == null)
         {
-            var historical = candidatePass?.Historical;
-            if (historical == null)
-            {
-                historical = new HistoricalCandidateSources(
-                    HistorySearchCandidateMapper.CollectLearned(fuzzy, scope, rankContext, filesTypeRank),
-                    RelatedHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank),
-                    FrequentHistoryCandidateMapper.Collect(fuzzy, scope, rankContext, filesTypeRank),
-                    WindowsRecentCandidateMapper.Collect(fuzzy, scope, filesTypeRank));
-                if (candidatePass != null)
-                    candidatePass.Historical = historical;
-            }
-
-            var historyCandidates = historical.Learned;
+            var historyCandidates = HistorySearchCandidateMapper.CollectNamed(fuzzy, scope, filesTypeRank);
             if (normalizedScopeFolders != null)
-            {
-                if (preRankingDrops != null)
-                {
-                    foreach (var candidate in historyCandidates.Where(c => !InFileFilterScope(c.NormalizedPath)))
-                        preRankingDrops.Add(new RankingDroppedCandidate(
-                            candidate.NormalizedPath, candidate.Source, null, RankingProviderState.Unknown,
-                            0, RankingDropStage.ScopeFilter));
-                }
                 historyCandidates = historyCandidates.Where(c => InFileFilterScope(c.NormalizedPath)).ToList();
-            }
             candidates.AddRange(historyCandidates);
-            candidates.AddRange(normalizedScopeFolders == null
-                ? historical.Related
-                : historical.Related.Where(c => InFileFilterScope(c.NormalizedPath)));
-            candidates.AddRange(historical.Frequent);
 
             // Windows' Recent Items: what was opened in any app, ranked right below the user's own picks.
-            var recentCandidates = historical.Recent;
+            var recentCandidates = WindowsRecentCandidateMapper.Collect(fuzzy, scope, filesTypeRank);
             if (normalizedScopeFolders != null)
-            {
-                if (preRankingDrops != null)
-                {
-                    foreach (var candidate in recentCandidates.Where(c => !InFileFilterScope(c.NormalizedPath)))
-                        preRankingDrops.Add(new RankingDroppedCandidate(
-                            candidate.NormalizedPath, candidate.Source, null, RankingProviderState.Unknown,
-                            0, RankingDropStage.ScopeFilter));
-                }
                 recentCandidates = recentCandidates.Where(c => InFileFilterScope(c.NormalizedPath)).ToList();
-            }
             candidates.AddRange(recentCandidates);
         }
 
         if (!string.IsNullOrWhiteSpace(query))
         {
-            var favorites = candidatePass?.Favorites;
-            if (favorites == null)
+            var favorites = UserSettings.Load().Favorites;
+            for (var i = 0; i < favorites.Count; i++)
             {
-                var active = new List<RankedCandidate>();
-                var dropped = new List<string>();
-                var configured = UserSettings.Load().Favorites;
-                for (var i = 0; i < configured.Count; i++)
-                {
-                    var fav = configured[i];
-                    var matched = FavoriteSearchHelper.ComputeMatchWithEvidence(fav, fuzzy);
-                    if (!matched.Rank.IsMatch || !Helpers.FavoritePathResolver.IsPathAvailable(fav.Path))
-                        continue;
+                var fav = favorites[i];
+                var match = FavoriteSearchHelper.ComputeMatch(fav, fuzzy);
+                if (!match.IsMatch || !Helpers.FavoritePathResolver.IsPathAvailable(fav.Path))
+                    continue;
 
-                    // A favorite is curated by the user regardless of whether it also has USAGE history.
-                    // Under V3 a strong direct match enters Pinned; a weak one stays in Boosted at its
-                    // evidence grade, so it cannot overrule a much better textual match. The type list never
-                    // applies to it; it only inherits the Files rank like every other file-backed row.
-                    var normalizedFavPath = Helpers.FavoritePathResolver.NormalizeForComparison(fav.Path);
-                    if (normalizedScopeFolders != null && !InFileFilterScope(normalizedFavPath))
-                    {
-                        dropped.Add(normalizedFavPath);
-                        continue;
-                    }
-                    var favoriteRow = FavoriteSearchHelper.CreateFavoriteUiResult(fav, query, 0);
-                    // A favorite clears the same bar the index side's rows do (see
-                    // HistorySearchCandidateMapper.IsExcludedFromSearch): a hidden target, or one on a source
-                    // this session found unreachable, is not a row the full window could list either.
-                    if (HistorySearchCandidateMapper.IsExcludedFromSearch(favoriteRow))
-                        continue;
-                    var usage = historyUsage.TryGetValue(normalizedFavPath, out var uc) ? uc : 0;
-                    active.Add(new RankedCandidate(
-                        favoriteRow,
-                        IsFavorite: true,
-                        HistoryCount: usage,
-                        filesTypeRank,
-                        matched.Rank,
-                        normalizedFavPath,
-                        Source: RankingCandidateSource.Favorite,
-                        Evidence: matched.Evidence,
-                        TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(filesTypeRank)));
-                }
-                favorites = new FavoriteCandidateSources(active, dropped);
-                if (candidatePass != null)
-                    candidatePass.Favorites = favorites;
+                // A favorite is curated by the user regardless of whether it also has USAGE history.
+                // Under the four-section model it competes on its own score: a strong name match makes it
+                // 44, above every history tier; a weak one keeps the ordinary base score, so it cannot
+                // overrule a much better textual match. The type list never applies to it, it only
+                // inherits the Files rank like every other file-backed row.
+                var normalizedFavPath = Helpers.FavoritePathResolver.NormalizeForComparison(fav.Path);
+                if (normalizedScopeFolders != null && !InFileFilterScope(normalizedFavPath))
+                    continue;
+                var favoriteRow = FavoriteSearchHelper.CreateFavoriteUiResult(fav, query, 0);
+                // A favorite clears the same bar the index side's rows do (see
+                // HistorySearchCandidateMapper.IsExcludedFromSearch): a hidden target, or one on a source
+                // this session found unreachable, is not a row the full window could list either.
+                if (HistorySearchCandidateMapper.IsExcludedFromSearch(favoriteRow))
+                    continue;
+                var usage = historyUsage.TryGetValue(normalizedFavPath, out var uc) ? uc : 0;
+                candidates.Add(new RankedCandidate(
+                    favoriteRow,
+                    IsFavorite: true,
+                    HistoryCount: usage,
+                    filesTypeRank,
+                    match,
+                    normalizedFavPath));
             }
-
-            foreach (var normalizedFavPath in favorites.DroppedOutsideScope)
-            {
-                preRankingDrops?.Add(new RankingDroppedCandidate(
-                    normalizedFavPath,
-                    RankingCandidateSource.Favorite,
-                    null,
-                    RankingProviderState.Unknown,
-                    0,
-                    RankingDropStage.ScopeFilter));
-            }
-            candidates.AddRange(favorites.Active);
         }
 
         // Searchable items (Start Menu apps, settings, ...) take part in ordinary searches only -- a
@@ -526,41 +282,13 @@ public static class SearchResultMapper
         // routing hid these too (its "Case B").
         if (fileFilterScope == null)
         {
-            var searchable = candidatePass?.Searchable;
-            if (searchable == null)
-            {
-                var shadowHits = shadowAliasCandidates != null
-                    ? new List<SearchableItemMapper.ShadowAliasCandidate>()
-                    : null;
-                searchable = new SearchableCandidateSources(
-                    SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow, shadowHits),
-                    shadowHits ?? []);
-                if (candidatePass != null)
-                    candidatePass.Searchable = searchable;
-            }
-
-            foreach (var (result, match, evidence) in searchable.Active)
+            foreach (var (result, match) in SearchableItemMapper.CollectSearchableItemResults(query, isInlineWindow))
             {
                 var typeId = result.SourceProvider is ISearchableItemProvider provider
                     ? SearchResultTypePriority.GetProviderTypeId(provider)
                     : SearchResultTypePriority.FilesTypeId;
-                if (searchableProviderHits != null && result.SourceProvider != null)
-                {
-                    var providerId = result.SourceProvider.GetType().Name;
-                    searchableProviderHits.TryGetValue(providerId, out var hits);
-                    searchableProviderHits[providerId] = hits + 1;
-                }
                 if (triggeredTypeId != null && typeId != triggeredTypeId)
-                {
-                    preRankingDrops?.Add(new RankingDroppedCandidate(
-                        result.FullPath,
-                        RankingCandidateSource.SearchableProvider,
-                        result.SourceProvider?.GetType().Name,
-                        RankingProviderState.Unknown,
-                        0,
-                        RankingDropStage.TypeTriggerFilter));
                     continue;
-                }
 
                 // An application's FullPath can be a virtual shell:AppsFolder\{AUMID} id (packaged apps) --
                 // Path.GetFullPath (inside NormalizePath) would mangle that, and SearchHistoryStore itself
@@ -576,37 +304,7 @@ public static class SearchResultMapper
                     HistoryCount: usage,
                     rowTypeRank,
                     match,
-                    lookupPath,
-                    Source: RankingCandidateSource.SearchableProvider,
-                    Evidence: evidence,
-                    TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(rowTypeRank)));
-            }
-
-            // Alias hits are a parallel diagnostic stream. They never join candidates, and therefore
-            // cannot affect merge ownership, history budgets, truncation, badges or execution behavior.
-            if (!folderScope && shadowAliasCandidates != null)
-            {
-                foreach (var hit in searchable.Shadow)
-                {
-                    var typeId = SearchResultTypePriority.GetProviderTypeId(hit.Provider);
-                    if (triggeredTypeId != null && typeId != triggeredTypeId)
-                        continue;
-                    var lookupPath = hit.Result.IsApplication
-                        ? hit.Result.FullPath.Trim()
-                        : SearchResultHelper.NormalizePath(hit.Result.FullPath);
-                    var usage = historyUsage.TryGetValue(lookupPath, out var uc) ? uc : 0;
-                    var typeRank = SearchResultTypePriority.Rank(typeId, typeRanks);
-                    shadowAliasCandidates!.Add(new RankedCandidate(
-                        hit.Result,
-                        IsFavorite: false,
-                        HistoryCount: usage,
-                        typeRank,
-                        hit.Match,
-                        lookupPath,
-                        Source: RankingCandidateSource.SearchableProvider,
-                        Evidence: hit.Evidence,
-                        TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(typeRank)));
-                }
+                    SearchResultHelper.NormalizePath(result.FullPath)));
             }
         }
 
@@ -614,23 +312,10 @@ public static class SearchResultMapper
         // was already fetched from the backend using the trigger-stripped query (SearchDispatchController
         // strips it before ever dispatching the search), so this gets the same clean-text recall any
         // other type gets, not just whatever a trigger-polluted query happened to match.
-        if (preRankingDrops != null && fileResults != null && triggeredTypeId != null
-            && triggeredTypeId != SearchResultTypePriority.FilesTypeId)
-        {
-            foreach (var result in fileResults)
-                preRankingDrops.Add(new RankingDroppedCandidate(
-                    result.Path,
-                    RankingCandidateSource.FileIndex,
-                    null,
-                    RankingProviderState.Unknown,
-                    0,
-                    RankingDropStage.TypeTriggerFilter));
-        }
         if (fileResults != null && (triggeredTypeId == null || triggeredTypeId == SearchResultTypePriority.FilesTypeId))
         {
             foreach (var result in fileResults)
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 var lookupPath = result.Path.Length > 3 && result.Path[^1] == '\\' ? result.Path.TrimEnd('\\') : result.Path;
                 var usage = historyUsage.TryGetValue(lookupPath, out var uc) ? uc : 0;
                 // A row the index returned whose own NAME does not match the query at all -- it was reached
@@ -639,18 +324,16 @@ public static class SearchResultMapper
                 // (SearchResultRelevance.Apply). Leaving it at NoMatch instead made this window order those
                 // rows by path length and name where the full window ordered the same rows by coverage: one
                 // query, two file orders, and exactly the many-CJK-files case pinyin search produces.
-                var cachedMatch = fileMatchCache?.MatchWithPath(result, fuzzy);
-                var matched = cachedMatch?.Match ?? MatchFile(result, fuzzy);
+                var match = fuzzy.Rank(result.Name);
+                if (!match.IsMatch)
+                    match = fuzzy.FallbackRank(result.Path);
                 candidates.Add(new RankedCandidate(
                     SearchResultHelper.CreateUiResult(result, query, 0, isApplication: false, scope),
                     IsFavorite: false,
                     HistoryCount: usage,
                     filesTypeRank,
-                    matched.Rank,
-                    cachedMatch?.NormalizedPath ?? SearchResultHelper.NormalizePath(result.Path),
-                    Source: RankingCandidateSource.FileIndex,
-                    Evidence: matched.Evidence,
-                    TypeRankApplies: SearchResultTypePriority.IsCoreTypeRank(filesTypeRank)));
+                    match,
+                    SearchResultHelper.NormalizePath(result.Path)));
             }
         }
 
@@ -663,78 +346,18 @@ public static class SearchResultMapper
         // scope has to be re-applied to them here. Before ranking and before the display cap, so a dropped
         // file cannot take a row the folders would have used.
         if (folderScope)
-        {
-            if (preRankingDrops != null)
-            {
-                foreach (var candidate in candidates.Where(candidate => !candidate.Result.IsDir))
-                    preRankingDrops.Add(new RankingDroppedCandidate(
-                        candidate.NormalizedPath,
-                        candidate.Source,
-                        candidate.Result.SourceProvider?.GetType().Name,
-                        RankingProviderState.Unknown,
-                        0,
-                        RankingDropStage.FolderOnlyFilter));
-            }
             candidates.RemoveAll(c => !c.Result.IsDir);
-        }
 
-        // Inline ordering is not traced because it uses a different history budget.
-        var rankingPass = RankingPassTrace.Empty;
-        cancellationToken.ThrowIfCancellationRequested();
-        var ordered = rankingTrace != null
-            ? RankedCandidateOrdering.OrderWithTrace(candidates, rankContext, isInlineWindow ? null : query, typeOrder, out rankingPass)
-            : RankedCandidateOrdering.Order(candidates, rankContext, isInlineWindow ? null : query, typeOrder);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // The filter runs HERE, before any cap. Filtering afterwards meant the cap had already thrown those
-        // rows away under the whole-result ordering: a short query ranks applications and folders first, so
-        // an audio tab received a list with no audio in it. Filtering first also makes the display cap
-        // meaningful again, because it then counts rows of the type the user asked for.
-        //
-        // The predicate is the one the selected filter row carries -- the same object the full window's
-        // sidebar counts and filters with -- so this list and that sidebar cannot disagree about a row.
+        // Category filtering has to happen before the history budget is built. Otherwise the three
+        // history slots are spent across all types and then rows are filtered out, leaving the selected
+        // type with fewer than three while another type silently owned those slots.
         if (categoryFilter != null)
-            ordered = ordered.Where(row => categoryFilter(row.Result)).ToList();
+            candidates = candidates.Where(row => categoryFilter(row.Result)).ToList();
 
-        IReadOnlyList<RankingProviderTrace> providerReadiness = Array.Empty<RankingProviderTrace>();
-        if (rankingTrace != null)
-        {
-            try
-            {
-                providerReadiness = SearchableItemCache.ReadinessSnapshot(
-                    PluginManager.Instance.SearchableItemProviders,
-                    searchableProviderHits);
-            }
-            catch
-            {
-                providerReadiness = Array.Empty<RankingProviderTrace>();
-            }
-        }
-
-        void RegisterTrace(IReadOnlySet<string> typeCoveragePaths)
-        {
-            if (rankingTrace == null)
-                return;
-            var counts = new RankingPageCounts(
-                engineCandidateCount,
-                afterMapperFilterCount,
-                rankingPass.PreMergeCount,
-                rankingPass.PostMergeCount,
-                prefixCount,
-                typeCoveragePaths.Count,
-                prefixCount + rankingPass.PostMergeCount,
-                0);
-            rankingTrace.RegisterMapperOutput(uiResults, new MapperTraceSnapshot(
-                rankingPass,
-                counts,
-                preRankingDrops is null ? Array.Empty<RankingDroppedCandidate>() : preRankingDrops,
-                providerReadiness,
-                typeOrder.ToArray(),
-                typeCoveragePaths,
-                shadowAliasCandidates is null
-                    ? Array.Empty<RankedCandidate>()
-                    : shadowAliasCandidates));
-        }
+        // The inline window shares this ranking but spends at most 1 H5 + 2 H3 slots; the quick window's
+        // 3/10 tier caps are still bounded by the shared three-row history lift. Mixed into one log that has
+        // no window field, the bucket distribution would tilt toward Boosted, so the inline window is not sampled.
+        var ordered = RankedCandidateOrdering.Order(candidates, rankContext, isInlineWindow ? null : query, typeOrder);
 
         // One program, one row -- across BOTH sources. The app provider contributes the installed entry while
         // the file index contributes every shortcut the user has to it, and DedupeShortcutRows only ever sees
@@ -762,6 +385,10 @@ public static class SearchResultMapper
             }).ToList();
         }
 
+        // The category filter runs HERE, before any cap. Filtering afterwards meant the cap had already
+        // thrown those rows away under the whole-result ordering: a short query ranks applications and
+        // folders first, so an Audio tab received a list with no audio in it. Filtering first also makes the
+        // display cap meaningful again, because it then counts rows of the type the user asked for.
         // Capped here (not deferred to the caller) because this display cap has to respect whatever
         // header/grouping layout the caller (or InlineListSearchHelper.MergeLocalMatches, downstream)
         // builds around these rows -- e.g. the inline window's "Current Folder"/"Global Search" split
@@ -771,12 +398,14 @@ public static class SearchResultMapper
         // everything under 10 total, else pad to ~8 then allow up to 50 with a "N more" marker) --
         // just applied to the now-unified candidate list instead of only file results.
 
-        // A filtered list skips the display cap entirely. The cap exists to keep the unfiltered list scrollable
-        // and to hand the overflow to "show more"; applying it to a filtered list would mean any magic number
-        // could hide the row the user is actually looking for, however far down the whole-result ordering it
-        // sits. Inside one category there is nothing to overflow into -- the user asked for that type, so the
-        // list shows that type.
-        if (skipDisplayCap || categoryFilter != null || uiResults.Count + ordered.Count < 10)
+        // Every ordinary quick-search filter uses the same 50-result page. The old category exception let a
+        // type return hundreds of rows while 全部 stopped at fifty, and enlarging the bound collection made
+        // every progressive reconcile and scroll step more expensive.
+        const int CandidatePool = 50;
+        if (uiResults.Count > CandidatePool)
+            uiResults.RemoveRange(CandidatePool, uiResults.Count - CandidatePool);
+
+        if (skipDisplayCap || uiResults.Count + ordered.Count < 10)
         {
             foreach (var candidate in ordered)
             {
@@ -784,35 +413,18 @@ public static class SearchResultMapper
                 uiResults.Add(candidate.Result);
             }
 
-            RegisterTrace(EmptyTracePaths);
             StampWindow(uiResults, isInlineWindow);
             return uiResults;
         }
 
-        var hasMoreAtEnd = ordered.Count > 50;
-        HashSet<string>? typeCoveragePaths = null;
+        var remainingSlots = Math.Max(0, CandidatePool - uiResults.Count);
+        var hasMoreAtEnd = ordered.Count > remainingSlots;
         // A type the user bothered to order must not vanish behind the cap: keep its best few rows and let
         // the rest of the slots follow the global order (EnsureTypeCoverage never reorders, only selects).
-        if (hasMoreAtEnd)
-        {
-            HashSet<string>? kernelTop = null;
-            if (rankingTrace != null)
-            {
-                kernelTop = new HashSet<string>(
-                    ordered.Take(50).Select(candidate => candidate.NormalizedPath),
-                    StringComparer.OrdinalIgnoreCase);
-                typeCoveragePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            }
-            ordered = RankedCandidateOrdering.EnsureTypeCoverage(ordered, 50);
-            if (kernelTop != null)
-            {
-                foreach (var candidate in ordered)
-                {
-                    if (!kernelTop.Contains(candidate.NormalizedPath))
-                        typeCoveragePaths!.Add(candidate.NormalizedPath);
-                }
-            }
-        }
+        if (remainingSlots == 0)
+            ordered = [];
+        else if (hasMoreAtEnd)
+            ordered = RankedCandidateOrdering.EnsureTypeCoverage(ordered, remainingSlots);
 
         var firstCount = Math.Min(ordered.Count, Math.Max(0, 8 - uiResults.Count));
         for (var i = 0; i < firstCount; i++)
@@ -832,7 +444,6 @@ public static class SearchResultMapper
             SearchResultHelper.AddShowMoreResult(uiResults, query);
         }
 
-        RegisterTrace((IReadOnlySet<string>?)typeCoveragePaths ?? EmptyTracePaths);
         StampWindow(uiResults, isInlineWindow);
         return uiResults;
     }
@@ -907,7 +518,7 @@ public static class SearchResultMapper
             foreach (var (path, score) in merged)
                 combined[path] = Math.Max(combined.GetValueOrDefault(path), score);
             rankContext = new RankContext(existing.PriorityResolver, combined, existing.FavoritePaths,
-                existing.HistoryFiveMax, existing.HistoryThreeMax);
+                existing.HistoryFiveMax, existing.HistoryThreeMax, existing.HistoryLiftMax, existing.Query);
         }
 
         if (Logger.IsEnabled(LogLevel.Debug))
@@ -970,11 +581,10 @@ public static class SearchResultMapper
     // IsFavorite: an explicit user pick. HistoryCount is how many times the path was opened (0 when not
     // in history), which the kernel only uses when it has no decayed score for the path. TypeRank is the
     // row's position in the user's result-type order (int.MaxValue when the type is not listed); the quick
-    // window compares it only inside the section's key chain (neutral for weak evidence) and the display
-    // cap keeps a few rows per type, while the full window has no type layer at all. IsHistoryOnly marks a
-    // row that exists only because a history keyword matched: its name did not match, so the kernel must
-    // not treat the keyword rank as a name match. Which keys these become is RankPolicy's decision, not
-    // this type's.
+    // window adds its type bonus to the C/P score and the display cap keeps a few rows per type, while the
+    // full window has no type layer at all. IsHistoryOnly marks a row that
+    // exists only because a history keyword matched: its name did not match, so the kernel must not treat
+    // the keyword rank as a name match. Which keys these become is RankPolicy's decision, not this type's.
     internal readonly record struct RankedCandidate(
         AppSearchResult Result,
         bool IsFavorite,
@@ -982,10 +592,7 @@ public static class SearchResultMapper
         int TypeRank,
         MatchRank Match,
         string NormalizedPath,
-        bool IsHistoryOnly = false,
-        RankingCandidateSource Source = RankingCandidateSource.Unknown,
-        MatchEvidence Evidence = default,
-        bool TypeRankApplies = true);
+        bool IsHistoryOnly = false);
 
     // A shortcut file is both a file row and an application shortcut, and it ranks as whichever identity the
     // user put first -- where the app provider never indexed it, the file row is the only row it has, so
@@ -1004,11 +611,7 @@ public static class SearchResultMapper
             var rank = SearchResultTypePriority.TypeRankForRow(
                 row.TypeRank, row.Result.IsDir, row.NormalizedPath, filesTypeRank, shortcutTypeRank);
             if (rank != row.TypeRank)
-                candidates[i] = row with
-                {
-                    TypeRank = rank,
-                    TypeRankApplies = SearchResultTypePriority.IsCoreTypeRank(rank),
-                };
+                candidates[i] = row with { TypeRank = rank };
         }
     }
 
@@ -1016,8 +619,10 @@ public static class SearchResultMapper
     // ExplorerSearchHelper, and this "Global Search" tier below) so a file scores the same way regardless
     // of which of the two it happens to land in. The ranking itself lives in RankPolicy; this only decides
     // which row owns a path and where each row's signals come from.
-    internal static List<AppSearchResult> RankAndDedupe(List<RankedCandidate> candidates, RankContext? context = null)
-        => RankedCandidateOrdering.Order(candidates, context).Select(c => c.Result).ToList();
+    /// <param name="query">Passed on to the calibration log when the quick window ranks; null keeps the
+    /// ordering identical and records nothing.</param>
+    internal static List<AppSearchResult> RankAndDedupe(List<RankedCandidate> candidates, RankContext? context = null, string? query = null)
+        => RankedCandidateOrdering.Order(candidates, context, query).Select(c => c.Result).ToList();
 
     // The same ordering, keeping the rank alongside each row -- for callers that need to consult it again
     // after ordering (the inline window's directory-proximity pass does). It ranks a folder's own listing,

@@ -224,7 +224,6 @@ public sealed class ExplorerSearchHelperTests
     {
         var result = ExplorerSearchHelper.CreateLocalSnapshot(
             [Item(@"C:\Root\Child\deep.txt"), Item(@"D:\outside.txt"), Item(@"C:\Root\direct.txt")],
-            new List<SearchResultMapper.RankedCandidate>(),
             "f",
             @"C:\Root");
 
@@ -239,7 +238,6 @@ public sealed class ExplorerSearchHelperTests
     {
         var result = ExplorerSearchHelper.CreateLocalSnapshot(
             [Item(@"C:\Root\lx-music"), Item(@"C:\Root\LRC maker"), Item(@"C:\Root\Lertaro")],
-            new List<SearchResultMapper.RankedCandidate>(),
             "l",
             @"C:\Root");
 
@@ -253,7 +251,6 @@ public sealed class ExplorerSearchHelperTests
     {
         var result = ExplorerSearchHelper.CreateLocalSnapshot(
             [Item(@"C:\Root"), Item(@"C:\Root\direct.txt")],
-            new List<SearchResultMapper.RankedCandidate>(),
             "f",
             @"C:\Root");
 
@@ -265,7 +262,6 @@ public sealed class ExplorerSearchHelperTests
     {
         var result = ExplorerSearchHelper.CreateLocalSnapshot(
             [Item(@"C:\Root\Child\deep.txt"), Item(@"C:\Root\direct.txt")],
-            new List<SearchResultMapper.RankedCandidate>(),
             "f",
             @"C:\Root");
 
@@ -282,7 +278,7 @@ public sealed class ExplorerSearchHelperTests
         var matches = new[] { Item(@"D:\sub-atlas.txt"), Item(@"D:\atlas.txt") };
 
         var withoutRules = ExplorerSearchHelper.CreateLocalSnapshot(
-            matches, new List<SearchResultMapper.RankedCandidate>(), "atlas", @"C:\Root");
+            matches, "atlas", @"C:\Root");
         CollectionAssert.AreEqual(
             new[] { @"D:\atlas.txt", @"D:\sub-atlas.txt" },
             withoutRules.Select(item => item.FullPath).ToArray());
@@ -292,34 +288,9 @@ public sealed class ExplorerSearchHelperTests
             : new ExclusionRuleSet.PriorityVerdict(IndexRuleEffect.Normal, false));
 
         var pinned = ExplorerSearchHelper.CreateLocalSnapshot(
-            matches, new List<SearchResultMapper.RankedCandidate>(), "atlas", @"C:\Root", rankContext: rankContext);
+            matches, "atlas", @"C:\Root", rankContext: rankContext);
         CollectionAssert.AreEqual(
             new[] { @"D:\sub-atlas.txt", @"D:\atlas.txt" },
             pinned.Select(item => item.FullPath).ToArray());
-    }
-
-    [TestMethod]
-    public void CreateLocalSnapshot_LearnedAliasTrailsDirectMatchesWithinProximityTier()
-    {
-        var direct = Item(@"C:\Root\notes.txt");
-        var learned = new SearchResultMapper.RankedCandidate(
-            Item(@"C:\Root\archive.bin"),
-            IsFavorite: false,
-            HistoryCount: 8,
-            TypeRank: int.MaxValue,
-            new MatchRank(MatchRank.TierName, 0, 1.0, 1.0),
-            @"C:\Root\archive.bin",
-            IsHistoryOnly: true,
-            Source: RankingCandidateSource.History);
-
-        var result = ExplorerSearchHelper.CreateLocalSnapshot(
-            [direct],
-            [learned],
-            "notes",
-            @"C:\Root");
-
-        CollectionAssert.AreEqual(
-            new[] { @"C:\Root\notes.txt", @"C:\Root\archive.bin" },
-            result.Select(item => item.FullPath).ToArray());
     }
 }

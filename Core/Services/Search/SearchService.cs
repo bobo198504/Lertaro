@@ -35,6 +35,23 @@ public class SearchService : IDisposable
 
     public Task<bool> PingAsync(CancellationToken token = default) => _pipeClient.PingAsync(token);
 
+    /// <summary>
+    /// Runs one tiny local-drive query so the first user search does not pay the service query path's
+    /// one-time JIT, pipe setup and index-reader initialization. The answer is discarded and never recorded.
+    /// </summary>
+    public Task WarmupAsync(CancellationToken token = default) =>
+        SearchPipeClient.SendSearchPipeCommandAsync(
+            new SearchRequestMessage
+            {
+                Id = SearchRequestId.Search,
+                Limit = 1,
+                AppLimit = 0,
+                Query = "a",
+                Category = SearchCategoryFilter.All,
+            },
+            static _ => { },
+            token);
+
     // Asks the running service to launch the hook process into this caller's session. See SearchPipeClient's
     // method of the same name for the elevation semantics.
     public Task<(bool Ok, int Pid, string? Error)> RequestHookLaunchAsync(bool requestElevation, CancellationToken token = default)
@@ -60,7 +77,10 @@ public class SearchService : IDisposable
     //
     // Category and filename scopes reach index sources before their result budget, and the live
     // fallback before matching. Its 10,000 enumerated-entry ceiling still applies to the raw cache.
-    public async Task<bool> SearchStreamingAsync(string query, int maxResults, int maxAppResults, string? directoryFilter, Action<SearchResult> onResult, CancellationToken token = default, Action? onLocalSearchFailed = null, bool bypassExclusions = false, string? fileNameFilter = null, SearchCategoryFilter category = SearchCategoryFilter.All)
+    public async Task<bool> SearchStreamingAsync(string query, int maxResults, int maxAppResults, string? directoryFilter,
+        Action<SearchResult> onResult, CancellationToken token = default, Action? onLocalSearchFailed = null,
+        bool bypassExclusions = false, string? fileNameFilter = null,
+        SearchCategoryFilter category = SearchCategoryFilter.All, bool progressive = false)
     {
         var __trace = Lertaro.Core.SearchIndex.PerfTrace.Begin();
         var __firstRow = 0L;
@@ -88,6 +108,7 @@ public class SearchService : IDisposable
                 .ToList(),
             FileNameFilter = fileNameFilter,
             Category = category,
+            Progressive = progressive,
         };
 
         var disabledIds = AliasProviderRegistry.ResolveDisabledProviders(msg.DisabledAliasComponents);

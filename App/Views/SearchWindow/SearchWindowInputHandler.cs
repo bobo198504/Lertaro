@@ -229,8 +229,7 @@ public class SearchWindowInputHandler
         SearchHistoryStore.Record(
             SearchResultHelper.HistoryKeywordOf(result, _window.SearchText),
             result.FullPath,
-            SearchResultHelper.HistoryKindOf(result),
-            SearchResultHelper.IsLearnedRecall(result));
+            SearchResultHelper.HistoryKindOf(result));
     }
 
     // Wraps at both ends, and skips the rows that exist only to be looked at, the same way the quick,

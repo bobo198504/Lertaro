@@ -21,4 +21,5 @@ public sealed class ExplorerInlineSearchAdapterTests
         Assert.IsFalse(ExplorerInlineSearchAdapter.ShouldDeferDirectOpenToApp(false, true, true));
         Assert.IsFalse(ExplorerInlineSearchAdapter.ShouldDeferDirectOpenToApp(false, false, false));
     }
+
 }

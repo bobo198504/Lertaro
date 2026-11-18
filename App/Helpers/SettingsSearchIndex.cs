@@ -165,7 +165,8 @@ public static class SettingsSearchIndex
         new("Hotkeys_OpenFullWindow", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowOpenFullWindow", "Hotkeys_Tab_Global"),
         new("Hotkeys_LocalSendSendWindow", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowLocalSendSendWindow", "Hotkeys_Tab_Global"),
         new("Hotkeys_StayOpen", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowStayOpen", "Hotkeys_Tab_Global"),
-        new("Hotkeys_QuickPanel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickPanel", "Hotkeys_Tab_Global"),
+        // Quick Panel disabled.
+        // new("Hotkeys_QuickPanel", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickPanel", "Hotkeys_Tab_Global"),
         new("Hotkeys_GroupQuickNav", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowGroupQuickNav", "Hotkeys_Tab_Global"),
         new("Hotkeys_QuickNavDoubleClick", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickNavDoubleClick", "Hotkeys_Tab_Global"),
         new("Hotkeys_QuickNavMiddleClick", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Global", "TabGlobal/RowQuickNavMiddleClick", "Hotkeys_Tab_Global"),
@@ -175,7 +176,8 @@ public static class SettingsSearchIndex
         new("Blacklist_GlobalTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist/RowBlacklistGlobal", "Settings_Blacklist"),
         // The quick panel's own blacklist is edited here, beside the global one it adds to, so it is
         // found under Hotkeys rather than on the panel's page.
-        new("QuickPanel_BlacklistTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist/RowQuickPanelBlacklist", "Settings_Blacklist"),
+        // Quick Panel disabled.
+        // new("QuickPanel_BlacklistTitle", "Hotkeys", vm => vm.Hotkeys.SelectedTab = "Blacklist", "TabBlacklist/RowQuickPanelBlacklist", "Settings_Blacklist"),
 
         // Plugins (component-level results come from the live Plugins model, see SettingsWindow.xaml.cs)
         new("Settings_Plugins", "Plugins"),
@@ -191,13 +193,13 @@ public static class SettingsSearchIndex
         new("Favorites_FieldHotkey", "Favorites", TargetElementName: "RowFieldHotkey", TabLabelKey: "Favorites_AddCardTitle"),
         new("Favorites_ListTitle", "Favorites", TargetElementName: "RowListTitle"),
 
-        // Quick launch
-        new("Settings_QuickLaunch", "QuickLaunch"),
-        new("QuickLaunch_Title", "QuickLaunch"),
-        new("QuickLaunch_Enabled", "QuickLaunch", TargetElementName: "RowQuickLaunchEnabled"),
-        new("QuickLaunch_ShowShortcutBadges", "QuickLaunch", TargetElementName: "RowQuickLaunchShowShortcutBadges"),
-        new("QuickLaunch_ItemsTitle", "QuickLaunch", vm => vm.QuickLaunch.SelectedSection = "Items", "RowQuickLaunchItemsTitle"),
-        new("QuickLaunch_SourceTitle", "QuickLaunch", vm => vm.QuickLaunch.SelectedSection = "Sources", "RowQuickLaunchSourceTitle"),
+        // Quick Launch disabled.
+        // new("Settings_QuickLaunch", "QuickLaunch"),
+        // new("QuickLaunch_Title", "QuickLaunch"),
+        // new("QuickLaunch_Enabled", "QuickLaunch", TargetElementName: "RowQuickLaunchEnabled"),
+        // new("QuickLaunch_ShowShortcutBadges", "QuickLaunch", TargetElementName: "RowQuickLaunchShowShortcutBadges"),
+        // new("QuickLaunch_ItemsTitle", "QuickLaunch", vm => vm.QuickLaunch.SelectedSection = "Items", "RowQuickLaunchItemsTitle"),
+        // new("QuickLaunch_SourceTitle", "QuickLaunch", vm => vm.QuickLaunch.SelectedSection = "Sources", "RowQuickLaunchSourceTitle"),
 
         // History -- Enable/Clear All live inside the shared HistoryListControl, instantiated once per
         // tab; "Outer/Inner" targets one extra FindName hop into that instance's own XAML NameScope.
@@ -209,12 +211,13 @@ public static class SettingsSearchIndex
         new("Settings_History_Enable", "History", vm => vm.History.SelectedTab = "Keyword", "TabKeywordHistory/ChkEnable", "Settings_History_Tab_Keyword"),
         new("Settings_History_Clear_All", "History", vm => vm.History.SelectedTab = "Keyword", "TabKeywordHistory/BtnClearAll", "Settings_History_Tab_Keyword"),
 
-        new("Settings_QuickPanel", "QuickPanel"),
-        new("QuickPanel_Enabled", "QuickPanel", TargetElementName: "RowQuickPanelEnabled"),
-        new("QuickPanel_Workspaces", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }),
-        new("QuickPanel_WorkspaceName", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }, TargetElementName: "RowQuickPanelWorkspaceName"),
-        new("QuickPanel_ProcessesDesc", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Processes"; }, TargetElementName: "RowQuickPanelProcesses", TabLabelKey: "QuickPanel_Workspaces"),
-        new("QuickPanel_PluginTabs", "QuickPanel", vm => vm.QuickPanel.SelectedSection = "PluginTabs"),
+        // Quick Panel disabled.
+        // new("Settings_QuickPanel", "QuickPanel"),
+        // new("QuickPanel_Enabled", "QuickPanel", TargetElementName: "RowQuickPanelEnabled"),
+        // new("QuickPanel_Workspaces", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }),
+        // new("QuickPanel_WorkspaceName", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Sources"; }, TargetElementName: "RowQuickPanelWorkspaceName"),
+        // new("QuickPanel_ProcessesDesc", "QuickPanel", vm => { vm.QuickPanel.SelectedSection = "Workspaces"; vm.QuickPanel.SelectedSubTab = "Processes"; }, TargetElementName: "RowQuickPanelProcesses", TabLabelKey: "QuickPanel_Workspaces"),
+        // new("QuickPanel_PluginTabs", "QuickPanel", vm => vm.QuickPanel.SelectedSection = "PluginTabs"),
 
         // LocalSend
         new("Settings_LocalSend_Title", "LocalSend"),
