@@ -19,6 +19,7 @@
 + 优化搜索结果显示和动态排序
 + 优化快速搜索的结果加载和滚动体验
 + 优化快速搜索和类型切换流畅度
++ 优化历史搜索和左侧优先排序
 + 优化首次搜索的等待时间
 + 优化设置页打开和切换的流畅度
 + 输入 host 或 hosts 时可直接编辑系统 HOSTS
@@ -44,6 +45,7 @@ This fork:
 + Improves result display and dynamic ordering
 + Improves quick-search result loading and scrolling
 + Improves quick-search and type-switching smoothness
++ Improves history search and left-edge ordering
 + Reduces the wait on the first search
 + Keeps Settings responsive while opening and switching pages
 + Lets you edit the system HOSTS file by typing host or hosts
