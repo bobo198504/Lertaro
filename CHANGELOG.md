@@ -16,23 +16,17 @@
 
 本fork：
 ```
-+ 优化结果显示流畅度
-+ 快速搜索一页最多显示 50 条，当前先显示 10 条，往下滚动就继续显示
-+ 结果多的时候可以直接进入完整搜索
-+ 快速搜索、结果列表和类型切换都更顺滑
-+ 类型切换放在搜索框右侧，支持 Tab、Shift+Tab 和鼠标滚轮
-+ 新出现的结果会平滑显示，不再突然跳出来
-+ 输入 host 或 hosts 时可直接编辑系统 HOSTS，保存前会自动备份
-+ 第一次使用内嵌搜索时等待更少
-+ 搜索会提前准备好，但不会和第一次搜索抢速度
-+ 每个类型最多 3 条历史结果，剩下的按你设置的类型顺序显示
-+ 历史结果先看左侧匹配，再补上用得多的
-+ 设置页打开和切换更顺，后台准备数据时不再明显卡顿
-+ 托盘右键菜单不再重复显示“关于”
-# 搜索结果改成边找边显示
-# 长时间使用后，旧数据不会越积越多而拖慢搜索
-# 去掉多余的“查询关联”，历史记录更简单
-# 重复的应用会合并成一条，左侧匹配仍然优先
++ 优化搜索结果显示和动态排序
++ 优化快速搜索的结果加载和滚动体验
++ 优化快速搜索和类型切换流畅度
++ 优化首次搜索的等待时间
++ 优化设置页打开和切换的流畅度
++ 输入 host 或 hosts 时可直接编辑系统 HOSTS
++ 每个类型最多显示 3 条历史结果，其余按设置的顺序显示
++ 精简托盘右键菜单
+# 优化搜索速度、缓存和内存使用
+# 简化历史记录
+# 合并重复的应用入口
 + 保留鼠标平滑滚动
 + 保留自定义应用搜索目录
 + 自动更新只检查本仓库的发行
@@ -47,23 +41,17 @@ No new upstream release in this build
 
 This fork:
 ```
-+ Improves the smoothness of result display
-+ Shows up to 50 quick-search results per page, starting with 10 and loading more as you scroll
-+ Lets you jump to full search when there are more results
-+ Makes quick search, result updates and type switching feel smoother
-+ Moves type switching to the right side of the search box, with Tab, Shift+Tab and mouse wheel support
-+ Makes new results appear smoothly instead of popping into place
-+ Lets you edit the system HOSTS file directly by typing host or hosts, with an automatic backup on save
-+ Reduces the wait the first time you use embedded search
-+ Prepares search in advance without competing with your first search
-+ Shows at most three history results per type; the rest follow your configured type order
-+ Keeps left-edge history matches first, then fills the history slots by usage count
-+ Keeps Settings responsive while background data is still loading
-+ Removes the duplicate About entry from the tray menu
-# Shows search results while the search is still running
-# Keeps old data from building up and slowing search down over time
-# Removes extra query associations and keeps history simple
-# Merges duplicate applications into one entry while keeping left-edge matches ahead
++ Improves result display and dynamic ordering
++ Improves quick-search result loading and scrolling
++ Improves quick-search and type-switching smoothness
++ Reduces the wait on the first search
++ Keeps Settings responsive while opening and switching pages
++ Lets you edit the system HOSTS file by typing host or hosts
++ Shows at most three history results per type, with the rest following your configured order
++ Simplifies the tray menu
+# Improves search speed, cache and memory use
+# Simplifies history
+# Merges duplicate application entries
 + Keeps the smooth wheel scrolling
 + Keeps custom app search folders
 + Auto-update only checks this repository's releases
