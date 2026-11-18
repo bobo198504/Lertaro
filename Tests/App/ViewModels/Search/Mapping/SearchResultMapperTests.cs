@@ -301,6 +301,54 @@ public sealed class RankAndDedupeTests
     }
 
     [TestMethod]
+    public void LauncherDedupe_RenamedShortcutIsDroppedWhenItsSourceRowExists()
+    {
+        const string source = @"C:\Apps\Tool.exe";
+        const string shortcut = @"C:\Shortcuts\我的工具.lnk";
+
+        var rows = SearchResultMapper.DedupeLauncherRows(
+        [
+            Candidate(source, resultKind: "File"),
+            Candidate(shortcut, resultKind: "File"),
+        ], "tool", path => path == shortcut ? source : null);
+
+        Assert.HasCount(1, rows);
+        Assert.AreEqual(source, rows[0].Result.FullPath);
+    }
+
+    [TestMethod]
+    public void LauncherDedupe_ExplicitLnkQueryKeepsShortcutRows()
+    {
+        const string source = @"C:\Apps\Tool.exe";
+        const string shortcut = @"C:\Shortcuts\我的工具.lnk";
+
+        var rows = SearchResultMapper.DedupeLauncherRows(
+        [
+            Candidate(source, resultKind: "File"),
+            Candidate(shortcut, resultKind: "File"),
+        ], "tool lnk", path => path == shortcut ? source : null);
+
+        Assert.HasCount(2, rows);
+    }
+
+    [TestMethod]
+    public void LauncherDedupe_KeepsApplicationRowAndDropsItsFileShortcut()
+    {
+        const string source = @"C:\Apps\Tool.exe";
+        const string appShortcut = @"C:\Menu\Tool.lnk";
+        const string fileShortcut = @"C:\Shortcuts\Tool.lnk";
+
+        var rows = SearchResultMapper.DedupeLauncherRows(
+        [
+            Candidate(appShortcut, resultKind: "Application"),
+            Candidate(fileShortcut, resultKind: "File"),
+        ], "tool", path => source);
+
+        Assert.HasCount(1, rows);
+        Assert.AreEqual("Application", rows[0].Result.ResultKind);
+    }
+
+    [TestMethod]
     public void RankAndDedupe_HighPriorityWeak_RanksBelowNormalPriorityStrong()
     {
         // The 0.8 exchange rate: one priority step (8) buys less than one match step (10), so tier 3 lands

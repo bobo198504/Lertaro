@@ -359,31 +359,9 @@ public static class SearchResultMapper
         // no window field, the bucket distribution would tilt toward Boosted, so the inline window is not sampled.
         var ordered = RankedCandidateOrdering.Order(candidates, rankContext, isInlineWindow ? null : query, typeOrder);
 
-        // One program, one row -- across BOTH sources. The app provider contributes the installed entry while
-        // the file index contributes every shortcut the user has to it, and DedupeShortcutRows only ever sees
-        // the file side, so the same program arrived twice: once named by the provider and once as a shortcut.
-        // Collapsing here, after the two lists have been merged and ranked, is the only place that can see both
-        // and keep whichever ranked higher.
-        // Unless the query is asking for shortcut files themselves. "lnk" or a name ending in ".lnk" means the
-        // shortcut IS the thing being searched for, so collapsing several of them into one would hide exactly
-        // what was asked for -- the same rule DedupeShortcutRows already follows on the file side.
-        if (!LooksLikeShortcutQuery(rawQuery ?? query))
-        {
-            var seenLauncherTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            ordered = ordered.Where(row =>
-            {
-                var path = row.Result.FullPath;
-                if (string.IsNullOrEmpty(path))
-                    return true;
-
-                if (!row.Result.IsApplication && !path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-                    return true;
-
-                var target = Lertaro.App.Helpers.ShortcutTargetResolver.Resolve(path);
-                var key = SearchResultHelper.NormalizePath(target ?? path);
-                return seenLauncherTargets.Add(key);
-            }).ToList();
-        }
+        // One target, one row across every result type. A .lnk is only hidden while its target or app row is
+        // present; an explicit "lnk" keyword turns the whole rule off so shortcut files can still be found.
+        ordered = DedupeLauncherRows(ordered, rawQuery ?? query);
 
         // The category filter runs HERE, before any cap. Filtering afterwards meant the cap had already
         // thrown those rows away under the whole-result ordering: a short query ranks applications and
@@ -451,15 +429,18 @@ public static class SearchResultMapper
     // A start-menu entry, a desktop shortcut and the program they point at are three rows for one thing:
     // the index carries the .exe, the shell's recent list carries the .lnk, the start menu carries another.
     //
-    // Only a shortcut that repeats its target's own name is dropped -- "Apex.lnk" pointing at "Apex.exe".
-    // A shortcut the user renamed ("我的工具.lnk" -> "Apex.exe") is a name they chose, so it stays. A query
+    // Every shortcut whose target row is present is dropped, even when the shortcut was renamed. A query
     // that asks for shortcuts by name is left alone entirely: typing "lnk" means the extension is the thing
     // being searched for.
     //
     // The dropped row's history moves to the target before ranking, not after: ranking with the shortcut
     // still present would place the survivor using a score it never earned, and then dropping the shortcut
     // would leave that position behind.
-    private static List<SearchResult>? DedupeShortcutRows(List<SearchResult>? rows, string query, ref RankContext? rankContext)
+    internal static List<SearchResult>? DedupeShortcutRows(
+        List<SearchResult>? rows,
+        string query,
+        ref RankContext? rankContext,
+        Func<string, string?>? resolveShortcut = null)
     {
         if (rows is not { Count: > 1 })
             return rows;
@@ -475,13 +456,14 @@ public static class SearchResultMapper
         var seenTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, int>? merged = null;
         Dictionary<string, SearchResult>? byPath = null;
+        var resolve = resolveShortcut ?? Lertaro.App.Helpers.ShortcutTargetResolver.Resolve;
         foreach (var row in rows)
         {
             if (!row.Path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             byPath ??= BuildPathIndex(rows);
-            var target = Lertaro.App.Helpers.ShortcutTargetResolver.Resolve(row.Path);
+            var target = resolve(row.Path);
             if (target is null)
                 continue;
 
@@ -499,10 +481,6 @@ public static class SearchResultMapper
             }
 
             if (!byPath.ContainsKey(targetKey) && !byPath.ContainsKey(target))
-                continue;
-
-            // Renamed by the user: the shortcut's own name is the name to keep.
-            if (!string.Equals(System.IO.Path.GetFileNameWithoutExtension(row.Path), System.IO.Path.GetFileNameWithoutExtension(target), StringComparison.OrdinalIgnoreCase))
                 continue;
 
             dropped.Add(row.Path);
@@ -525,6 +503,48 @@ public static class SearchResultMapper
             Logger.Log($"[ShortcutDedupe] dropped {dropped.Count} shortcut(s): {string.Join("; ", dropped)}", LogLevel.Debug);
 
         return rows.FindAll(row => !dropped.Contains(row.Path));
+    }
+
+    internal static List<RankedCandidate> DedupeLauncherRows(
+        List<RankedCandidate> ordered,
+        string query,
+        Func<string, string?>? resolveShortcut = null)
+    {
+        if (LooksLikeShortcutQuery(query))
+            return ordered;
+
+        var resolve = resolveShortcut ?? Lertaro.App.Helpers.ShortcutTargetResolver.Resolve;
+        var occupiedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Collect target rows first so the answer does not depend on whether the app/source row ranked
+        // before or after its shortcut.
+        foreach (var row in ordered)
+        {
+            var path = row.Result.FullPath;
+            if (string.IsNullOrEmpty(path)
+                || (!row.Result.IsApplication && path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            var target = row.Result.IsApplication ? resolve(path) : null;
+            occupiedTargets.Add(SearchResultHelper.NormalizePath(target ?? path));
+        }
+
+        var keptShortcutTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return ordered.FindAll(row =>
+        {
+            var path = row.Result.FullPath;
+            if (string.IsNullOrEmpty(path)
+                || row.Result.IsApplication
+                || !path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var target = resolve(path);
+            if (string.IsNullOrEmpty(target))
+                return true;
+
+            var key = SearchResultHelper.NormalizePath(target);
+            return !occupiedTargets.Contains(key) && keptShortcutTargets.Add(key);
+        });
     }
 
     // Moves a dropped shortcut's open count onto its target, taking the LARGER of the two rather than a sum:
