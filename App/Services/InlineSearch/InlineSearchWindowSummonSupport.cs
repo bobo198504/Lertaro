@@ -36,6 +36,22 @@ internal sealed class InlineSearchWindowSummonSupport
         WindowParking.Park(window);
         window.Show();
         window.ParkAfterPrewarm();
+        // Show is the point where Windows may still replace the parked coordinates during a startup display/DPI
+        // settle. Re-apply them after the first frame and fall back to hiding if the native rectangle is still
+        // on-screen, so a failed prewarm can never leave a search card permanently visible at a screen corner.
+        WindowParking.Park(window);
+        WindowParking.AfterFrame(window, () =>
+        {
+            if (_manager.Window != window || !_manager.IsCardParked)
+                return;
+
+            WindowParking.Park(window);
+            if (!WindowParking.IsParked(window))
+            {
+                window.Hide();
+                Logger.Log("[InlineSearchManager] Prewarmed card escaped parking; hidden until summon.", LogLevel.Warn);
+            }
+        });
         return true;
     }
 

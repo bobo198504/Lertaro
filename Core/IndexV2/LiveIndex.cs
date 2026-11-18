@@ -25,6 +25,10 @@ public sealed class LiveIndex : IDisposable
     private long _revision;
     internal QueryPageCache SearchPages { get; } = new();
 
+    internal int TouchSingleCharacterSearchPages() => SearchPages.TouchSingleCharacterPages();
+
+    internal void RetainSingleCharacterSearchPages() => SearchPages.RetainSingleCharacterPages();
+
     public LiveIndex(Snapshot snapshot)
     {
         _snapshot = snapshot;

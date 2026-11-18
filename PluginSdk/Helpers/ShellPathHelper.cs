@@ -9,6 +9,28 @@ namespace Lertaro.PluginSdk.Helpers;
 /// </summary>
 public static class ShellPathHelper
 {
+    // Offline, plus FILE_ATTRIBUTE_RECALL_ON_OPEN (0x40000) and FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    // (0x400000), which FileAttributes has no names for. Any one of them means reading fetches the file.
+    private const FileAttributes CloudOnlyAttributes =
+        FileAttributes.Offline | (FileAttributes)0x40000 | (FileAttributes)0x400000;
+
+    /// <summary>True for a cloud-only placeholder whose contents would be downloaded by a read.</summary>
+    /// <remarks>
+    /// The attributes come from the directory entry, so asking does not trigger the download. Decoration
+    /// paths such as version metadata and embedded icons should use the generic type presentation instead.
+    /// </remarks>
+    public static bool IsCloudOnly(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & CloudOnlyAttributes) != 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     private struct SHFILEINFO
     {

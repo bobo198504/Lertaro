@@ -1,4 +1,5 @@
 using Lertaro.Core;
+using Microsoft.Win32;
 
 namespace Lertaro.App.Services;
 
@@ -16,6 +17,9 @@ namespace Lertaro.App.Services;
 /// </remarks>
 internal static class SearchWarmup
 {
+    private static readonly object PowerSubscriptionLock = new();
+    private static bool _powerSubscribed;
+
     /// <summary>Schedules the warm-up on a pool thread; returns immediately.</summary>
     /// <remarks>
     /// Deliberately not lazy: warming on the first summon (double Ctrl) would move the cost from the first
@@ -25,6 +29,7 @@ internal static class SearchWarmup
     /// </remarks>
     public static void Schedule()
     {
+        EnsurePowerSubscription();
         _ = Task.Run(async () =>
         {
             var started = Environment.TickCount64;
@@ -37,24 +42,7 @@ internal static class SearchWarmup
                 // user's first keystroke, while still being far too small to behave like a broad search.
                 var pipeWarm = WarmServiceQueryWhenReadyAsync();
 
-                // Two shapes: one query nothing can match (catalog + history + favorites, and the JIT of the
-                // whole mapping path), then a common letter so the fuzzy/highlight paths are compiled too.
-                ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(null, "\u0001warmup", null, null, false);
-                ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(null, "a", null, null, false);
-
-                // The two calls above pass no index results, so they never reach the ranking kernel or the
-                // result list: the first real search still paid that first time (measured: the first paint cost
-                // 109 ms with no index results in hand, against 0-16 ms for every later one). Feed a small
-                // synthetic batch through the same path so RankPolicy, the type order and the highlight JIT are
-                // warmed too. The rows are fabricated and only ever cross this method boundary -- nothing is
-                // recorded, so this cannot look like a search the user made.
-                var warmRows = new List<SearchResult>
-                {
-                    new() { Path = @"C:\Warmup\a.txt", Name = "a", IsDir = false },
-                    new() { Path = @"C:\Warmup\ab", Name = "ab", IsDir = false },
-                    new() { Path = @"C:\Warmup\warmup", Name = "warmup", IsDir = true },
-                };
-                ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(warmRows, "a", null, null, false);
+                WarmUiMappingPath();
                 await pipeWarm.ConfigureAwait(false);
 
                 // Info, not Debug: whether this ran is the first thing to check when the first search still
@@ -95,5 +83,51 @@ internal static class SearchWarmup
                 await Task.Delay(250).ConfigureAwait(false);
             }
         }
+    }
+
+    private static void WarmUiMappingPath()
+    {
+        // One query nothing can match warms catalog/history/favorites. The second query and synthetic batch
+        // warm fuzzy matching, highlighting and ranking without recording a search.
+        ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(null, "\u0001warmup", null, null, false);
+        ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(null, "a", null, null, false);
+        var warmRows = new List<SearchResult>
+        {
+            new() { Path = @"C:\Warmup\a.txt", Name = "a", IsDir = false },
+            new() { Path = @"C:\Warmup\ab", Name = "ab", IsDir = false },
+            new() { Path = @"C:\Warmup\warmup", Name = "warmup", IsDir = true },
+        };
+        ViewModels.Search.Mapping.SearchResultMapper.BuildQuickResults(warmRows, "a", null, null, false);
+    }
+
+    private static void EnsurePowerSubscription()
+    {
+        lock (PowerSubscriptionLock)
+        {
+            if (_powerSubscribed)
+                return;
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            _powerSubscribed = true;
+        }
+    }
+
+    private static void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+            return;
+
+        _ = Task.Run(() =>
+        {
+            var started = Environment.TickCount64;
+            try
+            {
+                WarmUiMappingPath();
+                Logger.Log($"[SearchWarmup] Resume UI warm-up finished in {Environment.TickCount64 - started} ms.", LogLevel.Info);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[SearchWarmup] Resume UI warm-up failed: {ex.Message}", LogLevel.Info);
+            }
+        });
     }
 }

@@ -86,12 +86,17 @@ public class SearchEngine : IDisposable
         _indexer.CompactIdleDeltas(IndexCacheDir);
 
         Logger.Log($"[SearchEngine] Service has been idle for {IdleTrimAfterMs / 1000}s. Trimming working set...", LogLevel.Debug);
-        _indexer.ClearCaches();
+        // Query pages are bounded and rebuild from index scans that are cold after sleep. Keep only the
+        // single-character pages that make the first keystroke responsive; every heavier page is released.
+        _indexer.ClearCaches(keepSingleCharacterPages: true);
         // No compaction: the working-set trim below is what hands memory back to the OS, and compacting
         // the large-object heap only lengthens the pause the next query pays.
         GC.Collect(2, GCCollectionMode.Forced, blocking: true);
         Win32Api.TrimWorkingSet();
     }
+
+    /// <summary>Resets the age of the bounded single-character pages after system resume without rescanning.</summary>
+    public int TouchSingleCharacterSearchPages() => _indexer.TouchSingleCharacterSearchPages();
 
     public Dictionary<string, FileMetadataEntry> GetFileMetadataBatch(IReadOnlyList<string> paths) => _indexer.GetFileMetadataBatch(paths);
 

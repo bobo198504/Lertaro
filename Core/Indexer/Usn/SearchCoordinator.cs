@@ -161,7 +161,10 @@ internal static class SearchCoordinator
     {
     }
 
-    public static void ClearCaches(Dictionary<string, LiveIndex> recordIndexes, object lockObj)
+    public static void ClearCaches(
+        Dictionary<string, LiveIndex> recordIndexes,
+        object lockObj,
+        bool keepSingleCharacterPages = false)
     {
         LiveIndex[] drives;
         lock (lockObj)
@@ -169,6 +172,24 @@ internal static class SearchCoordinator
             drives = recordIndexes.Values.ToArray();
         }
         foreach (var drive in drives)
-            drive.SearchPages.Clear();
+        {
+            if (keepSingleCharacterPages)
+                drive.RetainSingleCharacterSearchPages();
+            else
+                drive.SearchPages.Clear();
+        }
+    }
+
+    public static int TouchSingleCharacterSearchPages(
+        Dictionary<string, LiveIndex> recordIndexes,
+        object lockObj)
+    {
+        LiveIndex[] drives;
+        lock (lockObj)
+        {
+            drives = recordIndexes.Values.ToArray();
+        }
+
+        return drives.Sum(drive => drive.TouchSingleCharacterSearchPages());
     }
 }

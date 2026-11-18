@@ -5,6 +5,44 @@
 符号：* 核心功能　+ 小功能添加　# 修复。只写"改了什么"。
 -->
 
+## v5.13.3.7
+
+## 更新内容
+
+上游：
+```
+本版无新增上游发行
+```
+
+本fork：
+```
+# 优化云文件显示，避免打开文件时触发下载
+# 优化离线快捷方式处理，减少搜索等待
+# 优化开机和睡眠恢复后的单字搜索流畅度
+# 修复开机偶尔出现常驻内联搜索框
++ 保留鼠标平滑滚动
++ 保留自定义应用搜索目录
++ 自动更新只检查本仓库的发行
+```
+
+## What's changed
+
+Upstream:
+```
+No new upstream release in this build
+```
+
+This fork:
+```
+# Avoids downloading cloud-only files just to display search results
+# Reduces search waits caused by offline shortcuts
+# Improves one-character search responsiveness after startup and sleep resume
+# Fixes an occasional embedded search box left visible after startup
++ Keeps the smooth wheel scrolling
++ Keeps custom app search folders
++ Auto-update only checks this repository's releases
+```
+
 ## v5.13.3.6
 
 ## 更新内容

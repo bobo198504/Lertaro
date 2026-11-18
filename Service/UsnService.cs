@@ -22,6 +22,7 @@ public class UsnService : ServiceBase
         ServiceName = "LertaroService";
         CanStop = true;
         CanShutdown = true;
+        CanHandlePowerEvent = true;
     }
 
     protected override void OnStart(string[] args)
@@ -174,6 +175,16 @@ public class UsnService : ServiceBase
             Logger.Log($"[UsnService] Failed to start service: {ex}", LogLevel.Error);
             Stop();
         }
+    }
+
+    protected override bool OnPowerEvent(PowerBroadcastStatus powerStatus)
+    {
+        if (powerStatus is PowerBroadcastStatus.ResumeAutomatic or PowerBroadcastStatus.ResumeSuspend)
+        {
+            var touched = _engine?.TouchSingleCharacterSearchPages() ?? 0;
+            Logger.Log($"[UsnService] Resume kept {touched} single-character search page(s) warm.", LogLevel.Info);
+        }
+        return base.OnPowerEvent(powerStatus);
     }
 
     protected override void OnStop()

@@ -47,6 +47,38 @@ internal sealed class QueryPageCache
         }
     }
 
+    internal int TouchSingleCharacterPages()
+    {
+        var now = Environment.TickCount64;
+        var touched = 0;
+        lock (_gate)
+        {
+            foreach (var (key, entry) in _pages)
+            {
+                if (!IsSingleCharacterQuery(key))
+                    continue;
+                entry.LastUsed = now;
+                entry.StoredAt = now;
+                touched++;
+            }
+        }
+        return touched;
+    }
+
+    internal void RetainSingleCharacterPages()
+    {
+        lock (_gate)
+        {
+            foreach (var key in _pages.Keys.Where(key => !IsSingleCharacterQuery(key)).ToList())
+                _pages.Remove(key);
+        }
+    }
+
+    private static bool IsSingleCharacterQuery(string key) =>
+        key.Length >= 2
+        && key[1] == '\u0001'
+        && char.IsAsciiLetterOrDigit(key[0]);
+
     public static string KeyFor(string query, string? directoryFilter, string? fileNameFilter, byte category = 0)
         // The category is part of the identity: the same text under two filters is two different pages, and
         // a page built for one filter would answer the other with rows it must not show.

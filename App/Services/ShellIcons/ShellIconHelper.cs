@@ -183,6 +183,14 @@ public static class ShellIconHelper
             return cachedIcon;
         }
 
+        // Looking inside a cloud-only file for a thumbnail, embedded icon or shell icon downloads it in full.
+        // Use the type icon, which is also what Explorer shows for a placeholder.
+        if (isPhysicalPath && !isDir && ShellPathHelper.IsCloudOnly(checkPath))
+        {
+            var typeIcon = GetIconForPath("dummy" + ext, false);
+            return typeIcon == null ? null : CacheAndDeduplicateIcon(cacheKey, typeIcon);
+        }
+
         // Every step answers null on its own failure and the chain moves to the next one. One try/catch used
         // to wrap the whole chain, so a single throwing step answered null for the row and cancelled the
         // fallbacks waiting after it -- which is how a row ended up stuck on its placeholder.

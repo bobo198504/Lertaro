@@ -50,6 +50,25 @@ internal static class WindowParking
         AltTabExcluder.Attach(window);
         window.Left = OffScreen;
         window.Top = OffScreen;
+
+        // WPF's Left/Top can be clamped or ignored while the first native window is being created, especially
+        // during startup with display/DPI initialization still settling. Apply the same coordinates natively
+        // whenever the handle exists so parking does not depend on the WPF layout pass winning that race.
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd != IntPtr.Zero)
+            SetWindowPos(hwnd, IntPtr.Zero, (int)OffScreen, (int)OffScreen, 0, 0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    /// <summary>Whether the native window is still in the parking row. Used after prewarm to catch startup-time
+    /// repositioning before a parked card can become a permanent visible overlay.</summary>
+    internal static bool IsParked(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var rect))
+            return true; // no native rectangle to inspect; never hide a usable warm window based on a guess
+
+        return rect.Left <= (int)OffScreen && rect.Top <= (int)OffScreen;
     }
 
     /// <summary>Lands a shown window's top-left on a physical screen point, in that point's own monitor

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using Lertaro.PluginSdk.Abstractions.Plugins;
+using Lertaro.PluginSdk.Helpers;
 
 namespace Lertaro.Plugins.CoreExtensions.Providers.Indexing;
 
@@ -54,9 +55,12 @@ internal static class StartMenuAppAliasBuilder
         return aliases.ToArray();
     }
 
-    private static FileMetadata ReadMetadata(string targetPath)
+    internal static FileMetadata ReadMetadata(string targetPath)
     {
-        if (!Path.GetExtension(targetPath).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+        // Reading version info opens the executable; skip that for a cloud-only placeholder so decorating a
+        // result never makes the sync client download the whole file.
+        if (!Path.GetExtension(targetPath).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            || ShellPathHelper.IsCloudOnly(targetPath))
             return default;
         try
         {

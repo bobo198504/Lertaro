@@ -140,6 +140,8 @@ public static class StartMenuShortcutResolver
     {
         if (!Path.GetExtension(shortcutPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
             return shortcutPath;
+        if (ShellPathHelper.IsCloudOnly(shortcutPath))
+            return null;
 
         object? shellLinkObject = null;
         try

@@ -56,6 +56,26 @@ public sealed class StartMenuAppAliasBuilderTests
     }
 
     [TestMethod]
+    public void ReadMetadata_LeavesACloudOnlyExecutableUnread()
+    {
+        var dir = Directory.CreateTempSubdirectory("lertaro-alias-");
+        var exe = Path.Combine(dir.FullName, "app.exe");
+        try
+        {
+            File.Copy(Environment.ProcessPath!, exe);
+            Assert.AreNotEqual(default, StartMenuAppAliasBuilder.ReadMetadata(exe));
+            File.SetAttributes(exe, File.GetAttributes(exe) | FileAttributes.Offline);
+
+            Assert.AreEqual(default, StartMenuAppAliasBuilder.ReadMetadata(exe));
+        }
+        finally
+        {
+            if (File.Exists(exe)) File.SetAttributes(exe, FileAttributes.Normal);
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void MergePackagedAliases_AddsExplorerAliasToClassicSameNameRow()
     {
         var item = new SearchableItem { Title = "File Explorer" };
