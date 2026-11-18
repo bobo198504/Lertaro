@@ -154,7 +154,7 @@ if not "%SLN_EXIT%"=="0" (
 :: Publish Plugins in Release mode
 echo.
 echo [2/4] Publishing Plugins in Release mode...
-dotnet publish "%ROOT%Lertaro.Plugins.slnx" -c Release -o "%OUT%\Plugins" %RIDARGS% -v quiet
+dotnet publish "%ROOT%Lertaro.Plugins.slnx" -c Release -o "%OUT%\Plugins" %RIDARGS% -m:1 -p:BuildInParallel=false -v quiet
 set "PLUGINS_EXIT=%errorlevel%"
 if not "%PLUGINS_EXIT%"=="0" (
     echo [Error] Plugins publish failed for %ARCH%.
