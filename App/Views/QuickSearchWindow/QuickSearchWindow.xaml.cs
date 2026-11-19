@@ -25,6 +25,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
     private readonly QuickSearchViewModel _viewModel;
     private TrayIconService? _trayService;
     private ShellMenuPresenter? _menuPresenter;
+    private CategoryOrbitPopup? _categoryOrbit;
     private readonly QuickSearchWindowController _controller;
     private readonly QuickSearchWindowInputHandler _inputHandler;
     private readonly QuickSearchWindowLayoutManager _layoutManager;
@@ -168,6 +169,17 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         SearchBox.IconRightClicked += _controller.ResetPosition;
         SearchBox.IconMiddleClicked += _controller.ToggleStayOpen;
         SearchBox.CategoryWheeled += CycleCategory;
+        SearchBox.CategoryClicked += ResetCategory;
+        SearchBox.CategoryRightClicked += ShowCategoryMenu;
+        _categoryOrbit = new CategoryOrbitPopup();
+        _categoryOrbit.CategoryWheeled += CycleCategory;
+        _categoryOrbit.CategorySelected += SelectCategoryFromOrbit;
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible)
+                _categoryOrbit?.Close();
+        };
+        LocationChanged += (_, _) => _categoryOrbit?.RefreshPlacement();
         // The logo is the ONLY way to move this window (#255): the card's own drag was removed rather than
         // fixed, so nothing else on this window responds to a drag. IsIconDraggable keeps the logo's
         // "drag moves the window" behavior working alongside IconLeftClicked: SearchBoxControl tells a real
@@ -186,6 +198,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         // have left it stale for as long as the window stayed open.
         PreviewMouseLeftButtonDown += (_, _) =>
             SearchBox.IsIconDraggable = ShouldAllowIconDrag(UserSettings.Load().SearchWindow.LockPosition);
+        PreviewMouseWheel += Window_PreviewMouseWheel;
         SearchBox.IconClickHint = TranslationManager.Instance["QuickSearch_LogoDragResetHint"];
         PreviewMouseDown += (_, e) => _inputHandler.HandleWindowPreviewMouseDown(e);
         LstResults.PreviewMouseLeftButtonUp += (s, e) => _resultExecutor.HandlePreviewMouseLeftButtonUp(e);
@@ -399,6 +412,7 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         if (_scaleChangedHandler != null)
             UiMetrics.ScaleChanged -= _scaleChangedHandler;
         _viewModel.Search.PropertyChanged -= OnSearchPropertyChanged;
+        _categoryOrbit?.Dispose();
         _controller.Dispose();
         _viewModel.Dispose();
         _trayService?.Dispose();
@@ -412,9 +426,174 @@ public partial class QuickSearchWindow : Window, ISearchWindow, IHasVisibleConte
         if (!_viewModel.Search.ShowCategoryBar)
             return;
 
-        SearchBox.PrepareCategoryChange(delta);
+        SearchBox.PrepareCategoryChange(-delta);
         _viewModel.CycleCategory(delta);
+        UpdateCategoryOrbit();
         if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
             _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
+    }
+
+    /// <summary>Returns the type wheel to 全部 and refreshes the current results.</summary>
+    internal void ResetCategory()
+    {
+        if (!_viewModel.Search.ShowCategoryBar || _viewModel.ActiveCategoryFilter == null)
+            return;
+
+        var currentIndex = CategoryIndex(_viewModel.SelectedCategory);
+        var forward = (_viewModel.Categories.Count - currentIndex) % _viewModel.Categories.Count;
+        var direction = forward <= _viewModel.Categories.Count / 2 ? 1 : -1;
+        SearchBox.PrepareCategoryChange(-direction);
+        _viewModel.Search.ResetCategoryFilter();
+        UpdateCategoryOrbit();
+        if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
+            _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
+    }
+
+    private void ShowCategoryMenu()
+    {
+        if (!_viewModel.Search.ShowCategoryBar)
+            return;
+
+        if (_categoryOrbit?.IsOpen == true)
+        {
+            var positionAScreen = _categoryOrbit.PositionAScreenPoint();
+            _categoryOrbit.CloseAnimated(() =>
+                AnimateCategoryCopy(positionAScreen, CategoryTextScreenPoint(), fadeOut: true));
+            return;
+        }
+
+        var text = SearchBox.CategoryTextBlock;
+        var anchor = SearchBox.CategoryOrbitAnchor;
+        var textAnchor = text.TranslatePoint(
+            new System.Windows.Point(text.ActualWidth, text.ActualHeight / 2),
+            anchor);
+        _categoryOrbit?.Show(
+            anchor,
+            _viewModel.Categories,
+            _viewModel.SelectedCategory,
+            text.FontSize,
+            text.FontFamily,
+            text.Opacity,
+            textAnchor.Y - anchor.ActualHeight / 2);
+        AnimateCategoryCopy(
+            CategoryTextScreenPoint(),
+            _categoryOrbit?.PositionAScreenPoint() ?? CategoryTextScreenPoint(),
+            fadeOut: false);
+    }
+
+    private void SelectCategory(PluginSdk.Abstractions.Plugins.SidebarFilterItem category)
+    {
+        if (ReferenceEquals(category, _viewModel.SelectedCategory))
+            return;
+
+        var categories = _viewModel.Categories;
+        var currentIndex = 0;
+        var targetIndex = 0;
+        for (var i = 0; i < categories.Count; i++)
+        {
+            if (ReferenceEquals(categories[i], _viewModel.SelectedCategory))
+                currentIndex = i;
+            if (ReferenceEquals(categories[i], category))
+                targetIndex = i;
+        }
+
+        var forward = (targetIndex - currentIndex + categories.Count) % categories.Count;
+        var direction = forward <= categories.Count / 2 ? 1 : -1;
+        SearchBox.PrepareCategoryChange(-direction);
+        _viewModel.SelectedCategory = category;
+        UpdateCategoryOrbit();
+        if (!string.IsNullOrWhiteSpace(_viewModel.SearchQuery))
+            _viewModel.Search.PerformSearch(_viewModel.SearchQuery);
+    }
+
+    private void SelectCategoryFromOrbit(PluginSdk.Abstractions.Plugins.SidebarFilterItem category)
+    {
+        SelectCategory(category);
+        Activate();
+        FocusSearch();
+    }
+
+    private void Window_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Handled || e.Delta == 0 || _categoryOrbit?.IsOpen != true)
+            return;
+
+        var screenPoint = PointToScreen(e.GetPosition(this));
+        if (!_categoryOrbit.IsPointerOver && !_categoryOrbit.ContainsScreenPoint(screenPoint))
+            return;
+
+        CycleCategory(e.Delta > 0 ? -1 : 1);
+        e.Handled = true;
+    }
+
+    private void UpdateCategoryOrbit()
+    {
+        if (_categoryOrbit?.IsOpen != true)
+            return;
+
+        _categoryOrbit.Update(
+            _viewModel.Categories,
+            _viewModel.SelectedCategory);
+    }
+
+    private int CategoryIndex(PluginSdk.Abstractions.Plugins.SidebarFilterItem category)
+    {
+        for (var i = 0; i < _viewModel.Categories.Count; i++)
+        {
+            if (ReferenceEquals(_viewModel.Categories[i], category))
+                return i;
+        }
+
+        return 0;
+    }
+
+    private System.Windows.Point CategoryTextScreenPoint()
+    {
+        var text = SearchBox.CategoryTextBlock;
+        return text.PointToScreen(new System.Windows.Point(text.ActualWidth / 2, text.ActualHeight / 2));
+    }
+
+    private void AnimateCategoryCopy(
+        System.Windows.Point fromScreen,
+        System.Windows.Point toScreen,
+        bool fadeOut)
+    {
+        var source = SearchBox.CategoryTextBlock;
+        var copy = new TextBlock
+        {
+            Text = source.Text,
+            FontFamily = source.FontFamily,
+            FontSize = source.FontSize,
+            FontWeight = source.FontWeight,
+            FontStyle = source.FontStyle,
+            Foreground = source.Foreground,
+            Opacity = source.Opacity,
+        };
+        copy.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        var from = AnimationOverlay.PointFromScreen(fromScreen);
+        var to = AnimationOverlay.PointFromScreen(toScreen);
+        Canvas.SetLeft(copy, from.X - copy.DesiredSize.Width / 2);
+        Canvas.SetTop(copy, from.Y - copy.DesiredSize.Height / 2);
+        AnimationOverlay.Children.Clear();
+        AnimationOverlay.Children.Add(copy);
+
+        var duration = TimeSpan.FromMilliseconds(200);
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var transform = new System.Windows.Media.TranslateTransform();
+        copy.RenderTransform = transform;
+        var moveX = new DoubleAnimation(0, to.X - from.X, duration) { EasingFunction = easing };
+        moveX.Completed += (_, _) => AnimationOverlay.Children.Remove(copy);
+        transform.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, moveX);
+        transform.BeginAnimation(
+            System.Windows.Media.TranslateTransform.YProperty,
+            new DoubleAnimation(0, to.Y - from.Y, duration) { EasingFunction = easing });
+
+        if (fadeOut)
+        {
+            copy.BeginAnimation(
+                UIElement.OpacityProperty,
+                new DoubleAnimation(source.Opacity, 0, duration) { EasingFunction = easing });
+        }
     }
 }

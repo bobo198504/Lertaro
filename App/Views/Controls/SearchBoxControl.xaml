@@ -188,6 +188,8 @@
                   ClipToBounds="True"
                   Background="Transparent"
                   Cursor="Hand"
+                  MouseLeftButtonUp="CategoryLabel_MouseLeftButtonUp"
+                  MouseRightButtonUp="CategoryLabel_MouseRightButtonUp"
                   PreviewMouseWheel="CategoryLabel_PreviewMouseWheel">
                 <TextBlock x:Name="TxtCategoryCurrent"
                            HorizontalAlignment="Right"
@@ -222,7 +224,7 @@
             <!-- MouseUp rather than a middle-specific event, because WPF has none: the handler checks
                  ChangedButton itself. Only this icon carries it, matching the indicator above: Stay Open
                  is a quick-window feature and this is the logo that window shows. -->
-            <Grid Grid.Column="4" Margin="11,0,0,0" VerticalAlignment="Center"
+            <Grid x:Name="RightIconHost" Grid.Column="4" Margin="11,0,0,0" VerticalAlignment="Center"
                   MouseRightButtonUp="Icon_MouseRightButtonUp"
                   MouseLeftButtonDown="Icon_MouseLeftButtonDown" MouseLeftButtonUp="Icon_MouseLeftButtonUp" MouseMove="Icon_MouseMove"
                   MouseUp="Icon_MouseUp"

@@ -43,6 +43,12 @@ public partial class SearchBoxControl : UserControl
     // and +1 for the next; hosts without a category leave the label hidden and this event unsubscribed.
     public event Action<int>? CategoryWheeled;
 
+    // Raised when the category label is clicked. Hosts use this as the quick way back to the unfiltered view.
+    public event Action? CategoryClicked;
+
+    // Raised when the category label is right-clicked. The host owns the list and the actual selection.
+    public event Action? CategoryRightClicked;
+
     // Screen-space (not element-relative) so a real drag's own re-layout of this control underneath the
     // cursor can't skew the distance measurement mid-gesture.
     private System.Windows.Point? _iconPressScreenPoint;
@@ -63,6 +69,18 @@ public partial class SearchBoxControl : UserControl
             return;
 
         CategoryWheeled?.Invoke(e.Delta > 0 ? -1 : 1);
+        e.Handled = true;
+    }
+
+    private void CategoryLabel_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        CategoryClicked?.Invoke();
+        e.Handled = true;
+    }
+
+    private void CategoryLabel_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        CategoryRightClicked?.Invoke();
         e.Handled = true;
     }
 
@@ -201,6 +219,8 @@ public partial class SearchBoxControl : UserControl
     public TextBox SearchTextBox => TxtSearch;
     public TextBlock PlaceholderTextBlock => TxtPlaceholder;
     public TextBlock CategoryTextBlock => TxtCategoryCurrent;
+
+    internal FrameworkElement CategoryOrbitAnchor => RightIconHost;
 
     public static readonly DependencyProperty CategoryTextProperty = DependencyProperty.Register(
         nameof(CategoryText), typeof(string), typeof(SearchBoxControl),

@@ -97,5 +97,11 @@
         </Grid>
             </Border>
         </Border>
+
+        <!-- Animation-only copy of the current type. It lives above the card so the text can fly from
+             its search-box position to the wheel without being clipped by the popup surface. -->
+        <Canvas x:Name="AnimationOverlay"
+                Panel.ZIndex="20"
+                IsHitTestVisible="False"/>
     </Grid>
 </Window>
